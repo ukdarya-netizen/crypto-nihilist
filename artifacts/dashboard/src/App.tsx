@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Layout, useRoute } from "./components/layout";
-import { BrandMark, SLOGAN } from "./components/brand";
+import { BrandMark, SLOGAN, Wordmark } from "./components/brand";
 import { PinError, get, readPin, savePin, setCurrentPin } from "./lib/api";
 import Overview from "./pages/overview";
 import Tracker from "./pages/tracker";
@@ -15,7 +15,7 @@ function PinGate({ onPin, wrong }: { onPin: (pin: string) => void; wrong: boolea
     <div className="flex min-h-[100dvh] items-center justify-center p-4">
       <div className="panel w-full max-w-sm p-8 text-center">
         <BrandMark className="mx-auto size-28" />
-        <p className="mt-5 font-display text-4xl">NIHILYST</p>
+        <Wordmark className="mx-auto mt-6 h-16" />
         <p className="mt-1 font-type text-xs tracking-[0.24em] text-primary">CRYPTO TRADING</p>
         <form onSubmit={(e) => { e.preventDefault(); onPin(value); }} className="mt-8 space-y-3">
           <input value={value} onChange={(e) => setValue(e.target.value)} type="password" placeholder="PIN" autoFocus

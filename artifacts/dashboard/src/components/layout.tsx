@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Activity, BookOpen, HeartPulse, History, MoreHorizontal, ScanSearch, Target, X } from "lucide-react";
-import { BrandLockup, BrandMark, SLOGAN } from "./brand";
+import { BrandLockup, BrandMark, SLOGAN, Wordmark } from "./brand";
 import { usePoll, type Status } from "../lib/api";
 
 export type Route = "/" | "/tracker" | "/scanner" | "/history" | "/health" | "/reference";
@@ -130,7 +130,7 @@ export function Layout({ route, children }: { route: Route; children: ReactNode 
           <div className="flex min-w-0 items-center gap-2.5">
             <BrandMark className="size-8 md:hidden" />
             <div className="min-w-0">
-              <span className="block font-type text-[9px] uppercase tracking-[0.2em] text-primary md:hidden">Crypto Nihilist</span>
+              <Wordmark className="mb-0.5 h-3.5 md:hidden" />
               <h1 className="truncate text-base font-semibold md:text-xl"><span className="slash relative z-0">{current.label}</span></h1>
             </div>
           </div>
