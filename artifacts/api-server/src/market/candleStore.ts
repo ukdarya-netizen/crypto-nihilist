@@ -14,7 +14,7 @@ import { logger } from "../lib/logger";
 
 export const INTERVALS: Interval[] = ["30m", "1h", "4h", "1d"];
 /** Bars kept per interval (30m ≈ 15 days, 1h ≈ 29 days, 4h ≈ 117 days, 1d ≈ 1.4 years). */
-export const KEEP: Record<Interval, number> = { "30m": 720, "1h": 700, "4h": 700, "1d": 500 };
+export const KEEP: Record<Interval, number> = { "5m": 0, "30m": 720, "1h": 700, "4h": 700, "1d": 500 };
 /** A series shorter than this share of KEEP is backfilled (new listings simply have less). */
 const BACKFILL_RATIO = 0.9;
 const BACKFILL_RETRY_MS = 6 * 60 * 60_000;
@@ -26,7 +26,7 @@ const backfillTriedAt = new Map<string, number>();
 export function book(symbol: string): Book {
   let b = books.get(symbol);
   if (!b) {
-    b = { "30m": [], "1h": [], "4h": [], "1d": [] };
+    b = { "5m": [], "30m": [], "1h": [], "4h": [], "1d": [] };
     books.set(symbol, b);
   }
   return b;

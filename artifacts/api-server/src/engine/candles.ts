@@ -7,9 +7,10 @@ export type Candle = {
   c: number;
 };
 
-export type Interval = "30m" | "1h" | "4h" | "1d";
+export type Interval = "5m" | "30m" | "1h" | "4h" | "1d";
 
 export const INTERVAL_MS: Record<Interval, number> = {
+  "5m": 5 * 60_000,
   "30m": 30 * 60_000,
   "1h": 60 * 60_000,
   "4h": 4 * 60 * 60_000,

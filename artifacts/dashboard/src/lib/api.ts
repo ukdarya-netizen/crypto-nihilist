@@ -48,6 +48,7 @@ export type Status = {
   coinglass: { started: number; ok: number; failed: number; rateLimited: number; keys: number; cooldownMs: number; minGapMs: number };
   health: Record<string, { lastError: string | null; lastErrorAt: number | null; lastSuccessAt: number | null; consecutiveFailures: number }>;
   signals: { open: number; closed: number };
+  telegram?: { configured: boolean; channel: string | null };
 };
 export type StatRow = {
   setup: string; trades: number; wins: number; tp1: number; stops: number; timeouts: number;
@@ -61,6 +62,8 @@ export type Signal = {
   exit_price: number | null; pnl_pct: number | null; r_multiple: number | null; tp1_hit: boolean;
   mfe_pct: number; mae_pct: number; block_top: number; block_bottom: number; block_scope: string;
   targets_source: string; last_price: number | null;
+  live: boolean; current_stop: number | null; trailing_active: boolean; breakeven_moved: boolean;
+  peak_pct: number; last_milestone: number;
 };
 export type Decision = {
   id: number; symbol: string; setup: string; bar_time: string; decision: string; reason: string | null;
@@ -78,7 +81,7 @@ export function setupLabel(setup: string): string {
   return `ОБ ${htf === "1d" ? "1D" : htf} → слом ${ltf} · ${side === "long" ? "лонг" : "шорт"}`;
 }
 export const CLOSE_LABEL: Record<string, string> = {
-  tp2: "тейк 2", breakeven: "безубыток после тейка 1", stop: "стоп", timeout: "время вышло",
+  trailing: "трейлинг", breakeven: "безубыток", stop: "стоп", timeout: "время вышло",
 };
 export const REASON_LABEL: Record<string, string> = {
   rr_too_low: "первый тейк ближе 1R",
@@ -106,9 +109,9 @@ export const when = (iso: string | number | null) =>
 export const coin = (symbol: string) => symbol.replace(/-USDT$/, "");
 
 /** Live result of an open trade in % (no fees), from the last closed 30m price. */
+/** Price move of an open trade from entry, % in the trade direction (as in AltBullet). */
 export function livePct(s: Signal): number | null {
   if (s.last_price === null || s.last_price === undefined) return null;
   const dir = s.side === "long" ? 1 : -1;
-  const leg = (exit: number) => ((exit - s.entry) / s.entry) * 100 * dir;
-  return s.tp1_hit ? 0.5 * leg(s.tp1) + 0.5 * leg(Number(s.last_price)) : leg(Number(s.last_price));
+  return ((Number(s.last_price) - s.entry) / s.entry) * 100 * dir;
 }

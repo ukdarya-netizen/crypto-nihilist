@@ -1,5 +1,5 @@
 import {
-  bigint, boolean, doublePrecision, index, jsonb, pgTable, primaryKey, serial, text, timestamp, uniqueIndex,
+  bigint, boolean, doublePrecision, index, integer, jsonb, pgTable, primaryKey, serial, text, timestamp, uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 /** BingX OHLC from CoinGlass (closed bars only), per symbol and interval. */
@@ -20,7 +20,10 @@ export const nhState = pgTable("nh_state", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-/** Virtual trades opened by the scanner (shadow: dashboard only, no Telegram). */
+/**
+ * Virtual trades opened by the scanner. `live` = published to Telegram; a
+ * shadow trade (live = false) is tracked and counted on the dashboard only.
+ */
 export const nhSignals = pgTable("nh_signals", {
   id: serial("id").primaryKey(),
   symbol: text("symbol").notNull(),
@@ -43,6 +46,14 @@ export const nhSignals = pgTable("nh_signals", {
   targetsSource: text("targets_source").notNull(),
   openedAt: timestamp("opened_at", { withTimezone: true }).notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  live: boolean("live").notNull().default(false),
+  currentStop: doublePrecision("current_stop"),
+  breakevenMoved: boolean("breakeven_moved").notNull().default(false),
+  trailingActive: boolean("trailing_active").notNull().default(false),
+  peakPct: doublePrecision("peak_pct").notNull().default(0),
+  lastMilestone: doublePrecision("last_milestone").notNull().default(0),
+  /** Close of the last 5m candle the tracker processed. */
+  lastPrice: doublePrecision("last_price"),
   tp1Hit: boolean("tp1_hit").notNull().default(false),
   tp1At: timestamp("tp1_at", { withTimezone: true }),
   closedAt: timestamp("closed_at", { withTimezone: true }),
@@ -73,6 +84,52 @@ export const nhDecisions = pgTable("nh_decisions", {
 }, (t) => [
   uniqueIndex("nh_decisions_unique").on(t.symbol, t.setup, t.barTime, t.blockId),
   index("nh_decisions_created").on(t.createdAt),
+]);
+
+/** Lifecycle events of a trade (opened, milestones, TP1, trailing, closed); Telegram queue. */
+export const nhSignalEvents = pgTable("nh_signal_events", {
+  id: serial("id").primaryKey(),
+  signalId: integer("signal_id").notNull(),
+  eventKey: text("event_key").notNull(),
+  kind: text("kind").notNull(),
+  price: doublePrecision("price"),
+  detail: jsonb("detail").notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  telegramSentAt: timestamp("telegram_sent_at", { withTimezone: true }),
+  telegramAttempts: integer("telegram_attempts").notNull().default(0),
+}, (t) => [
+  uniqueIndex("nh_signal_events_key").on(t.eventKey),
+  index("nh_signal_events_unsent").on(t.telegramSentAt),
+]);
+
+/** Private chats subscribed with /start (unsubscribe with /stop). */
+export const nhTelegramSubscribers = pgTable("nh_telegram_subscribers", {
+  chatId: text("chat_id").primaryKey(),
+  active: boolean("active").notNull().default(true),
+  subscribedAt: timestamp("subscribed_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** getUpdates cursor. */
+export const nhTelegramState = pgTable("nh_telegram_state", {
+  key: text("key").primaryKey(),
+  nextUpdateId: bigint("next_update_id", { mode: "number" }).notNull().default(0),
+});
+
+/** One row per event and recipient; a success is never re-sent. */
+export const nhTelegramDeliveries = pgTable("nh_telegram_deliveries", {
+  id: serial("id").primaryKey(),
+  eventId: integer("event_id").notNull(),
+  chatId: text("chat_id").notNull(),
+  channel: boolean("channel").notNull().default(false),
+  text: text("text").notNull(),
+  status: text("status").notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+}, (t) => [
+  uniqueIndex("nh_telegram_deliveries_unique").on(t.eventId, t.chatId),
+  index("nh_telegram_deliveries_pending").on(t.status, t.nextAttemptAt),
 ]);
 
 export type NhSignal = typeof nhSignals.$inferSelect;

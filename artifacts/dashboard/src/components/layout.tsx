@@ -41,7 +41,7 @@ function ApiDots() {
   const items: Array<{ label: string; ok: boolean | null }> = [
     { label: "Движок", ok: data ? data.engine.leaseAcquired && ago !== null && ago <= 35 : null },
     { label: "CoinGlass", ok: data ? !cg || cg.consecutiveFailures < 5 : null },
-    { label: "Telegram", ok: null },
+    { label: "Telegram", ok: data?.telegram?.configured ? true : null },
   ];
   return (
     <div className="space-y-1.5 border-t border-border p-4 font-mono text-[11px] text-muted">

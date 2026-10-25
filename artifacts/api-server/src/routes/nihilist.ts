@@ -16,7 +16,8 @@ router.get("/nh/status", async (_req, res) => {
     `SELECT count(*) FILTER (WHERE status = 'open')::int AS open,
             count(*) FILTER (WHERE status = 'closed')::int AS closed FROM nh_signals`,
   );
-  res.json({ engine: engineStatus(), coinglass: coinglassGovernorStats(), health: apiHealth(), signals: rows[0] });
+  const telegram = { configured: Boolean(process.env.TELEGRAM_BOT_TOKEN), channel: process.env.NIHILIST_TELEGRAM_CHANNEL?.trim() || null };
+  res.json({ engine: engineStatus(), coinglass: coinglassGovernorStats(), health: apiHealth(), signals: rows[0], telegram });
 });
 
 /** Results per setup over closed trades of the last N days (by close time). */
@@ -62,12 +63,9 @@ router.get("/nh/signals", async (req, res) => {
   const status = req.query.status === "closed" ? "closed" : "open";
   const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
   const setup = typeof req.query.setup === "string" && req.query.setup ? req.query.setup : null;
-  // Open trades carry the last closed 30m price for the live result.
+  // Open trades carry last_price: the close of the last 5m candle the tracker processed.
   const { rows } = await pool.query(
-    `SELECT s.*, ${status === "open"
-      ? `(SELECT c.c FROM nh_candles c WHERE c.symbol = s.symbol AND c.interval = '30m' ORDER BY c.t DESC LIMIT 1)`
-      : "NULL::float"} AS last_price
-     FROM nh_signals s WHERE s.status = $1 AND ($3::text IS NULL OR s.setup = $3)
+    `SELECT s.* FROM nh_signals s WHERE s.status = $1 AND ($3::text IS NULL OR s.setup = $3)
      ORDER BY ${status === "open" ? "s.opened_at" : "s.closed_at"} DESC LIMIT $2`,
     [status, limit, setup],
   );

@@ -16,7 +16,10 @@ import { pool } from "@workspace/db";
 import { INTERVAL_MS, type Interval } from "./candles";
 import { evaluateSetups, type HtfInterval, type SetupSignal } from "./setups";
 import { COMBOS, MAX_HOLD_MS } from "./config";
-import { applyCandles, openTrade, tradeResult, type TradeState } from "./trade";
+import { openTrade } from "./trade";
+import { BREAKEVEN_AT_PCT, LIVE_SETUPS } from "./config";
+import { insertEvent, startTracker } from "./tracker";
+import { startTelegram } from "../telegram/telegram";
 import { backfill, book, loadFromDb, needsBackfill, pruneDb, refresh } from "../market/candleStore";
 import { getUniverse, type UniverseSymbol } from "../market/coinglass";
 import { waitForEngineLease } from "../ops/lease";
@@ -25,7 +28,7 @@ import { logger } from "../lib/logger";
 /** LTF bars walked per evaluation (enough for the LTF structure to settle). */
 const LTF_WINDOW = 400;
 /** Minimum history before a symbol is evaluated. */
-const MIN_BARS: Record<Interval, number> = { "30m": 200, "1h": 200, "4h": 60, "1d": 30 };
+const MIN_BARS: Record<Interval, number> = { "5m": 0, "30m": 200, "1h": 200, "4h": 60, "1d": 30 };
 const CYCLE_DELAY_MS = 20_000;
 const UNIVERSE_REFRESH_MS = 24 * 60 * 60_000;
 
@@ -106,51 +109,6 @@ async function backfillLoop(): Promise<void> {
   }
 }
 
-type OpenRow = {
-  id: number; symbol: string; setup: string; htf: HtfInterval; side: "long" | "short";
-  entry: number; stop: number; tp1: number; tp2: number;
-  opened_at: Date; expires_at: Date; tp1_hit: boolean; tp1_at: Date | null;
-  mfe_pct: number; mae_pct: number; last_candle_time: string | null;
-};
-
-function stateFromRow(row: OpenRow): TradeState {
-  return {
-    side: row.side, entry: row.entry, stop: row.stop, tp1: row.tp1, tp2: row.tp2,
-    openedAt: row.opened_at.getTime(), expiresAt: row.expires_at.getTime(),
-    tp1Hit: row.tp1_hit, tp1At: row.tp1_at ? row.tp1_at.getTime() : null,
-    currentStop: row.tp1_hit ? row.entry : row.stop,
-    closed: false, closedAt: null, closeReason: null, exitPrice: null,
-    mfePct: row.mfe_pct, maePct: row.mae_pct,
-    lastCandleTime: row.last_candle_time === null ? null : Number(row.last_candle_time),
-  };
-}
-
-/** Applies the stored 30m bars to every open trade of the symbol. */
-async function trackOpenTrades(symbol: string): Promise<void> {
-  const { rows } = await pool.query<OpenRow>(
-    "SELECT * FROM nh_signals WHERE status = 'open' AND symbol = $1", [symbol],
-  );
-  const bars = book(symbol)["30m"];
-  for (const row of rows) {
-    const before = stateFromRow(row);
-    const after = applyCandles(before, bars, INTERVAL_MS["30m"]);
-    if (after.lastCandleTime === before.lastCandleTime) continue;
-    const mark = bars.length ? bars[bars.length - 1].c : undefined;
-    const result = tradeResult(after, mark);
-    await pool.query(
-      `UPDATE nh_signals SET status = $2, tp1_hit = $3, tp1_at = $4, closed_at = $5, close_reason = $6,
-         exit_price = $7, pnl_pct = $8, r_multiple = $9, mfe_pct = $10, mae_pct = $11, last_candle_time = $12
-       WHERE id = $1`,
-      [
-        row.id, after.closed ? "closed" : "open", after.tp1Hit,
-        after.tp1At ? new Date(after.tp1At) : null,
-        after.closedAt ? new Date(after.closedAt) : null, after.closeReason, after.exitPrice,
-        result.pnlPct, result.r, after.mfePct, after.maePct, after.lastCandleTime,
-      ],
-    );
-  }
-}
-
 async function recordDecision(
   symbol: string, setup: string, barTime: number, decision: "accepted" | "rejected" | "skipped",
   reason: string | null, blockId: string, details: Record<string, unknown>,
@@ -171,22 +129,28 @@ async function openSignal(symbol: string, s: SetupSignal): Promise<boolean> {
     return false;
   }
   const trade = openTrade({
-    side: s.side, entry: s.entry, stop: s.stop, tp1: s.tp1, tp2: s.tp2,
-    openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf],
+    side: s.side, entry: s.entry, stop: s.stop, tp1: s.tp1,
+    openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf], breakevenAtPct: BREAKEVEN_AT_PCT,
   });
-  const inserted = await pool.query(
+  const live = LIVE_SETUPS.has(s.setup);
+  const inserted = await pool.query<{ id: number }>(
     `INSERT INTO nh_signals (symbol, setup, htf, ltf, side, block_id, block_top, block_bottom, block_scope,
-       bar_time, entry, stop, tp1, tp2, risk_pct, rr1, targets_source, opened_at, expires_at, details)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
-     ON CONFLICT DO NOTHING`,
+       bar_time, entry, stop, tp1, tp2, risk_pct, rr1, targets_source, opened_at, expires_at, details,
+       live, current_stop)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+     ON CONFLICT DO NOTHING RETURNING id`,
     [
       symbol, s.setup, s.htf, s.ltf, s.side, s.block.id, s.block.top, s.block.bottom, s.block.scope,
       s.barTime, s.entry, s.stop, s.tp1, s.tp2, s.riskPct, s.rr1, s.targetsSource,
       new Date(trade.openedAt), new Date(trade.expiresAt), JSON.stringify(signalDetails(s)),
+      live, s.stop,
     ],
   );
   await recordDecision(symbol, s.setup, s.barTime, "accepted", null, s.block.id, signalDetails(s));
-  return Boolean(inserted.rowCount);
+  const id = inserted.rows[0]?.id;
+  if (id === undefined) return false;
+  await insertEvent(id, `${id}:opened`, "opened", s.entry, signalDetails(s), s.signalAt);
+  return true;
 }
 
 function signalDetails(s: SetupSignal): Record<string, unknown> {
@@ -272,7 +236,6 @@ async function runCycle(bar: number): Promise<void> {
   for (const { symbol, ok } of refreshed) {
     if (!ok) { failed += 1; continue; } // no data — no signal
     try {
-      await trackOpenTrades(symbol);
       const result = await evaluateSymbol(symbol);
       signals += result.signals;
       decisions += result.decisions;
@@ -304,6 +267,8 @@ export async function startEngine(): Promise<void> {
   }
   status.ready = ready.size;
   void backfillLoop();
+  startTracker();
+  startTelegram();
   let lastBar = Math.floor(Date.now() / INTERVAL_MS["30m"]) * INTERVAL_MS["30m"];
   let lastPrune = 0;
   const tick = async () => {
