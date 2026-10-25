@@ -45,10 +45,15 @@ export type EngineStatus = {
   lastCycleSignals: number;
   lastCycleDecisions: number;
   lastError: string | null;
+  /** Where startup is: lease -> universe -> loading_db -> running. */
+  phase: string;
+  /** Symbols whose stored candles have been loaded from the DB. */
+  loadedFromDb: number;
 };
 
 const status: EngineStatus = {
   startedAt: Date.now(), leaseAcquired: false, universe: 0, ready: 0, backfillPending: 0,
+  phase: "lease", loadedFromDb: 0,
   lastCycleAt: null, lastCycleBar: null, lastCycleMs: null, lastCycleRefreshFailed: 0,
   lastCycleSignals: 0, lastCycleDecisions: 0, lastError: null,
 };
@@ -258,13 +263,32 @@ async function runCycle(bar: number): Promise<void> {
 export async function startEngine(): Promise<void> {
   await waitForEngineLease();
   status.leaseAcquired = true;
+  status.phase = "universe";
   await refreshUniverse(Date.now());
-  await loadFromDb(universe.map((s) => s.instrumentId));
-  for (const s of universe) {
-    if (!hasHistory(s.instrumentId)) continue;
-    ready.add(s.instrumentId);
-    await evaluateSymbol(s.instrumentId); // marks the current bars: nothing is opened late after a restart
+  // Stored candles load in parallel batches; each symbol becomes ready as
+  // soon as its own history is in memory. The backfill waits for this load
+  // (it must see what is stored), the cycle only uses ready symbols.
+  status.phase = "loading_db";
+  const ids = universe.map((s) => s.instrumentId);
+  const BATCH = 16;
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const batch = ids.slice(i, i + BATCH);
+    try {
+      await loadFromDb(batch);
+    } catch (err) {
+      status.lastError = `load_from_db: ${err instanceof Error ? err.message : String(err)}`;
+      logger.error({ err }, "nihilist: loading stored candles failed");
+    }
+    for (const symbol of batch) {
+      if (!hasHistory(symbol)) continue;
+      ready.add(symbol);
+      await evaluateSymbol(symbol); // marks the current bars: nothing is opened late after a restart
+    }
+    status.loadedFromDb = Math.min(ids.length, i + BATCH);
+    status.ready = ready.size;
+    if (i % (BATCH * 16) === 0) logger.info({ loaded: status.loadedFromDb, ready: ready.size }, "nihilist: loading stored candles");
   }
+  status.phase = "running";
   status.ready = ready.size;
   void backfillLoop();
   startTracker();

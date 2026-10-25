@@ -43,7 +43,7 @@ export type Status = {
   engine: {
     universe: number; ready: number; backfillPending: number; lastCycleAt: number | null; lastCycleMs: number | null;
     lastCycleRefreshFailed: number; lastCycleSignals: number; lastCycleDecisions: number; lastError: string | null;
-    leaseAcquired: boolean; startedAt: number;
+    leaseAcquired: boolean; startedAt: number; phase?: string; loadedFromDb?: number;
   };
   coinglass: { started: number; ok: number; failed: number; rateLimited: number; keys: number; cooldownMs: number; minGapMs: number };
   health: Record<string, { lastError: string | null; lastErrorAt: number | null; lastSuccessAt: number | null; consecutiveFailures: number }>;

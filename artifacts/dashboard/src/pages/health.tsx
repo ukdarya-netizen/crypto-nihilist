@@ -15,7 +15,9 @@ export default function Health() {
         <Kpi label="Движок" value={healthy ? "работает" : e.leaseAcquired ? "ждёт цикл" : "ждёт блокировку"} toneClass={healthy ? "text-up" : "text-warn"}
           hint={`запущен ${when(e.startedAt)}`} />
         <Kpi label="Последний цикл" value={ago === null ? "—" : `${ago} мин`} hint={e.lastCycleMs ? `длился ${Math.round(e.lastCycleMs / 1000)} с` : "ещё не было"} />
-        <Kpi label="Монеты" value={`${e.ready}/${e.universe}`} hint={e.backfillPending ? `догружается история: ${e.backfillPending}` : "история загружена"} />
+        <Kpi label="Монеты" value={`${e.ready}/${e.universe}`} hint={e.phase && e.phase !== "running"
+          ? (e.phase === "loading_db" ? `запуск: читаю базу ${e.loadedFromDb ?? 0}/${e.universe}` : `запуск: ${e.phase}`)
+          : e.backfillPending ? `догружается история: ${e.backfillPending}` : "история загружена"} />
         <Kpi label="Сделки" value={data.signals.open} hint={`открыто · закрыто ${data.signals.closed}`} />
       </div>
       <Panel title="Последний цикл">

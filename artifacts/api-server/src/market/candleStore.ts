@@ -63,13 +63,21 @@ function put(symbol: string, interval: Interval, candles: Candle[], now: number)
 
 /** Loads stored candles of the given symbols into memory. */
 export async function loadFromDb(symbols: string[], now = Date.now()): Promise<void> {
+  if (!symbols.length) return;
+  // One query per batch (PK order: symbol, interval, t), not one per symbol.
+  const { rows } = await pool.query<{ symbol: string; interval: Interval; t: string; o: number; h: number; l: number; c: number }>(
+    "SELECT symbol, interval, t, o, h, l, c FROM nh_candles WHERE symbol = ANY($1::text[]) ORDER BY symbol, interval, t",
+    [symbols],
+  );
+  const grouped = new Map<string, Partial<Record<Interval, Candle[]>>>();
+  for (const r of rows) {
+    const g = grouped.get(r.symbol) ?? {};
+    grouped.set(r.symbol, g);
+    (g[r.interval] ??= []).push({ t: Number(r.t), o: r.o, h: r.h, l: r.l, c: r.c });
+  }
   for (const symbol of symbols) {
-    const { rows } = await pool.query<{ interval: Interval; t: string; o: number; h: number; l: number; c: number }>(
-      "SELECT interval, t, o, h, l, c FROM nh_candles WHERE symbol = $1 ORDER BY t", [symbol],
-    );
-    const grouped: Partial<Record<Interval, Candle[]>> = {};
-    for (const r of rows) (grouped[r.interval] ??= []).push({ t: Number(r.t), o: r.o, h: r.h, l: r.l, c: r.c });
-    for (const interval of INTERVALS) put(symbol, interval, grouped[interval] ?? [], now);
+    const g = grouped.get(symbol) ?? {};
+    for (const interval of INTERVALS) put(symbol, interval, g[interval] ?? [], now);
   }
 }
 
