@@ -1,0 +1,1 @@
+- [Telegram channel](telegram-channel.md) — the user selected @nihilystcryptotrading for signal delivery.
