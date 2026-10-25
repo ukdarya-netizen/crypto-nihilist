@@ -11,7 +11,7 @@ import { pool } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { formatEvent, type EventForText, type SignalForText } from "./format";
 import { startReports } from "./reports";
-import { sendMessage, signalChannel, subscriptionCommand, telegramCall, TelegramError, type TelegramUpdate } from "./transport";
+import { sendMessage, signalChannel, subscriptionCommand, telegramCall, telegramEnabled, TelegramError, type TelegramUpdate } from "./transport";
 
 const MAX_ATTEMPTS = 8;
 let delivering = false;
@@ -161,6 +161,10 @@ async function poll(): Promise<void> {
 export function startTelegram(): void {
   if (!process.env.TELEGRAM_BOT_TOKEN) {
     logger.warn("nihilist: Telegram disabled — TELEGRAM_BOT_TOKEN not set");
+    return;
+  }
+  if (!telegramEnabled()) {
+    logger.warn("nihilist: Telegram off in the dev workspace — the published deployment sends (NIHILIST_TELEGRAM_IN_DEV=1 to force)");
     return;
   }
   if (!polling) {

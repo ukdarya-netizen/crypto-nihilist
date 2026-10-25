@@ -1,3 +1,13 @@
+/**
+ * Telegram runs only in the published deployment: the dev workspace and the
+ * deployment share one bot token, and two getUpdates pollers kill each other
+ * (409) and would send every signal twice. NIHILIST_TELEGRAM_IN_DEV=1 forces it on.
+ */
+export function telegramEnabled(): boolean {
+  if (!process.env.TELEGRAM_BOT_TOKEN) return false;
+  return process.env.REPLIT_DEPLOYMENT === "1" || process.env.NIHILIST_TELEGRAM_IN_DEV === "1";
+}
+
 /** Channel for live signals, e.g. @nihilyst_trading (unset = subscribers only). */
 export function signalChannel(): string | null {
   const value = process.env.NIHILIST_TELEGRAM_CHANNEL?.trim();

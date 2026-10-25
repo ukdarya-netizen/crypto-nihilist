@@ -84,6 +84,12 @@ export type SetupRejection = {
   details: Record<string, number | string | null>;
 };
 
+/** A block price is reacting from now: waiting for the LTF structure break. */
+export type SetupCandidate = {
+  setup: string; side: Side; blockId: string; blockTop: number; blockBottom: number; blockScope: string;
+  firstTouchAt: number; lastTouchAt: number; extreme: number | null; lastClose: number; barsSinceTouch: number;
+};
+
 export function setupName(htf: HtfInterval, ltf: LtfInterval, side: Side): string {
   return `${htf}_${ltf}_${side}`;
 }
@@ -155,7 +161,7 @@ export type EvaluateInput = {
  * Walks the LTF series bar by bar; at every LTF bar only HTF information
  * from HTF bars already closed is used (no lookahead).
  */
-export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; rejections: SetupRejection[] } {
+export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; rejections: SetupRejection[]; candidates: SetupCandidate[] } {
   const options = { ...DEFAULT_SETUP_OPTIONS, ...(input.options ?? {}) };
   const sides = input.sides ?? ["long", "short"];
   const htfSpan = INTERVAL_MS[input.htf as Interval];
@@ -163,7 +169,7 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
   const { htfCandles, ltfCandles } = input;
   const signals: SetupSignal[] = [];
   const rejections: SetupRejection[] = [];
-  if (!htfCandles.length || !ltfCandles.length) return { signals, rejections };
+  if (!htfCandles.length || !ltfCandles.length) return { signals, rejections, candidates: [] };
 
   // HTF snapshots only where the LTF series needs them.
   const firstNeeded = ltfCandles[0].t - htfSpan;
@@ -302,7 +308,19 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
       });
     }
   }
-  return { signals, rejections };
+  const last = ltfCandles.length - 1;
+  const candidates: SetupCandidate[] = [];
+  for (const zone of zones.values()) {
+    if (zone.broken || zone.used || zone.lastTouchIndex === null) continue;
+    if (last - zone.lastTouchIndex > options.touchWindowBars) continue;
+    candidates.push({
+      setup: setupName(input.htf, input.ltf, zone.side), side: zone.side, blockId: zone.block.id,
+      blockTop: zone.block.top, blockBottom: zone.block.bottom, blockScope: zone.block.scope,
+      firstTouchAt: zone.firstTouchAt as number, lastTouchAt: zone.lastTouchAt as number,
+      extreme: zone.extreme, lastClose: ltfCandles[last].c, barsSinceTouch: last - zone.lastTouchIndex,
+    });
+  }
+  return { signals, rejections, candidates };
 }
 
 function round(value: number, digits: number): number {

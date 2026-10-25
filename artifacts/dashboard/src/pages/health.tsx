@@ -1,5 +1,5 @@
 import { Kpi, Panel } from "../components/ui";
-import { usePoll, when, type Status } from "../lib/api";
+import { STAGE_LABEL, usePoll, when, type Status } from "../lib/api";
 
 export default function Health() {
   const { data } = usePoll<Status>("/nh/status", 15_000);
@@ -8,12 +8,13 @@ export default function Health() {
   const cg = data.coinglass;
   const h = data.health.coinglass;
   const ago = e.lastCycleAt ? Math.round((Date.now() - e.lastCycleAt) / 60_000) : null;
-  const healthy = e.leaseAcquired && ago !== null && ago <= 35;
+  const scanning = Boolean(e.cycle);
+  const healthy = e.leaseAcquired && (scanning || (ago !== null && ago <= 35));
   return (
     <div className="space-y-4 md:space-y-6">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Kpi label="Движок" value={healthy ? "работает" : e.leaseAcquired ? "ждёт цикл" : "ждёт блокировку"} toneClass={healthy ? "text-up" : "text-warn"}
-          hint={`запущен ${when(e.startedAt)}`} />
+        <Kpi label="Движок" value={scanning ? "сканирует" : healthy ? "работает" : !e.leaseAcquired ? "ждёт блокировку" : e.phase !== "running" ? "запускается" : "ждёт закрытия свечи"} toneClass={healthy ? "text-up" : "text-warn"}
+          hint={e.cycle ? `${STAGE_LABEL[e.cycle.stage]} ${e.cycle.done}/${e.cycle.total}` : `запущен ${when(e.startedAt)}`} />
         <Kpi label="Последний цикл" value={ago === null ? "—" : `${ago} мин`} hint={e.lastCycleMs ? `длился ${Math.round(e.lastCycleMs / 1000)} с` : "ещё не было"} />
         <Kpi label="Монеты" value={`${e.ready}/${e.universe}`} hint={e.phase && e.phase !== "running"
           ? (e.phase === "loading_db" ? `запуск: читаю базу ${e.loadedFromDb ?? 0}/${e.universe}` : `запуск: ${e.phase}`)

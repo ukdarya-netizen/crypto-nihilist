@@ -44,12 +44,28 @@ export type Status = {
     universe: number; ready: number; backfillPending: number; lastCycleAt: number | null; lastCycleMs: number | null;
     lastCycleRefreshFailed: number; lastCycleSignals: number; lastCycleDecisions: number; lastError: string | null;
     leaseAcquired: boolean; startedAt: number; phase?: string; loadedFromDb?: number;
+    cycle?: CycleNow | null;
   };
   coinglass: { started: number; ok: number; failed: number; rateLimited: number; keys: number; cooldownMs: number; minGapMs: number };
   health: Record<string, { lastError: string | null; lastErrorAt: number | null; lastSuccessAt: number | null; consecutiveFailures: number }>;
   signals: { open: number; closed: number };
-  telegram?: { configured: boolean; channel: string | null };
+  telegram?: { configured: boolean; enabled?: boolean; channel: string | null };
 };
+export type CycleNow = { bar: number; startedAt: number; stage: "refresh" | "late_retry" | "evaluate"; done: number; total: number };
+export type CycleRecord = {
+  bar: number; startedAt: number; finishedAt: number; ms: number; checked: number; refreshFailed: number;
+  lateRetries: number; candidates: number; signals: number; decisions: number; error: string | null;
+};
+export type Candidate = {
+  symbol: string; setup: string; htf: string; ltf: string; side: "long" | "short"; blockId: string; blockTop: number; blockBottom: number;
+  blockScope: string; firstTouchAt: number; lastTouchAt: number; extreme: number | null; lastClose: number;
+  barsSinceTouch: number; updatedAt: number;
+};
+export type ScannerData = { current: CycleNow | null; cycles: CycleRecord[]; candidates: Candidate[] };
+export const STAGE_LABEL: Record<CycleNow["stage"], string> = {
+  refresh: "загрузка свечей", late_retry: "ждём запоздавшие свечи", evaluate: "поиск сетапов",
+};
+export const dur = (ms: number) => (ms >= 60_000 ? `${Math.floor(ms / 60_000)}м ${Math.round((ms % 60_000) / 1000)}с` : `${Math.round(ms / 1000)}с`);
 export type StatRow = {
   setup: string; trades: number; wins: number; tp1: number; stops: number; timeouts: number;
   avg_r: number | null; sum_r: number | null; avg_pnl_pct: number | null;

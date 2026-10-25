@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
-import { engineStatus } from "../engine/runtime";
+import { engineStatus, scannerView } from "../engine/runtime";
+import { telegramEnabled } from "../telegram/transport";
 import { cgRequest, coinglassGovernorStats, EXCHANGE } from "../market/coinglass";
 import { apiHealth } from "../lib/apiHealth";
 import { buildJournal, tradeStatus, type JournalRow } from "../stats/journal";
@@ -17,8 +18,17 @@ router.get("/nh/status", async (_req, res) => {
     `SELECT count(*) FILTER (WHERE status = 'open')::int AS open,
             count(*) FILTER (WHERE status = 'closed')::int AS closed FROM nh_signals`,
   );
-  const telegram = { configured: Boolean(process.env.TELEGRAM_BOT_TOKEN), channel: process.env.NIHILIST_TELEGRAM_CHANNEL?.trim() || null };
+  const telegram = {
+    configured: Boolean(process.env.TELEGRAM_BOT_TOKEN),
+    enabled: telegramEnabled(),
+    channel: process.env.NIHILIST_TELEGRAM_CHANNEL?.trim() || null,
+  };
   res.json({ engine: engineStatus(), coinglass: coinglassGovernorStats(), health: apiHealth(), signals: rows[0], telegram });
+});
+
+/** Scan cycles (last two days), the scan running now, and current candidates. */
+router.get("/nh/scanner", (_req, res) => {
+  res.json({ current: engineStatus().cycle, ...scannerView() });
 });
 
 /** Results per setup over closed trades of the last N days (by close time). */

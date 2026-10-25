@@ -37,11 +37,16 @@ function Clock() {
 function ApiDots() {
   const { data } = usePoll<Status>("/nh/status", 30_000);
   const cg = data?.health.coinglass;
-  const ago = data?.engine.lastCycleAt ? (Date.now() - data.engine.lastCycleAt) / 60_000 : null;
+  const e = data?.engine;
+  const ago = e?.lastCycleAt ? (Date.now() - e.lastCycleAt) / 60_000 : null;
+  const sinceStart = e ? (Date.now() - e.startedAt) / 60_000 : null;
+  // Healthy: a scan finished in the last 35 min, one is running now, or it is
+  // still the first 40 minutes after a start (the first scan waits for a bar close).
+  const engineOk = e ? e.leaseAcquired && (Boolean(e.cycle) || (ago !== null ? ago <= 35 : (sinceStart ?? 99) <= 40)) : null;
   const items: Array<{ label: string; ok: boolean | null }> = [
-    { label: "Движок", ok: data ? data.engine.leaseAcquired && ago !== null && ago <= 35 : null },
+    { label: "Движок", ok: engineOk },
     { label: "CoinGlass", ok: data ? !cg || cg.consecutiveFailures < 5 : null },
-    { label: "Telegram", ok: data?.telegram?.configured ? true : null },
+    { label: "Telegram", ok: data?.telegram?.configured && data.telegram.enabled !== false ? true : null },
   ];
   return (
     <div className="space-y-1.5 border-t border-border p-4 font-mono text-[11px] text-muted">

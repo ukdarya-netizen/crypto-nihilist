@@ -14,7 +14,7 @@
  */
 import { pool } from "@workspace/db";
 import { INTERVAL_MS, type Interval } from "./candles";
-import { evaluateSetups, type HtfInterval, type SetupSignal } from "./setups";
+import { evaluateSetups, type HtfInterval, type SetupCandidate, type SetupSignal } from "./setups";
 import { COMBOS, MAX_HOLD_MS } from "./config";
 import { openTrade } from "./trade";
 import { BREAKEVEN_AT_PCT, LIVE_SETUPS } from "./config";
@@ -49,11 +49,28 @@ export type EngineStatus = {
   phase: string;
   /** Symbols whose stored candles have been loaded from the DB. */
   loadedFromDb: number;
+  /** The scan running now (null between scans). */
+  cycle: { bar: number; startedAt: number; stage: "refresh" | "late_retry" | "evaluate"; done: number; total: number } | null;
 };
+
+export type CycleRecord = {
+  bar: number; startedAt: number; finishedAt: number; ms: number; checked: number; refreshFailed: number;
+  lateRetries: number; candidates: number; signals: number; decisions: number; error: string | null;
+};
+export type Candidate = SetupCandidate & { symbol: string; htf: string; ltf: string; updatedAt: number };
+
+const CYCLE_LOG_SIZE = 96; // two days of 30-minute scans
+let cycleLog: CycleRecord[] = [];
+/** symbol:htf:ltf -> blocks price is reacting from, from the last evaluation. */
+const candidateMap = new Map<string, Candidate[]>();
+export const scannerView = () => ({
+  cycles: [...cycleLog].reverse(),
+  candidates: [...candidateMap.values()].flat().sort((a, b) => b.lastTouchAt - a.lastTouchAt),
+});
 
 const status: EngineStatus = {
   startedAt: Date.now(), leaseAcquired: false, universe: 0, ready: 0, backfillPending: 0,
-  phase: "lease", loadedFromDb: 0,
+  phase: "lease", loadedFromDb: 0, cycle: null,
   lastCycleAt: null, lastCycleBar: null, lastCycleMs: null, lastCycleRefreshFailed: 0,
   lastCycleSignals: 0, lastCycleDecisions: 0, lastError: null,
 };
@@ -192,10 +209,11 @@ export async function evaluateSymbol(symbol: string, now = Date.now()): Promise<
     evaluatedUpTo.set(key, closeAt);
     if (done === undefined || closeAt <= done) continue;
     if (now - closeAt > span) continue; // too late: the next bar has already closed
-    const { signals: found, rejections } = evaluateSetups({
+    const { signals: found, rejections, candidates } = evaluateSetups({
       htf: combo.htf, ltf: combo.ltf,
       htfCandles: b[combo.htf], ltfCandles: ltfSeries.slice(-LTF_WINDOW),
     });
+    candidateMap.set(key, candidates.map((c) => ({ ...c, symbol, htf: combo.htf, ltf: combo.ltf, updatedAt: now })));
     for (const r of rejections) {
       if (r.signalAt !== closeAt) continue;
       decisions += 1;
@@ -216,38 +234,61 @@ async function runCycle(bar: number): Promise<void> {
   let failed = 0;
   let signals = 0;
   let decisions = 0;
+  let lateRetries = 0;
+  let error: string | null = null;
   const symbols = universe.map((s) => s.instrumentId).filter((s) => ready.has(s));
-  // Requests run in parallel up to the CoinGlass governor's limits.
-  const refreshed = await Promise.all(symbols.map(async (symbol) => {
-    try {
-      return { symbol, ok: (await refresh(symbol)) !== null };
-    } catch (err) {
-      logger.warn({ err, symbol }, "nihilist: refresh failed");
-      return { symbol, ok: false };
-    }
-  }));
-  // CoinGlass can publish the just-closed bar a little late: retry those symbols.
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const late = refreshed.filter(({ symbol, ok }) => {
-      const s = book(symbol)["30m"];
-      return ok && (!s.length || s[s.length - 1].t + INTERVAL_MS["30m"] < bar);
-    });
-    if (!late.length) break;
-    await new Promise((r) => setTimeout(r, 45_000));
-    await Promise.all(late.map(async (item) => {
-      try { item.ok = (await refresh(item.symbol)) !== null; } catch { item.ok = false; }
+  const cycle = { bar, startedAt: started, stage: "refresh" as "refresh" | "late_retry" | "evaluate", done: 0, total: symbols.length };
+  status.cycle = cycle;
+  try {
+    // Requests run in parallel up to the CoinGlass governor's limits.
+    const refreshed = await Promise.all(symbols.map(async (symbol) => {
+      try {
+        return { symbol, ok: (await refresh(symbol)) !== null };
+      } catch (err) {
+        logger.warn({ err, symbol }, "nihilist: refresh failed");
+        return { symbol, ok: false };
+      } finally {
+        cycle.done += 1;
+      }
     }));
-  }
-  for (const { symbol, ok } of refreshed) {
-    if (!ok) { failed += 1; continue; } // no data — no signal
-    try {
-      const result = await evaluateSymbol(symbol);
-      signals += result.signals;
-      decisions += result.decisions;
-    } catch (err) {
-      status.lastError = err instanceof Error ? err.message : String(err);
-      logger.error({ err, symbol }, "nihilist: evaluation failed");
+    // CoinGlass can publish the just-closed bar a little late: retry those symbols.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const late = refreshed.filter(({ symbol, ok }) => {
+        const s = book(symbol)["30m"];
+        return ok && (!s.length || s[s.length - 1].t + INTERVAL_MS["30m"] < bar);
+      });
+      if (!late.length) break;
+      lateRetries += late.length;
+      cycle.stage = "late_retry";
+      await new Promise((r) => setTimeout(r, 45_000));
+      await Promise.all(late.map(async (item) => {
+        try { item.ok = (await refresh(item.symbol)) !== null; } catch { item.ok = false; }
+      }));
     }
+    cycle.stage = "evaluate";
+    cycle.done = 0;
+    for (const { symbol, ok } of refreshed) {
+      cycle.done += 1;
+      if (!ok) { failed += 1; candidateMap.forEach((_, k) => { if (k.startsWith(`${symbol}:`)) candidateMap.delete(k); }); continue; } // no data — no signal
+      try {
+        const result = await evaluateSymbol(symbol);
+        signals += result.signals;
+        decisions += result.decisions;
+      } catch (err) {
+        error = err instanceof Error ? err.message : String(err);
+        status.lastError = error;
+        logger.error({ err, symbol }, "nihilist: evaluation failed");
+      }
+    }
+  } finally {
+    status.cycle = null;
+    const finishedAt = Date.now();
+    cycleLog.push({
+      bar, startedAt: started, finishedAt, ms: finishedAt - started, checked: symbols.length, refreshFailed: failed,
+      lateRetries, candidates: [...candidateMap.values()].reduce((a, c) => a + c.length, 0), signals, decisions, error,
+    });
+    if (cycleLog.length > CYCLE_LOG_SIZE) cycleLog = cycleLog.slice(-CYCLE_LOG_SIZE);
+    await saveState("cycles", cycleLog).catch(() => undefined);
   }
   status.lastCycleAt = Date.now();
   status.lastCycleBar = bar;
@@ -263,6 +304,7 @@ async function runCycle(bar: number): Promise<void> {
 export async function startEngine(): Promise<void> {
   await waitForEngineLease();
   status.leaseAcquired = true;
+  cycleLog = (await loadState<CycleRecord[]>("cycles").catch(() => null)) ?? [];
   status.phase = "universe";
   await refreshUniverse(Date.now());
   // Stored candles load in parallel batches; each symbol becomes ready as
