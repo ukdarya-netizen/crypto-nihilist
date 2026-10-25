@@ -42,13 +42,34 @@ router.get("/nh/stats", async (req, res) => {
   res.json({ days: d, setups: rows, open: open.rows });
 });
 
+/** Closed-trade result per UTC day (for the overview chart). */
+router.get("/nh/stats/daily", async (req, res) => {
+  const d = days(req.query.days, 30);
+  const { rows } = await pool.query(
+    `SELECT to_char(date_trunc('day', closed_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day,
+            count(*)::int AS trades,
+            count(*) FILTER (WHERE pnl_pct > 0)::int AS wins,
+            round(sum(r_multiple)::numeric, 3)::float AS sum_r,
+            round(sum(pnl_pct)::numeric, 3)::float AS sum_pnl_pct
+     FROM nh_signals WHERE status = 'closed' AND closed_at > now() - make_interval(days => $1)
+     GROUP BY 1 ORDER BY 1`,
+    [d],
+  );
+  res.json({ days: d, daily: rows });
+});
+
 router.get("/nh/signals", async (req, res) => {
   const status = req.query.status === "closed" ? "closed" : "open";
   const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
+  const setup = typeof req.query.setup === "string" && req.query.setup ? req.query.setup : null;
+  // Open trades carry the last closed 30m price for the live result.
   const { rows } = await pool.query(
-    `SELECT * FROM nh_signals WHERE status = $1
-     ORDER BY ${status === "open" ? "opened_at" : "closed_at"} DESC LIMIT $2`,
-    [status, limit],
+    `SELECT s.*, ${status === "open"
+      ? `(SELECT c.c FROM nh_candles c WHERE c.symbol = s.symbol AND c.interval = '30m' ORDER BY c.t DESC LIMIT 1)`
+      : "NULL::float"} AS last_price
+     FROM nh_signals s WHERE s.status = $1 AND ($3::text IS NULL OR s.setup = $3)
+     ORDER BY ${status === "open" ? "s.opened_at" : "s.closed_at"} DESC LIMIT $2`,
+    [status, limit, setup],
   );
   res.json({ signals: rows });
 });

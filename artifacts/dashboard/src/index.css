@@ -1,18 +1,55 @@
 @import "tailwindcss";
 
+/* Crypto Nihilist — style of the NIHILYST avatar: black, blood red, bone white, grunge. */
 @theme inline {
-  --color-background: #0b0d12;
-  --color-card: #12151d;
-  --color-border: #232838;
-  --color-foreground: #e6e8ef;
-  --color-muted: #8a91a6;
-  --color-accent: #c8a8ff;
-  --color-up: #2fd39a;
-  --color-down: #ff5c6c;
-  --color-warn: #f0b84a;
+  --color-background: #070505;
+  --color-card: #100c0c;
+  --color-card-hi: #171111;
+  --color-border: #2a1b1b;
+  --color-foreground: #efe7e1;
+  --color-muted: #8f8380;
+  --color-primary: #e3262e;
+  --color-primary-deep: #8e0f14;
+  --color-up: #3fd99b;
+  --color-down: #ff4b55;
+  --color-warn: #f2b14c;
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-display: "Rubik Dirt", "Inter", sans-serif;
+  --font-type: "Special Elite", "JetBrains Mono", monospace;
 }
 
 html, body { background: var(--color-background); color: var(--color-foreground); }
-body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
-.tabular { font-variant-numeric: tabular-nums; }
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  /* faint red spatter, as on the avatar */
+  background-image:
+    radial-gradient(circle at 12% 8%, rgba(227, 38, 46, 0.10), transparent 32%),
+    radial-gradient(circle at 92% 88%, rgba(142, 15, 20, 0.14), transparent 38%);
+  background-attachment: fixed;
+}
+.tabular { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+.font-display { font-family: var(--font-display); letter-spacing: 0.02em; }
+.font-type { font-family: var(--font-type); }
+.label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-muted); }
+
+/* Brush slash under a heading (the red stroke across the face on the avatar). */
+.slash { position: relative; display: inline-block; }
+.slash::after {
+  content: ""; position: absolute; left: -4%; right: -6%; bottom: 0.08em; height: 0.32em;
+  background: linear-gradient(100deg, transparent 0 3%, var(--color-primary) 8% 88%, transparent 97%);
+  transform: skewX(-18deg) rotate(-1.5deg); opacity: 0.8; z-index: -1; border-radius: 2px;
+}
+
+/* Card with a torn red edge on the left. */
+.panel { background: linear-gradient(180deg, var(--color-card-hi), var(--color-card)); border: 1px solid var(--color-border); position: relative; }
+.panel::before {
+  content: ""; position: absolute; left: -1px; top: 10px; bottom: 10px; width: 2px;
+  background: linear-gradient(180deg, transparent, var(--color-primary) 20% 70%, transparent);
+  opacity: 0.7;
+}
+
+.nav-active { background: linear-gradient(90deg, rgba(227, 38, 46, 0.18), transparent 85%); color: var(--color-foreground); border-color: rgba(227, 38, 46, 0.35); }
+
+::selection { background: var(--color-primary); color: #fff; }
