@@ -1,6 +1,8 @@
 import { Fragment, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 import { Empty, Panel, SideTag } from "./ui";
+import { CoinLink } from "./chart";
+import { SnapshotPanel } from "./snapshot";
 import { coin, get, price, SETUPS, setupLabel, signed, tone, usePoll, when, type Signal } from "../lib/api";
 
 export type TradeStatus = "profit" | "be_stop" | "stop_loss" | "expired" | "open";
@@ -34,10 +36,18 @@ function resultPct(s: HistoryRow): number | null {
   return ((Number(s.last_price) - s.entry) / s.entry) * 100 * (s.side === "long" ? 1 : -1);
 }
 
+export const STATUS_HELP: Record<TradeStatus, string> = {
+  open: "Сделка открыта и сопровождается по 5-минутным свечам.",
+  profit: "Закрыта в плюс: трейлингом или по времени удержания с прибылью.",
+  be_stop: "Закрыта стопом на входе (после тейка 1 или безубытка). +5/+8/+10 — до какого пика дошла.",
+  stop_loss: "Сработал структурный стоп (за реакцией от блока, ещё на 3% дальше).",
+  expired: "Закрыта по времени удержания в ноль или минус (7 дней для ОБ 4h, 21 день для ОБ 1D).",
+};
+
 function Status({ s }: { s: HistoryRow }) {
   const meta = STATUS_META[s.trade_status];
   const extra = s.trade_status === "be_stop" ? ` ${s.peak_pct >= 10 ? "+10" : s.peak_pct >= 8 ? "+8" : s.peak_pct >= 5 ? "+5" : ""}` : "";
-  return <span className={`whitespace-nowrap border px-1.5 py-0.5 font-mono text-[10px] ${meta.cls}`}>{meta.label}{extra}</span>;
+  return <span title={STATUS_HELP[s.trade_status]} className={`whitespace-nowrap border px-1.5 py-0.5 font-mono text-[10px] ${meta.cls}`}>{meta.label}{extra}</span>;
 }
 
 function Details({ s }: { s: HistoryRow }) {
@@ -56,6 +66,10 @@ function Details({ s }: { s: HistoryRow }) {
         <dt className="text-muted">R</dt><dd className={tone(s.r_multiple)}>{signed(s.r_multiple)}</dd>
         <dt className="text-muted">Telegram</dt><dd>{s.live ? "в канале" : "тень (не публикуется)"}</dd>
       </dl>
+      <div className="md:col-span-2 md:order-last">
+        <p className="label mb-2">Метрики при сигнале</p>
+        <SnapshotPanel snapshot={s.snapshot} close={s.close_context} reconstructed={s.snapshot_reconstructed} status={s.snapshot_status} />
+      </div>
       <div>
         <p className="label mb-2">Ход сделки</p>
         {events === null ? <p className="text-muted">Загрузка…</p> : !events.length ? <p className="text-muted">Событий нет.</p> : (
@@ -125,7 +139,7 @@ export function SignalHistory({ days, live, status, onStatus, limit = 200, title
                 <li key={s.id} className="border border-border">
                   <button type="button" onClick={() => setOpen(open === s.id ? null : s.id)} className="w-full p-3 text-left">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-2 font-semibold">{coin(s.symbol)} <SideTag side={s.side} /></span>
+                      <span className="flex items-center gap-2 font-semibold"><CoinLink symbol={s.symbol} signal={s} /> <SideTag side={s.side} /></span>
                       <Status s={s} />
                     </div>
                     <div className="mt-1 flex items-center justify-between text-xs text-muted">
@@ -156,7 +170,7 @@ export function SignalHistory({ days, live, status, onStatus, limit = 200, title
                     <Fragment key={s.id}>
                       <tr onClick={() => setOpen(isOpen ? null : s.id)} className="cursor-pointer border-t border-border hover:bg-white/[0.02]">
                         <td className="py-2.5 pr-3 text-muted">{when(s.opened_at)}</td>
-                        <td className="pr-3 font-sans font-semibold"><span className="flex items-center gap-2">{coin(s.symbol)} <SideTag side={s.side} />{!s.live && <span className="font-mono text-[10px] font-normal text-muted">тень</span>}</span></td>
+                        <td className="pr-3 font-sans font-semibold"><span className="flex items-center gap-2"><CoinLink symbol={s.symbol} signal={s} /> <SideTag side={s.side} />{!s.live && <span className="font-mono text-[10px] font-normal text-muted">тень</span>}</span></td>
                         <td className="pr-3 font-sans text-xs text-muted">{setupLabel(s.setup)}</td>
                         <td className="pr-3">{price(s.entry)}</td>
                         <td className="pr-3">{price(s.status === "closed" ? s.exit_price : s.last_price)}</td>

@@ -5,6 +5,10 @@ import { telegramEnabled } from "../telegram/transport";
 import { cgRequest, coinglassGovernorStats, EXCHANGE } from "../market/coinglass";
 import { apiHealth } from "../lib/apiHealth";
 import { buildJournal, tradeStatus, type JournalRow } from "../stats/journal";
+import { ensureSnapshotTable } from "../stats/snapshots";
+import { analyzeMetrics, type AnalysisRow } from "../stats/metricAnalysis";
+import { book } from "../market/candleStore";
+import { INTERVAL_MS, type Interval } from "../engine/candles";
 
 const router: IRouter = Router();
 
@@ -75,8 +79,10 @@ router.get("/nh/signals", async (req, res) => {
   const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
   const setup = typeof req.query.setup === "string" && req.query.setup ? req.query.setup : null;
   // Open trades carry last_price: the close of the last 5m candle the tracker processed.
+  await ensureSnapshotTable();
   const { rows } = await pool.query(
-    `SELECT s.* FROM nh_signals s WHERE s.status = $1 AND ($3::text IS NULL OR s.setup = $3)
+    `SELECT s.*, n.metrics AS snapshot, n.close_context, n.reconstructed AS snapshot_reconstructed, n.status AS snapshot_status FROM nh_signals s LEFT JOIN nh_signal_snapshots n ON n.signal_id = s.id
+     WHERE s.status = $1 AND ($3::text IS NULL OR s.setup = $3)
      ORDER BY ${status === "open" ? "s.opened_at" : "s.closed_at"} DESC LIMIT $2`,
     [status, limit, setup],
   );
@@ -132,7 +138,46 @@ router.get("/nh/journal", async (req, res) => {
   }
   const daily = [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day))
     .map((x) => ({ ...x, pnl: Math.round(x.pnl * 100) / 100, r: Math.round(x.r * 100) / 100 }));
-  res.json({ days: d, live, counters: counters.rows[0], ...buildJournal(rows), daily });
+  const held = rows.filter((r) => r.status === "closed" && r.closed_at)
+    .map((r) => (new Date(r.closed_at as string).getTime() - new Date(r.opened_at).getTime()) / 3_600_000);
+  const avgHoldHours = held.length ? Math.round((held.reduce((a, b) => a + b, 0) / held.length) * 10) / 10 : null;
+  res.json({ days: d, live, counters: counters.rows[0], ...buildJournal(rows), daily, avgHoldHours });
+});
+
+/** Entry metrics vs results (AltBullet indicator relations) over closed trades. */
+router.get("/nh/metrics", async (req, res) => {
+  const d = days(req.query.days, 90);
+  const setup = typeof req.query.setup === "string" && req.query.setup ? req.query.setup : null;
+  const side = req.query.side === "long" || req.query.side === "short" ? req.query.side : null;
+  await ensureSnapshotTable();
+  const { rows } = await pool.query<AnalysisRow>(
+    `SELECT s.id, s.symbol, s.setup, s.side, s.status, s.live, s.close_reason, s.pnl_pct, s.r_multiple, s.peak_pct,
+            s.mfe_pct, s.opened_at, s.closed_at, n.metrics
+     FROM nh_signals s JOIN nh_signal_snapshots n ON n.signal_id = s.id
+     WHERE s.status = 'closed' AND n.status = 'ready' AND s.opened_at > now() - make_interval(days => $1)
+       AND (NOT $2 OR s.live) AND ($3::text IS NULL OR s.setup = $3) AND ($4::text IS NULL OR s.side = $4)`,
+    [d, liveOnly(req.query.live), setup, side],
+  );
+  const coverage = await pool.query(
+    `SELECT count(*)::int AS signals,
+            count(n.signal_id) FILTER (WHERE n.status = 'ready' AND NOT n.reconstructed)::int AS live,
+            count(n.signal_id) FILTER (WHERE n.status = 'ready' AND n.reconstructed)::int AS reconstructed,
+            count(n.signal_id) FILTER (WHERE n.status = 'unavailable')::int AS unavailable,
+            count(*) FILTER (WHERE n.signal_id IS NULL)::int AS pending
+     FROM nh_signals s LEFT JOIN nh_signal_snapshots n ON n.signal_id = s.id`,
+  );
+  res.json({ days: d, closed: rows.length, coverage: coverage.rows[0], metrics: analyzeMetrics(rows) });
+});
+
+/** Candles of one coin from memory (no CoinGlass request) for the chart. */
+router.get("/nh/candles", (req, res) => {
+  const symbol = String(req.query.symbol ?? "").toUpperCase();
+  const interval = String(req.query.interval ?? "4h") as Interval;
+  if (!/^[A-Z0-9]{1,20}-USDT$/.test(symbol) || !(interval in INTERVAL_MS) || interval === "5m") {
+    res.status(400).json({ error: "bad_request" }); return;
+  }
+  const limit = Math.min(500, Math.max(20, Number(req.query.limit) || 200));
+  res.json({ symbol, interval, candles: book(symbol)[interval].slice(-limit) });
 });
 
 /** Signal history (open and closed) with filters, newest first. */
@@ -141,12 +186,14 @@ router.get("/nh/history", async (req, res) => {
   const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
   const setup = typeof req.query.setup === "string" && req.query.setup ? req.query.setup : null;
   const symbol = typeof req.query.q === "string" && req.query.q.trim() ? `%${req.query.q.trim().toUpperCase()}%` : null;
+  const exact = typeof req.query.symbol === "string" && req.query.symbol ? req.query.symbol.toUpperCase() : null;
+  await ensureSnapshotTable();
   const { rows } = await pool.query(
-    `SELECT * FROM nh_signals
-     WHERE opened_at > now() - make_interval(days => $1) AND ($2::text IS NULL OR setup = $2)
-       AND ($3::text IS NULL OR symbol LIKE $3) AND (NOT $4 OR live)
-     ORDER BY opened_at DESC LIMIT $5`,
-    [d, setup, symbol, liveOnly(req.query.live), limit],
+    `SELECT s.*, n.metrics AS snapshot, n.close_context, n.reconstructed AS snapshot_reconstructed, n.status AS snapshot_status FROM nh_signals s LEFT JOIN nh_signal_snapshots n ON n.signal_id = s.id
+     WHERE s.opened_at > now() - make_interval(days => $1) AND ($2::text IS NULL OR s.setup = $2)
+       AND ($3::text IS NULL OR s.symbol LIKE $3) AND (NOT $4 OR s.live) AND ($6::text IS NULL OR s.symbol = $6)
+     ORDER BY s.opened_at DESC LIMIT $5`,
+    [d, setup, symbol, liveOnly(req.query.live), limit, exact],
   );
   const status = typeof req.query.status === "string" ? req.query.status : "";
   const filtered = status ? rows.filter((r) => tradeStatus(r as JournalRow) === status) : rows;

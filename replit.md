@@ -11,7 +11,7 @@
 2. Закрытый бар младшего ТФ заходит в блок: low ≤ верх блока, low ≥ низ блока. Low ниже низа блока (даже тенью) — блок сломан, сетап по нему отменён.
 3. Не позже 12 баров младшего ТФ после последнего касания internal-структура младшего ТФ ломается вверх (бычий CHoCH: закрытие выше последнего внутреннего хая) → сигнал на этом баре.
 - Вход: закрытие бара слома (бот оценивает через ~20 с после закрытия 30m бара).
-- Стоп: минимум реакции после первого касания − 0,1 ATR(14) младшего ТФ.
+- Стоп: минимум реакции после первого касания − 0,1 ATR(14) младшего ТФ, и ещё на 3% дальше (`stopExtraPct`, решение владельца 2026-10-25; шорт — выше).
 - Тейк 1 по структуре: ближайший непробитый хай старшего ТФ выше входа (если хаёв выше нет — 2R): 50% фиксируется, стоп переносится на вход.
 - Трейлинг как в AltBullet: с +15% от входа стоп = пик − 10 п.п., только подтягивается; ведёт всё, что открыто (если +15% наступает раньше тейка 1 — всю позицию).
 - Оповещения как в AltBullet: +5%, +8%, +10%, дальше каждые +5% (одно сообщение на скачок, наивысший уровень), отдельно тейк 1, включение трейлинга, закрытие. Безубыток AltBullet на +5% выключен (`BREAKEVEN_AT_PCT = null`); бэктест сравнивает оба варианта.
@@ -46,8 +46,13 @@
 - `node --import tsx src/analysis/backtest.ts --symbols JCT-USDT,BTC-USDT --days 90`;
 - `node --import tsx src/analysis/backtest.ts --universe 150 --days 60` — сводка по сетапам.
 
+## Снапшоты метрик (`engine/metrics.ts`, `stats/snapshots.ts`, `stats/metricAnalysis.ts`)
+- Как снапшоты AltBullet: на каждый сигнал одна неизменяемая запись `nh_signal_snapshots` со срезом рынка на момент сигнала (только закрытые к тому моменту бары): геометрия сетапа (стоп %, R, размер и возраст блока, касания), монета и BTC — RSI и ATR% (30m/1h/4h/1D), расстояние до EMA50/200 и тренд (4h/1D), изменения 1ч/4ч/24ч/7д/30д, положение в диапазоне 24ч/7д/30д. Только теханализ, без объёмов.
+- Новые сигналы пишутся при открытии; старые и состояние рынка при закрытии — фоновый бэкфилл каждые 5 минут по сохранённым свечам (`reconstructed = true`). Таблица создаётся сама.
+- Страница «Метрики входа»: каждая метрика по закрытым сделкам разбита на группы (числа — на четверти) с win rate CAB, средним R и % — для выбора настоящего фильтра входа.
+
 ## API
-`GET /api/nh/status`, `/api/nh/journal?days=N&live=1`, `/api/nh/history?days=N&status=&setup=&q=&live=1`, `/api/nh/signals/:id/events`, `/api/nh/stats?days=N`, `/api/nh/signals?status=open|closed`, `/api/nh/decisions`, диагностика сырого ответа CoinGlass: `/api/nh/diag/candles?symbol=JCT-USDT&interval=4h&limit=3`, `/api/nh/diag/pairs`.
+`GET /api/nh/status`, `/api/nh/scanner`, `/api/nh/metrics?days=N&setup=&side=`, `/api/nh/candles?symbol=JCT-USDT&interval=4h`, `/api/nh/journal?days=N&live=1`, `/api/nh/history?days=N&status=&setup=&q=&live=1`, `/api/nh/signals/:id/events`, `/api/nh/stats?days=N`, `/api/nh/signals?status=open|closed`, `/api/nh/decisions`, диагностика сырого ответа CoinGlass: `/api/nh/diag/candles?symbol=JCT-USDT&interval=4h&limit=3`, `/api/nh/diag/pairs`.
 
 ## БД (`lib/db/src/schema/nihilist.ts`)
 `nh_candles`, `nh_signals`, `nh_signal_events` (события сделок = очередь Telegram), `nh_decisions`, `nh_state`, `nh_telegram_subscribers`, `nh_telegram_state`, `nh_telegram_deliveries`. Схема: `pnpm --filter @workspace/db run push` (только таблицы `nh_*`).

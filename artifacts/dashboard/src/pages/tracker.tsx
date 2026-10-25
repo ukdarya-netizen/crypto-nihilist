@@ -1,9 +1,14 @@
-import { Empty, Panel, SideTag } from "../components/ui";
-import { coin, livePct, price, setupLabel, signed, tone, usePoll, when, type Signal } from "../lib/api";
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { Empty, Kpi, Panel, Segmented, SideTag } from "../components/ui";
+import { CoinLink } from "../components/chart";
+import { SnapshotPanel } from "../components/snapshot";
+import { fmtHours, livePct, price, setupLabel, signed, tone, usePoll, when, type Signal } from "../lib/api";
 
 const TRAIL_AT = 15;
 
 function Card({ s }: { s: Signal }) {
+  const [more, setMore] = useState(false);
   const live = livePct(s);
   const dir = s.side === "long" ? 1 : -1;
   const pct = (p: number) => ((p - s.entry) / s.entry) * 100 * dir;
@@ -18,7 +23,7 @@ function Card({ s }: { s: Signal }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="flex flex-wrap items-center gap-2 text-lg font-semibold">
-            {coin(s.symbol)} <SideTag side={s.side} />
+            <CoinLink symbol={s.symbol} signal={s} /> <SideTag side={s.side} />
             {!s.live && <span className="border border-border px-1.5 py-0.5 font-mono text-[10px] uppercase text-muted">тень</span>}
           </p>
           <p className="mt-0.5 text-xs text-muted">{setupLabel(s.setup)} · {s.block_scope === "swing" ? "swing-блок" : "internal-блок"}</p>
@@ -46,17 +51,45 @@ function Card({ s }: { s: Signal }) {
         Блок {price(s.block_bottom)}–{price(s.block_top)} · стоп при входе {s.risk_pct.toFixed(1)}%
         {s.tp1_hit ? " · половина зафиксирована на тейке 1" : ""}
         {s.trailing_active ? " · трейлинг идёт: пик − 10 п.п." : " · трейлинг с +15%"} · цена {price(s.last_price)}
+        {" · в сделке "}{fmtHours((Date.now() - new Date(s.opened_at).getTime()) / 3_600_000)}
       </p>
+      <button type="button" onClick={() => setMore((v) => !v)} className="mt-2 flex items-center gap-1 font-mono text-[11px] text-muted hover:text-foreground">
+        <ChevronDown className={`size-3.5 transition ${more ? "rotate-180" : ""}`} />метрики при сигнале
+      </button>
+      {more && <div className="mt-2 border-t border-border pt-2 text-xs"><SnapshotPanel snapshot={s.snapshot} reconstructed={s.snapshot_reconstructed} status={s.snapshot_status} /></div>}
     </div>
   );
 }
 
+type Sort = "pnl" | "time" | "peak";
+
 export default function Tracker() {
-  const { data } = usePoll<{ signals: Signal[] }>("/nh/signals?status=open&limit=200");
-  const rows = data?.signals ?? [];
+  const { data } = usePoll<{ signals: Signal[] }>("/nh/signals?status=open&limit=500");
+  const [side, setSide] = useState<"" | "long" | "short">("");
+  const [sort, setSort] = useState<Sort>("time");
+  const all = data?.signals ?? [];
+  const rows = all.filter((s) => !side || s.side === side).sort((a, b) =>
+    sort === "pnl" ? (livePct(b) ?? -1e9) - (livePct(a) ?? -1e9)
+      : sort === "peak" ? b.peak_pct - a.peak_pct
+        : new Date(b.opened_at).getTime() - new Date(a.opened_at).getTime());
+  const lives = all.map(livePct).filter((v): v is number => v !== null);
+  const plus = lives.filter((v) => v > 0).length;
+  const avg = lives.length ? lives.reduce((a, b) => a + b, 0) / lives.length : null;
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted">Сделки ведутся по 5-минутным свечам. Результат — движение цены от входа, без комиссий. «Тень» — сетап ещё не публикуется в Telegram.</p>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Kpi label="Открыто позиций" value={data ? all.length : "—"} hint={data ? `лонг ${all.filter((s) => s.side === "long").length} · шорт ${all.filter((s) => s.side === "short").length}` : undefined} />
+        <Kpi label="В плюсе / в минусе" value={data ? `${plus} / ${lives.length - plus}` : "—"} toneClass={plus >= lives.length - plus ? "text-up" : "text-down"} />
+        <Kpi label="Средний результат" value={signed(avg, 2, "%")} toneClass={tone(avg)} hint="движение цены от входа" />
+        <Kpi label="Тейк 1 взят / трейлинг" value={data ? `${all.filter((s) => s.tp1_hit).length} / ${all.filter((s) => s.trailing_active).length}` : "—"} />
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted">Сделки ведутся по 5-минутным свечам. Результат — движение цены от входа, без комиссий.</p>
+        <div className="flex flex-wrap gap-2">
+          <Segmented<"" | "long" | "short"> value={side} onChange={setSide} options={[{ id: "", label: "все" }, { id: "long", label: "лонг" }, { id: "short", label: "шорт" }]} />
+          <Segmented<Sort> value={sort} onChange={setSort} options={[{ id: "time", label: "новые" }, { id: "pnl", label: "по %" }, { id: "peak", label: "по пику" }]} />
+        </div>
+      </div>
       {!data ? <Panel><Empty>Загрузка…</Empty></Panel> : !rows.length ? <Panel><Empty>Открытых сделок нет.</Empty></Panel> : (
         <div className="grid gap-3 lg:grid-cols-2">{rows.map((s) => <Card key={s.id} s={s} />)}</div>
       )}

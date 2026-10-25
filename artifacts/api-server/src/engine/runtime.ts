@@ -14,6 +14,7 @@
  */
 import { pool } from "@workspace/db";
 import { INTERVAL_MS, type Interval } from "./candles";
+import { captureSnapshot, ensureSnapshotTable, startSnapshotBackfill } from "../stats/snapshots";
 import { evaluateSetups, type HtfInterval, type SetupCandidate, type SetupSignal } from "./setups";
 import { COMBOS, MAX_HOLD_MS } from "./config";
 import { openTrade } from "./trade";
@@ -171,6 +172,13 @@ async function openSignal(symbol: string, s: SetupSignal): Promise<boolean> {
   await recordDecision(symbol, s.setup, s.barTime, "accepted", null, s.block.id, signalDetails(s));
   const id = inserted.rows[0]?.id;
   if (id === undefined) return false;
+  await captureSnapshot(id, {
+    symbol, side: s.side, htf: s.htf, ltf: s.ltf, entry: s.entry, stop: s.stop, tp1: s.tp1,
+    riskPct: s.riskPct, rr1: s.rr1, blockTop: s.block.top, blockBottom: s.block.bottom, blockScope: s.block.scope,
+    blockTime: s.block.time, blockCreatedAt: s.block.createdAt, firstTouchAt: s.firstTouchAt, lastTouchAt: s.lastTouchAt,
+    htfSwingTrend: s.htfSwingTrend, htfInternalTrend: s.htfInternalTrend, ltfAtr: s.ltfAtr,
+    targetsSource: s.targetsSource, signalAt: s.signalAt,
+  });
   await insertEvent(id, `${id}:opened`, "opened", s.entry, signalDetails(s), s.signalAt);
   return true;
 }
@@ -332,6 +340,8 @@ export async function startEngine(): Promise<void> {
   }
   status.phase = "running";
   status.ready = ready.size;
+  await ensureSnapshotTable().catch((err) => logger.error({ err }, "nihilist: snapshot table unavailable"));
+  startSnapshotBackfill();
   void backfillLoop();
   startTracker();
   startTelegram();

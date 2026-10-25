@@ -69,3 +69,13 @@ test("short is the mirror image", () => {
   assert.equal(signals[0].side, "short");
   assert.ok(signals[0].stop > signals[0].entry && signals[0].tp1 < signals[0].entry);
 });
+
+test("stop sits 3% beyond the TA stop (owner rule); rr and risk follow it", () => {
+  const { ltf, htf } = scenario(84.8);
+  const base = { htf: "4h" as const, ltf: "30m" as const, htfCandles: htf, ltfCandles: ltf, sides: ["long" as const] };
+  const ta = evaluateSetups({ ...base, options: { stopExtraPct: 0, minRr: 0 } }).signals[0];
+  const live = evaluateSetups({ ...base, options: { minRr: 0 } }).signals[0];
+  assert.ok(ta && live);
+  assert.ok(Math.abs(live.stop - ta.stop * 0.97) < 1e-9, `${live.stop} vs ${ta.stop}`);
+  assert.ok(live.riskPct > ta.riskPct && live.rr1 < ta.rr1);
+});

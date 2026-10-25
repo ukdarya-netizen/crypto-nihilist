@@ -1,15 +1,16 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Activity, BookOpen, HeartPulse, History, MoreHorizontal, ScanSearch, Target, X } from "lucide-react";
+import { Activity, BookOpen, FlaskConical, HeartPulse, History, MoreHorizontal, ScanSearch, Target, X } from "lucide-react";
 import { BrandLockup, BrandMark, SLOGAN, Wordmark } from "./brand";
-import { usePoll, type Status } from "../lib/api";
+import { STAGE_LABEL, dur, usePoll, type Status } from "../lib/api";
 
-export type Route = "/" | "/tracker" | "/scanner" | "/history" | "/health" | "/reference";
+export type Route = "/" | "/tracker" | "/scanner" | "/history" | "/metrics" | "/health" | "/reference";
 
 export const NAV: Array<{ href: Route; label: string; sub: string; icon: typeof Target }> = [
   { href: "/tracker", label: "Открытые позиции", sub: "мониторинг ТП / стопов", icon: Target },
   { href: "/", label: "Обзор", sub: "общая статистика", icon: Activity },
   { href: "/scanner", label: "Сканер", sub: "решения по циклам", icon: ScanSearch },
   { href: "/history", label: "История сигналов", sub: "закрытые сделки", icon: History },
+  { href: "/metrics", label: "Метрики входа", sub: "что отличает прибыль от стопа", icon: FlaskConical },
   { href: "/health", label: "Bot Health", sub: "движок · CoinGlass", icon: HeartPulse },
   { href: "/reference", label: "Справочник", sub: "сетапы · правила", icon: BookOpen },
 ];
@@ -61,6 +62,28 @@ function ApiDots() {
           </span>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Positions and scan state, always visible (header on desktop, strip on phones). */
+function ScanStrip({ compact = false }: { compact?: boolean }) {
+  const { data } = usePoll<Status>("/nh/status", 10_000);
+  const [, tick] = useState(0);
+  useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, []);
+  if (!data) return null;
+  const e = data.engine;
+  const cur = e.cycle;
+  const items = [
+    <a key="pos" href="#/tracker" className="hover:text-foreground">позиций <b className="text-foreground">{data.signals.open}</b></a>,
+    cur
+      ? <span key="now" className="text-up">скан: {STAGE_LABEL[cur.stage]} {cur.done}/{cur.total} · {dur(Date.now() - cur.startedAt)}</span>
+      : <span key="now">скан: ожидание</span>,
+    <span key="last">прошлый: {e.lastCycleMs !== null ? dur(e.lastCycleMs) : "—"}</span>,
+  ];
+  return (
+    <div className={`flex items-center gap-3 font-mono text-[11px] text-muted ${compact ? "flex-wrap" : ""}`}>
+      {items.map((it, i) => <span key={i} className="flex items-center gap-3">{i > 0 && <span className="text-border">|</span>}{it}</span>)}
     </div>
   );
 }
@@ -139,8 +162,9 @@ export function Layout({ route, children }: { route: Route; children: ReactNode 
               <h1 className="truncate text-base font-semibold md:text-xl"><span className="slash relative z-0">{current.label}</span></h1>
             </div>
           </div>
-          <div className="hidden font-mono text-xs text-muted md:block"><Clock /></div>
+          <div className="hidden items-center gap-5 font-mono text-xs text-muted md:flex"><ScanStrip /><Clock /></div>
         </header>
+        <div className="border-b border-border px-4 py-1.5 md:hidden"><ScanStrip compact /></div>
         <div className="flex-1 overflow-auto p-4 pb-24 md:p-8">{children}</div>
       </main>
       <MobileNav route={route} />

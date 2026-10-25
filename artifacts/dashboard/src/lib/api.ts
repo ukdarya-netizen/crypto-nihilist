@@ -80,7 +80,12 @@ export type Signal = {
   targets_source: string; last_price: number | null;
   status: "open" | "closed"; live: boolean; current_stop: number | null; trailing_active: boolean; breakeven_moved: boolean;
   peak_pct: number; last_milestone: number;
+  details?: Record<string, unknown>;
+  snapshot?: Snapshot | null; close_context?: Snapshot | null;
+  snapshot_reconstructed?: boolean | null; snapshot_status?: string | null;
 };
+export type Snapshot = Record<string, number | string | boolean | null>;
+export type Candle = { t: number; o: number; h: number; l: number; c: number };
 export type Decision = {
   id: number; symbol: string; setup: string; bar_time: string; decision: string; reason: string | null;
   created_at: string; details: Record<string, unknown>;
@@ -131,3 +136,41 @@ export function livePct(s: Signal): number | null {
   const dir = s.side === "long" ? 1 : -1;
   return ((Number(s.last_price) - s.entry) / s.entry) * 100 * dir;
 }
+
+/** Human labels of snapshot metrics (engine/metrics.ts). */
+const TF = (k: string) => k.replace("_30m", " 30m").replace("_1h", " 1h").replace("_4h", " 4h").replace("_1d", " 1D");
+const BASE_LABEL: Record<string, string> = {
+  side: "Направление", htf: "ТФ блока", ltf: "ТФ слома", block_scope: "Тип блока", targets_source: "Тейк 1 из",
+  risk_pct: "Стоп, %", rr1: "R до тейка 1", tp1_pct: "Тейк 1, %", block_size_pct: "Размер блока, %",
+  entry_from_block_pct: "Вход от края блока, %", block_age_h: "Возраст блока, ч", since_first_touch_h: "С первого касания, ч",
+  since_last_touch_h: "С последнего касания, ч", touch_span_h: "Касания длились, ч", ltf_atr_pct: "ATR младшего ТФ, %",
+  htf_swing_aligned: "Swing-тренд старшего ТФ по ходу", htf_internal_aligned: "Internal-тренд старшего ТФ по ходу",
+  hour_utc: "Час сигнала (UTC)", weekday_utc: "День недели (0 = вс)", price: "Цена",
+  chg1h: "Изм. 1ч, %", chg4h: "Изм. 4ч, %", chg24h: "Изм. 24ч, %", chg7d: "Изм. 7д, %", chg30d: "Изм. 30д, %",
+  range24h_pos: "Позиция в диапазоне 24ч (0–100)", range7d_pos: "Позиция в диапазоне 7д (0–100)", range30d_pos: "Позиция в диапазоне 30д (0–100)",
+  trend_4h_aligned: "Тренд 4h (EMA50/200) по ходу", trend_1d_aligned: "Тренд 1D (EMA50/200) по ходу", btc_trend_4h_aligned: "Тренд BTC 4h по ходу",
+};
+export function metricLabel(key: string): string {
+  const btc = key.startsWith("btc_");
+  const k = btc ? key.slice(4) : key;
+  let label = BASE_LABEL[k];
+  if (!label) {
+    if (k.startsWith("rsi_")) label = `RSI ${TF(k).slice(4)}`;
+    else if (k.startsWith("atrpct_")) label = `ATR ${TF(k).slice(7)}, %`;
+    else if (k.startsWith("ema50dist_")) label = `От EMA50 ${TF(k).slice(10)}, %`;
+    else if (k.startsWith("ema200dist_")) label = `От EMA200 ${TF(k).slice(11)}, %`;
+    else if (k.startsWith("trend_")) label = `Тренд ${TF(k).slice(6)} (EMA50/200)`;
+    else label = key;
+  }
+  return btc ? `BTC · ${label}` : label;
+}
+export function metricValue(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "boolean") return v ? "да" : "нет";
+  if (v === "up") return "вверх";
+  if (v === "down") return "вниз";
+  if (typeof v === "number") return Math.abs(v) >= 1000 ? v.toFixed(0) : String(Number(v.toFixed(4)));
+  return String(v);
+}
+export const fmtHours = (h: number | null | undefined) =>
+  h === null || h === undefined ? "—" : h >= 24 ? `${Math.floor(h / 24)}д ${Math.round(h % 24)}ч` : `${h.toFixed(1)}ч`;

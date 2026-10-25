@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from "react";
-import { Activity, AlertTriangle, BarChart3, Shield, TrendingDown, TrendingUp, Trophy, Zap } from "lucide-react";
+import { Activity, AlertTriangle, BarChart3, Clock3, Shield, TrendingDown, TrendingUp, Trophy, Zap } from "lucide-react";
 import { Empty, Panel, Segmented } from "../components/ui";
 import { SignalHistory, type TradeStatus } from "../components/signal-history";
-import { SETUPS, coin, setupLabel, signed, tone, usePoll, type Status } from "../lib/api";
+import { DailyArchive } from "../components/daily-archive";
+import { SETUPS, coin, dur, fmtHours, setupLabel, signed, tone, usePoll, type Status } from "../lib/api";
 
 type Summary = {
   total: number; open: number; closed: number; profit: number; beStop: number; stopLoss: number; expired: number;
@@ -18,6 +19,7 @@ type Journal = {
   summary: Summary;
   bySetup: Array<Summary & { setup: string }>;
   daily: Array<{ day: string; trades: number; wins: number; pnl: number; r: number }>;
+  avgHoldHours?: number | null;
 };
 
 function StatCard({ title, value, sub, icon: Icon, color = "", onClick, active, bar }: {
@@ -88,7 +90,7 @@ export default function Overview() {
   const [metric, setMetric] = useState<"pnl" | "r">("pnl");
   const [status, setStatus] = useState<"" | TradeStatus>("");
   const { data } = usePoll<Journal>(`/nh/journal?days=${days}${live ? "&live=1" : ""}`);
-  const st = usePoll<Status>("/nh/status", 60_000).data;
+  const st = usePoll<Status>("/nh/status", 10_000).data;
   const s = data?.summary;
   const bySetup = new Map((data?.bySetup ?? []).map((r) => [r.setup, r]));
   const focus = (next: "" | TradeStatus) => {
@@ -98,11 +100,14 @@ export default function Overview() {
 
   return (
     <div className="space-y-4 md:space-y-6">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <StatCard title="СИГНАЛОВ СЕГОДНЯ" value={data?.counters.today ?? "—"} icon={Zap} color="text-primary" />
         <StatCard title="ВСЕГО СИГНАЛОВ" value={data?.counters.total ?? "—"} icon={BarChart3} />
         <StatCard title="МОНЕТ СКАНИРУЕТСЯ" value={st ? st.engine.ready : "—"} sub={st ? `из ${st.engine.universe} пар BingX` : undefined} icon={Activity} color="text-up" />
         <StatCard title="АКТИВНЫХ" value={s?.open ?? "—"} sub="сделок в работе" icon={AlertTriangle} color="text-warn" onClick={() => focus("open")} active={status === "open"} />
+        <StatCard title="СКАН" value={st?.engine.cycle ? `${st.engine.cycle.done}/${st.engine.cycle.total}` : st?.engine.lastCycleMs != null ? dur(st.engine.lastCycleMs) : "—"}
+          sub={st?.engine.cycle ? `идёт ${dur(Date.now() - st.engine.cycle.startedAt)}` : "длительность прошлого скана"} icon={Activity} />
+        <StatCard title="СРЕДНЕЕ ВРЕМЯ СДЕЛКИ" value={fmtHours(data?.avgHoldHours)} sub="от сигнала до закрытия" icon={Clock3} />
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
@@ -147,6 +152,8 @@ export default function Overview() {
       <Panel title="График прибыльности по дням" right={<Segmented<"pnl" | "r"> value={metric} onChange={setMetric} options={[{ id: "pnl", label: "%" }, { id: "r", label: "R" }]} />}>
         <DailyChart rows={data?.daily ?? []} metric={metric} />
       </Panel>
+
+      <DailyArchive />
 
       <Panel title="Результаты по сетапам">
         <div className="-mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">

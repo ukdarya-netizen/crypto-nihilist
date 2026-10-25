@@ -13,7 +13,7 @@
  *     last internal high) -> signal on that bar.
  *  Stop: below the lowest low since the first touch (the reaction low)
  *  minus 0.1 x ATR(14) of the LTF ("extreme" mode) or below the block
- *  bottom ("ob" mode). Targets: the nearest unbroken HTF pivot high above
+ *  bottom ("ob" mode), then 3% further (stopExtraPct, short: 3% higher). Targets: the nearest unbroken HTF pivot high above
  *  the entry (TP1) and the next one (TP2). Without any unbroken high above
  *  (price discovery): TP1 = 2R, TP2 = 3R.
  *  One trade per order block per setup.
@@ -35,6 +35,8 @@ export type SetupOptions = {
   blockScopes: Array<"internal" | "swing">;
   /** Research only: a block may give another signal after a new touch (live: one trade per block). */
   reuseBlocks: boolean;
+  /** Extra room beyond the TA stop, % of the stop price (owner 2026-10-25: 3). */
+  stopExtraPct: number;
 };
 
 export const DEFAULT_SETUP_OPTIONS: SetupOptions = {
@@ -45,6 +47,7 @@ export const DEFAULT_SETUP_OPTIONS: SetupOptions = {
   maxRiskPct: 20,
   blockScopes: ["internal", "swing"],
   reuseBlocks: false,
+  stopExtraPct: 3,
 };
 
 export type SetupSignal = {
@@ -266,10 +269,10 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
       let stop: number;
       if (side === "long") {
         const base = options.stopMode === "ob" ? Math.min(zone.block.bottom, extreme) : extreme;
-        stop = base - options.stopAtrBuffer * ltfAtr;
+        stop = (base - options.stopAtrBuffer * ltfAtr) * (1 - options.stopExtraPct / 100);
       } else {
         const base = options.stopMode === "ob" ? Math.max(zone.block.top, extreme) : extreme;
-        stop = base + options.stopAtrBuffer * ltfAtr;
+        stop = (base + options.stopAtrBuffer * ltfAtr) * (1 + options.stopExtraPct / 100);
       }
       const risk = side === "long" ? entry - stop : stop - entry;
       if (!(risk > 0) || stop <= 0) { reject("stop_not_behind_entry", { entry, stop }); continue; }

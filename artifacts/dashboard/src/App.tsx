@@ -7,6 +7,7 @@ import Tracker from "./pages/tracker";
 import Scanner from "./pages/scanner";
 import History from "./pages/history";
 import Health from "./pages/health";
+import Metrics from "./pages/metrics";
 import Reference from "./pages/reference";
 
 function PinGate({ onPin, wrong }: { onPin: (pin: string) => void; wrong: boolean }) {
@@ -44,6 +45,6 @@ export default function App() {
   }, []);
   if (state === "checking") return <div className="flex min-h-[100dvh] items-center justify-center text-sm text-muted">Загрузка…</div>;
   if (state !== "ok") return <PinGate onPin={check} wrong={state === "wrong"} />;
-  const page = { "/": <Overview />, "/tracker": <Tracker />, "/scanner": <Scanner />, "/history": <History />, "/health": <Health />, "/reference": <Reference /> }[route];
+  const page = { "/": <Overview />, "/tracker": <Tracker />, "/scanner": <Scanner />, "/history": <History />, "/metrics": <Metrics />, "/health": <Health />, "/reference": <Reference /> }[route];
   return <Layout route={route}>{page}</Layout>;
 }
