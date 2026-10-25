@@ -1,0 +1,328 @@
+/**
+ * Crypto Nihilist engine.
+ *
+ * Every 30 minutes, ~20 s after the 30m bar closes:
+ *   1. refresh candles of every BingX perpetual (CoinGlass, closed bars only);
+ *   2. advance open virtual trades on the new 30m bars;
+ *   3. evaluate the setups whose lower timeframe just closed a bar:
+ *      {4h, 1d} order block × {30m, 1h} CHoCH × {long, short}.
+ *      Only a signal on the bar that has just closed opens a trade; after a
+ *      pause nothing is opened late.
+ * Every evaluated CHoCH inside a higher-timeframe block is written to
+ * `nh_decisions` (accepted or the rejection reason).
+ * Signals go to the dashboard only (owner decision, Telegram later).
+ */
+import { pool } from "@workspace/db";
+import { INTERVAL_MS, type Interval } from "./candles";
+import { evaluateSetups, type HtfInterval, type SetupSignal } from "./setups";
+import { COMBOS, MAX_HOLD_MS } from "./config";
+import { applyCandles, openTrade, tradeResult, type TradeState } from "./trade";
+import { backfill, book, loadFromDb, needsBackfill, pruneDb, refresh } from "../market/candleStore";
+import { getUniverse, type UniverseSymbol } from "../market/coinglass";
+import { waitForEngineLease } from "../ops/lease";
+import { logger } from "../lib/logger";
+
+/** LTF bars walked per evaluation (enough for the LTF structure to settle). */
+const LTF_WINDOW = 400;
+/** Minimum history before a symbol is evaluated. */
+const MIN_BARS: Record<Interval, number> = { "30m": 200, "1h": 200, "4h": 60, "1d": 30 };
+const CYCLE_DELAY_MS = 20_000;
+const UNIVERSE_REFRESH_MS = 24 * 60 * 60_000;
+
+export type EngineStatus = {
+  startedAt: number;
+  leaseAcquired: boolean;
+  universe: number;
+  ready: number;
+  backfillPending: number;
+  lastCycleAt: number | null;
+  lastCycleBar: number | null;
+  lastCycleMs: number | null;
+  lastCycleRefreshFailed: number;
+  lastCycleSignals: number;
+  lastCycleDecisions: number;
+  lastError: string | null;
+};
+
+const status: EngineStatus = {
+  startedAt: Date.now(), leaseAcquired: false, universe: 0, ready: 0, backfillPending: 0,
+  lastCycleAt: null, lastCycleBar: null, lastCycleMs: null, lastCycleRefreshFailed: 0,
+  lastCycleSignals: 0, lastCycleDecisions: 0, lastError: null,
+};
+export const engineStatus = (): EngineStatus => ({ ...status });
+
+let universe: UniverseSymbol[] = [];
+let universeAt = 0;
+const ready = new Set<string>();
+
+async function saveState(key: string, value: unknown): Promise<void> {
+  await pool.query(
+    `INSERT INTO nh_state (key, value, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+    [key, JSON.stringify(value)],
+  );
+}
+
+async function loadState<T>(key: string): Promise<T | null> {
+  const { rows } = await pool.query<{ value: T }>("SELECT value FROM nh_state WHERE key = $1", [key]);
+  return rows[0]?.value ?? null;
+}
+
+async function refreshUniverse(now: number): Promise<void> {
+  if (universe.length && now - universeAt < UNIVERSE_REFRESH_MS) return;
+  const fresh = await getUniverse();
+  if (fresh) {
+    universe = fresh;
+    universeAt = now;
+    await saveState("universe", fresh);
+  } else if (!universe.length) {
+    universe = (await loadState<UniverseSymbol[]>("universe")) ?? [];
+    logger.warn({ cached: universe.length }, "nihilist: universe request failed — using the stored list");
+  }
+  status.universe = universe.length;
+}
+
+function hasHistory(symbol: string): boolean {
+  const b = book(symbol);
+  return (Object.keys(MIN_BARS) as Interval[]).every((i) => b[i].length >= MIN_BARS[i]);
+}
+
+/** Background deep backfill; never blocks a cycle. */
+async function backfillLoop(): Promise<void> {
+  for (;;) {
+    const pending = universe.filter((s) => needsBackfill(s.instrumentId));
+    status.backfillPending = pending.length;
+    for (const s of pending) {
+      try {
+        await backfill(s.instrumentId);
+      } catch (err) {
+        logger.warn({ err, symbol: s.instrumentId }, "nihilist: backfill failed");
+      }
+      if (hasHistory(s.instrumentId)) ready.add(s.instrumentId);
+      status.backfillPending = Math.max(0, status.backfillPending - 1);
+    }
+    status.ready = ready.size;
+    await new Promise((r) => setTimeout(r, 60_000));
+  }
+}
+
+type OpenRow = {
+  id: number; symbol: string; setup: string; htf: HtfInterval; side: "long" | "short";
+  entry: number; stop: number; tp1: number; tp2: number;
+  opened_at: Date; expires_at: Date; tp1_hit: boolean; tp1_at: Date | null;
+  mfe_pct: number; mae_pct: number; last_candle_time: string | null;
+};
+
+function stateFromRow(row: OpenRow): TradeState {
+  return {
+    side: row.side, entry: row.entry, stop: row.stop, tp1: row.tp1, tp2: row.tp2,
+    openedAt: row.opened_at.getTime(), expiresAt: row.expires_at.getTime(),
+    tp1Hit: row.tp1_hit, tp1At: row.tp1_at ? row.tp1_at.getTime() : null,
+    currentStop: row.tp1_hit ? row.entry : row.stop,
+    closed: false, closedAt: null, closeReason: null, exitPrice: null,
+    mfePct: row.mfe_pct, maePct: row.mae_pct,
+    lastCandleTime: row.last_candle_time === null ? null : Number(row.last_candle_time),
+  };
+}
+
+/** Applies the stored 30m bars to every open trade of the symbol. */
+async function trackOpenTrades(symbol: string): Promise<void> {
+  const { rows } = await pool.query<OpenRow>(
+    "SELECT * FROM nh_signals WHERE status = 'open' AND symbol = $1", [symbol],
+  );
+  const bars = book(symbol)["30m"];
+  for (const row of rows) {
+    const before = stateFromRow(row);
+    const after = applyCandles(before, bars, INTERVAL_MS["30m"]);
+    if (after.lastCandleTime === before.lastCandleTime) continue;
+    const mark = bars.length ? bars[bars.length - 1].c : undefined;
+    const result = tradeResult(after, mark);
+    await pool.query(
+      `UPDATE nh_signals SET status = $2, tp1_hit = $3, tp1_at = $4, closed_at = $5, close_reason = $6,
+         exit_price = $7, pnl_pct = $8, r_multiple = $9, mfe_pct = $10, mae_pct = $11, last_candle_time = $12
+       WHERE id = $1`,
+      [
+        row.id, after.closed ? "closed" : "open", after.tp1Hit,
+        after.tp1At ? new Date(after.tp1At) : null,
+        after.closedAt ? new Date(after.closedAt) : null, after.closeReason, after.exitPrice,
+        result.pnlPct, result.r, after.mfePct, after.maePct, after.lastCandleTime,
+      ],
+    );
+  }
+}
+
+async function recordDecision(
+  symbol: string, setup: string, barTime: number, decision: "accepted" | "rejected" | "skipped",
+  reason: string | null, blockId: string, details: Record<string, unknown>,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO nh_decisions (symbol, setup, bar_time, decision, reason, block_id, details)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`,
+    [symbol, setup, barTime, decision, reason, blockId, JSON.stringify(details)],
+  );
+}
+
+async function openSignal(symbol: string, s: SetupSignal): Promise<boolean> {
+  const busy = await pool.query(
+    "SELECT 1 FROM nh_signals WHERE status = 'open' AND symbol = $1 AND setup = $2 LIMIT 1", [symbol, s.setup],
+  );
+  if (busy.rowCount) {
+    await recordDecision(symbol, s.setup, s.barTime, "skipped", "open_signal_same_setup", s.block.id, signalDetails(s));
+    return false;
+  }
+  const trade = openTrade({
+    side: s.side, entry: s.entry, stop: s.stop, tp1: s.tp1, tp2: s.tp2,
+    openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf],
+  });
+  const inserted = await pool.query(
+    `INSERT INTO nh_signals (symbol, setup, htf, ltf, side, block_id, block_top, block_bottom, block_scope,
+       bar_time, entry, stop, tp1, tp2, risk_pct, rr1, targets_source, opened_at, expires_at, details)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+     ON CONFLICT DO NOTHING`,
+    [
+      symbol, s.setup, s.htf, s.ltf, s.side, s.block.id, s.block.top, s.block.bottom, s.block.scope,
+      s.barTime, s.entry, s.stop, s.tp1, s.tp2, s.riskPct, s.rr1, s.targetsSource,
+      new Date(trade.openedAt), new Date(trade.expiresAt), JSON.stringify(signalDetails(s)),
+    ],
+  );
+  await recordDecision(symbol, s.setup, s.barTime, "accepted", null, s.block.id, signalDetails(s));
+  return Boolean(inserted.rowCount);
+}
+
+function signalDetails(s: SetupSignal): Record<string, unknown> {
+  return {
+    entry: s.entry, stop: s.stop, tp1: s.tp1, tp2: s.tp2, riskPct: s.riskPct, rr1: s.rr1, rr2: s.rr2,
+    targetsSource: s.targetsSource, blockScope: s.block.scope, blockTop: s.block.top, blockBottom: s.block.bottom,
+    blockTime: s.block.time, blockCreatedAt: s.block.createdAt, firstTouchAt: s.firstTouchAt,
+    lastTouchAt: s.lastTouchAt, extreme: s.extreme, chochLevel: s.chochLevel,
+    htfSwingTrend: s.htfSwingTrend, htfInternalTrend: s.htfInternalTrend, ltfAtr: s.ltfAtr,
+  };
+}
+
+/** symbol:ltf -> close time of the last LTF bar already evaluated. */
+const evaluatedUpTo = new Map<string, number>();
+
+/**
+ * Evaluates the LTF bars of one symbol that closed since the last
+ * evaluation. A bar is used only while it is the latest closed bar of its
+ * timeframe (a signal is never opened one bar late); the first evaluation
+ * after a start only marks the current bar.
+ */
+export async function evaluateSymbol(symbol: string, now = Date.now()): Promise<{ signals: number; decisions: number }> {
+  const b = book(symbol);
+  let signals = 0;
+  let decisions = 0;
+  for (const combo of COMBOS) {
+    const ltfSeries = b[combo.ltf];
+    const last = ltfSeries[ltfSeries.length - 1];
+    if (!last) continue;
+    const span = INTERVAL_MS[combo.ltf];
+    const closeAt = last.t + span;
+    const key = `${symbol}:${combo.htf}:${combo.ltf}`;
+    const done = evaluatedUpTo.get(key);
+    evaluatedUpTo.set(key, closeAt);
+    if (done === undefined || closeAt <= done) continue;
+    if (now - closeAt > span) continue; // too late: the next bar has already closed
+    const { signals: found, rejections } = evaluateSetups({
+      htf: combo.htf, ltf: combo.ltf,
+      htfCandles: b[combo.htf], ltfCandles: ltfSeries.slice(-LTF_WINDOW),
+    });
+    for (const r of rejections) {
+      if (r.signalAt !== closeAt) continue;
+      decisions += 1;
+      await recordDecision(symbol, r.setup, r.barTime, "rejected", r.reason, r.blockId, r.details);
+    }
+    for (const s of found) {
+      if (s.signalAt !== closeAt) continue;
+      decisions += 1;
+      if (await openSignal(symbol, s)) signals += 1;
+    }
+  }
+  return { signals, decisions };
+}
+
+async function runCycle(bar: number): Promise<void> {
+  const started = Date.now();
+  await refreshUniverse(started);
+  let failed = 0;
+  let signals = 0;
+  let decisions = 0;
+  const symbols = universe.map((s) => s.instrumentId).filter((s) => ready.has(s));
+  // Requests run in parallel up to the CoinGlass governor's limits.
+  const refreshed = await Promise.all(symbols.map(async (symbol) => {
+    try {
+      return { symbol, ok: (await refresh(symbol)) !== null };
+    } catch (err) {
+      logger.warn({ err, symbol }, "nihilist: refresh failed");
+      return { symbol, ok: false };
+    }
+  }));
+  // CoinGlass can publish the just-closed bar a little late: retry those symbols.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const late = refreshed.filter(({ symbol, ok }) => {
+      const s = book(symbol)["30m"];
+      return ok && (!s.length || s[s.length - 1].t + INTERVAL_MS["30m"] < bar);
+    });
+    if (!late.length) break;
+    await new Promise((r) => setTimeout(r, 45_000));
+    await Promise.all(late.map(async (item) => {
+      try { item.ok = (await refresh(item.symbol)) !== null; } catch { item.ok = false; }
+    }));
+  }
+  for (const { symbol, ok } of refreshed) {
+    if (!ok) { failed += 1; continue; } // no data — no signal
+    try {
+      await trackOpenTrades(symbol);
+      const result = await evaluateSymbol(symbol);
+      signals += result.signals;
+      decisions += result.decisions;
+    } catch (err) {
+      status.lastError = err instanceof Error ? err.message : String(err);
+      logger.error({ err, symbol }, "nihilist: evaluation failed");
+    }
+  }
+  status.lastCycleAt = Date.now();
+  status.lastCycleBar = bar;
+  status.lastCycleMs = Date.now() - started;
+  status.lastCycleRefreshFailed = failed;
+  status.lastCycleSignals = signals;
+  status.lastCycleDecisions = decisions;
+  status.ready = ready.size;
+  await saveState("engine", status);
+  logger.info({ ...status }, "nihilist: cycle done");
+}
+
+export async function startEngine(): Promise<void> {
+  await waitForEngineLease();
+  status.leaseAcquired = true;
+  await refreshUniverse(Date.now());
+  await loadFromDb(universe.map((s) => s.instrumentId));
+  for (const s of universe) {
+    if (!hasHistory(s.instrumentId)) continue;
+    ready.add(s.instrumentId);
+    await evaluateSymbol(s.instrumentId); // marks the current bars: nothing is opened late after a restart
+  }
+  status.ready = ready.size;
+  void backfillLoop();
+  let lastBar = Math.floor(Date.now() / INTERVAL_MS["30m"]) * INTERVAL_MS["30m"];
+  let lastPrune = 0;
+  const tick = async () => {
+    const now = Date.now();
+    const bar = Math.floor((now - CYCLE_DELAY_MS) / INTERVAL_MS["30m"]) * INTERVAL_MS["30m"];
+    if (bar > lastBar) {
+      lastBar = bar;
+      try {
+        await runCycle(bar);
+      } catch (err) {
+        status.lastError = err instanceof Error ? err.message : String(err);
+        logger.error({ err }, "nihilist: cycle failed");
+      }
+    }
+    if (now - lastPrune > 24 * 60 * 60_000) {
+      lastPrune = now;
+      await pruneDb().catch((err) => logger.warn({ err }, "nihilist: prune failed"));
+    }
+    setTimeout(() => void tick(), 15_000);
+  };
+  void tick();
+}
