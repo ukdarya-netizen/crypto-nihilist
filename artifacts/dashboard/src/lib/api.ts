@@ -62,7 +62,7 @@ export type Signal = {
   exit_price: number | null; pnl_pct: number | null; r_multiple: number | null; tp1_hit: boolean;
   mfe_pct: number; mae_pct: number; block_top: number; block_bottom: number; block_scope: string;
   targets_source: string; last_price: number | null;
-  live: boolean; current_stop: number | null; trailing_active: boolean; breakeven_moved: boolean;
+  status: "open" | "closed"; live: boolean; current_stop: number | null; trailing_active: boolean; breakeven_moved: boolean;
   peak_pct: number; last_milestone: number;
 };
 export type Decision = {

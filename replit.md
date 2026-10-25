@@ -37,7 +37,8 @@
 - Один движок на базу (advisory lock).
 - Каждые 30 минут: свежие свечи всех монет → сопровождение открытых сделок по новым 30m барам → оценка сетапов, у которых младший ТФ только что закрыл бар. Сигнал открывается только на только что закрытом баре; после перезапуска пропущенное не открывается задним числом.
 - Каждый CHoCH внутри блока пишется в `nh_decisions` (сигнал или причина отказа).
-- Дашборд `artifacts/dashboard` — структура как у AltBullet (боковое меню, нижнее меню на телефоне), стиль аватара NIHILYST: чёрный, кроваво-красный, белый, гранж. Разделы: Открытые позиции, Обзор (KPI, R по дням, 8 сетапов), Сканер (решения и причины отказов), История сигналов, Bot Health (движок, CoinGlass), Справочник. Вход по PIN — `DASHBOARD_PIN`. Надпись NIHILYST — вырезана из аватара (`public/wordmark.webp`). Шрифты: Rubik Dirt (запасной), Special Elite (слоган), JetBrains Mono (цифры), Inter (текст).
+- Дашборд `artifacts/dashboard` — структура как у AltBullet (боковое меню, нижнее меню на телефоне), стиль аватара NIHILYST: чёрный, кроваво-красный, белый, гранж. Разделы: Открытые позиции; Обзор в раскладке CAB (сигналов сегодня/всего, монет, активных; счётчик прибыли; WIN RATE, BE +5/+8/+10%+, AVG PROFIT/LOSS, лучшая сделка, средний пик; график по дням в % или R; результаты по 8 сетапам; история сигналов с фильтрами и раскрытием хода сделки); Сканер (решения и причины отказов); История сигналов; Bot Health; Справочник. Переключатель «все сетапы / только канал».
+- Статистика (`stats/journal.ts`), как в CAB: когорта — сигналы, открытые за период. PROFIT (трейлинг или время в плюс), BE STOP (стоп на входе; +5/+8/+10 — по достигнутому пику), STOP LOSS, EXPIRED (время в ноль/минус). Win rate = (PROFIT + BE STOP) / (PROFIT + BE STOP + STOP LOSS). % — движение цены с половиной на тейке 1 и комиссиями, без плеча. Вход по PIN — `DASHBOARD_PIN`. Надпись NIHILYST — вырезана из аватара (`public/wordmark.webp`). Шрифты: Rubik Dirt (запасной), Special Elite (слоган), JetBrains Mono (цифры), Inter (текст).
 
 ## Проверка на истории (только чтение)
 Из `artifacts/api-server`:
@@ -46,7 +47,7 @@
 - `node --import tsx src/analysis/backtest.ts --universe 150 --days 60` — сводка по сетапам.
 
 ## API
-`GET /api/nh/status`, `/api/nh/stats?days=N`, `/api/nh/signals?status=open|closed`, `/api/nh/decisions`, диагностика сырого ответа CoinGlass: `/api/nh/diag/candles?symbol=JCT-USDT&interval=4h&limit=3`, `/api/nh/diag/pairs`.
+`GET /api/nh/status`, `/api/nh/journal?days=N&live=1`, `/api/nh/history?days=N&status=&setup=&q=&live=1`, `/api/nh/signals/:id/events`, `/api/nh/stats?days=N`, `/api/nh/signals?status=open|closed`, `/api/nh/decisions`, диагностика сырого ответа CoinGlass: `/api/nh/diag/candles?symbol=JCT-USDT&interval=4h&limit=3`, `/api/nh/diag/pairs`.
 
 ## БД (`lib/db/src/schema/nihilist.ts`)
 `nh_candles`, `nh_signals`, `nh_signal_events` (события сделок = очередь Telegram), `nh_decisions`, `nh_state`, `nh_telegram_subscribers`, `nh_telegram_state`, `nh_telegram_deliveries`. Схема: `pnpm --filter @workspace/db run push` (только таблицы `nh_*`).

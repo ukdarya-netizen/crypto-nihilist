@@ -3,6 +3,7 @@ import { pool } from "@workspace/db";
 import { engineStatus } from "../engine/runtime";
 import { cgRequest, coinglassGovernorStats, EXCHANGE } from "../market/coinglass";
 import { apiHealth } from "../lib/apiHealth";
+import { buildJournal, tradeStatus, type JournalRow } from "../stats/journal";
 
 const router: IRouter = Router();
 
@@ -85,6 +86,72 @@ router.get("/nh/decisions", async (req, res) => {
      WHERE created_at > now() - interval '7 days' GROUP BY 1 ORDER BY 2 DESC`,
   );
   res.json({ decisions: rows, reasons7d: reasons.rows });
+});
+
+const liveOnly = (value: unknown) => value === "1" || value === "true";
+
+/**
+ * Overview in the CAB layout: counters, profit counter, win rate, BE +5/+8/+10,
+ * averages, best trade, per-setup table and the daily chart. Cohort = signals
+ * opened in the last N days; `live=1` = only setups published to Telegram.
+ */
+router.get("/nh/journal", async (req, res) => {
+  const d = days(req.query.days, 30);
+  const live = liveOnly(req.query.live);
+  const { rows } = await pool.query<JournalRow>(
+    `SELECT id, symbol, setup, side, status, live, close_reason, pnl_pct, r_multiple, peak_pct, mfe_pct, opened_at, closed_at
+     FROM nh_signals WHERE opened_at > now() - make_interval(days => $1) AND (NOT $2 OR live)`,
+    [d, live],
+  );
+  const counters = await pool.query<{ today: number; total: number }>(
+    `SELECT count(*) FILTER (WHERE opened_at >= date_trunc('day', now()))::int AS today, count(*)::int AS total
+     FROM nh_signals WHERE (NOT $1 OR live)`,
+    [live],
+  );
+  // Daily result by close day (UTC) of the cohort's closed trades.
+  const byDay = new Map<string, { day: string; trades: number; wins: number; pnl: number; r: number }>();
+  for (const row of rows) {
+    if (row.status !== "closed" || !row.closed_at) continue;
+    const day = new Date(row.closed_at).toISOString().slice(0, 10);
+    const item = byDay.get(day) ?? { day, trades: 0, wins: 0, pnl: 0, r: 0 };
+    item.trades += 1;
+    if (Number(row.pnl_pct) > 0) item.wins += 1;
+    item.pnl += Number(row.pnl_pct ?? 0);
+    item.r += Number(row.r_multiple ?? 0);
+    byDay.set(day, item);
+  }
+  const daily = [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day))
+    .map((x) => ({ ...x, pnl: Math.round(x.pnl * 100) / 100, r: Math.round(x.r * 100) / 100 }));
+  res.json({ days: d, live, counters: counters.rows[0], ...buildJournal(rows), daily });
+});
+
+/** Signal history (open and closed) with filters, newest first. */
+router.get("/nh/history", async (req, res) => {
+  const d = days(req.query.days, 30);
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
+  const setup = typeof req.query.setup === "string" && req.query.setup ? req.query.setup : null;
+  const symbol = typeof req.query.q === "string" && req.query.q.trim() ? `%${req.query.q.trim().toUpperCase()}%` : null;
+  const { rows } = await pool.query(
+    `SELECT * FROM nh_signals
+     WHERE opened_at > now() - make_interval(days => $1) AND ($2::text IS NULL OR setup = $2)
+       AND ($3::text IS NULL OR symbol LIKE $3) AND (NOT $4 OR live)
+     ORDER BY opened_at DESC LIMIT $5`,
+    [d, setup, symbol, liveOnly(req.query.live), limit],
+  );
+  const status = typeof req.query.status === "string" ? req.query.status : "";
+  const filtered = status ? rows.filter((r) => tradeStatus(r as JournalRow) === status) : rows;
+  res.json({ signals: filtered.map((r) => ({ ...r, trade_status: tradeStatus(r as JournalRow) })) });
+});
+
+/** Lifecycle of one trade (what went to Telegram, step by step). */
+router.get("/nh/signals/:id/events", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id)) { res.status(400).json({ error: "bad_id" }); return; }
+  const { rows } = await pool.query(
+    "SELECT id, kind, price, detail, created_at, telegram_sent_at FROM nh_signal_events WHERE signal_id = $1 ORDER BY created_at, id",
+    [id],
+  );
+  res.json({ events: rows });
 });
 
 /** Raw CoinGlass answer for one symbol (to verify candles against the chart). */

@@ -26,7 +26,7 @@ export function Kpi({ label, value, hint, toneClass = "" }: { label: string; val
   );
 }
 
-export function Segmented<T extends string | number>({ value, options, onChange }: {
+export function Segmented<T extends string | number | boolean>({ value, options, onChange }: {
   value: T; options: Array<{ id: T; label: string }>; onChange: (id: T) => void;
 }) {
   return (
