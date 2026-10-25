@@ -4,11 +4,13 @@
  * subscribed with /start before the event. One delivery row per recipient:
  * a success is never repeated when others fail; up to 8 attempts each.
  * Shadow trades (setup not in LIVE_SETUPS) never leave the dashboard.
- * Only signals go out: no service, restart or API-outage messages.
+ * Only signals and the daily/weekly/monthly reports go out: no service,
+ * restart or API-outage messages.
  */
 import { pool } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { formatEvent, type EventForText, type SignalForText } from "./format";
+import { startReports } from "./reports";
 import { sendMessage, signalChannel, subscriptionCommand, telegramCall, TelegramError, type TelegramUpdate } from "./transport";
 
 const MAX_ATTEMPTS = 8;
@@ -165,5 +167,6 @@ export function startTelegram(): void {
     polling = true;
     void poll().catch((err) => { polling = false; logger.error({ err }, "nihilist: Telegram polling stopped"); });
   }
+  startReports();
   setInterval(() => void deliverNext().catch((err) => logger.warn({ err }, "nihilist: Telegram delivery pass failed")), 3000).unref?.();
 }
