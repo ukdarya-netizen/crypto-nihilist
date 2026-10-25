@@ -44,10 +44,14 @@ function ApiDots() {
   // Healthy: a scan finished in the last 35 min, one is running now, or it is
   // still the first 40 minutes after a start (the first scan waits for a bar close).
   const engineOk = e ? e.leaseAcquired && (Boolean(e.cycle) || (ago !== null ? ago <= 35 : (sinceStart ?? 99) <= 40)) : null;
+  const telegramLabel = !data ? "…" : !data.telegram?.configured ? "нет токена"
+    : !data.telegram.channel ? "нет канала"
+      : data.telegram.enabled === false ? "отправка выкл" : "канал задан";
+  const telegramOk = data ? Boolean(data.telegram?.configured && data.telegram.enabled !== false && data.telegram.channel) : null;
   const items: Array<{ label: string; ok: boolean | null }> = [
     { label: "Движок", ok: engineOk },
     { label: "CoinGlass", ok: data ? !cg || cg.consecutiveFailures < 5 : null },
-    { label: "Telegram", ok: data?.telegram?.configured && data.telegram.enabled !== false ? true : null },
+    { label: "Telegram", ok: telegramOk },
   ];
   return (
     <div className="space-y-1.5 border-t border-border p-4 font-mono text-[11px] text-muted">
@@ -57,7 +61,7 @@ function ApiDots() {
           <span className="flex items-center gap-1.5">
             <span className={`size-1.5 rounded-full ${ok === null ? "bg-zinc-600" : ok ? "bg-up" : "bg-primary"}`} />
             <span className={ok === null ? "text-zinc-500" : ok ? "text-up" : "text-primary"}>
-              {ok === null ? (label === "Telegram" ? "выкл" : "…") : ok ? "OK" : "ERR"}
+              {label === "Telegram" ? telegramLabel : ok === null ? "…" : ok ? "OK" : "ERR"}
             </span>
           </span>
         </div>

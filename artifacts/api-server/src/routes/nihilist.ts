@@ -22,10 +22,21 @@ router.get("/nh/status", async (_req, res) => {
     `SELECT count(*) FILTER (WHERE status = 'open')::int AS open,
             count(*) FILTER (WHERE status = 'closed')::int AS closed FROM nh_signals`,
   );
+  const { rows: deliveryRows } = await pool.query<{ sent: number; pending: number; failed: number; skipped: number }>(
+    `SELECT count(*) FILTER (WHERE d.status = 'sent')::int AS sent,
+            count(*) FILTER (WHERE d.status = 'pending')::int AS pending,
+            count(*) FILTER (WHERE d.status = 'failed')::int AS failed,
+            count(*) FILTER (WHERE d.status = 'skipped')::int AS skipped
+     FROM nh_telegram_deliveries d
+     JOIN nh_signal_events e ON e.id = d.event_id
+     JOIN nh_signals s ON s.id = e.signal_id
+     WHERE d.channel AND s.live`,
+  );
   const telegram = {
     configured: Boolean(process.env.TELEGRAM_BOT_TOKEN),
     enabled: telegramEnabled(),
     channel: process.env.NIHILIST_TELEGRAM_CHANNEL?.trim() || null,
+    deliveries: deliveryRows[0],
   };
   res.json({ engine: engineStatus(), coinglass: coinglassGovernorStats(), health: apiHealth(), signals: rows[0], telegram });
 });
@@ -205,7 +216,13 @@ router.get("/nh/signals/:id/events", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isSafeInteger(id)) { res.status(400).json({ error: "bad_id" }); return; }
   const { rows } = await pool.query(
-    "SELECT id, kind, price, detail, created_at, telegram_sent_at FROM nh_signal_events WHERE signal_id = $1 ORDER BY created_at, id",
+    `SELECT e.id, e.kind, e.price, e.detail, e.created_at, e.telegram_sent_at,
+            COALESCE((
+              SELECT json_agg(d.status ORDER BY d.id)
+              FROM nh_telegram_deliveries d
+              WHERE d.event_id = e.id AND d.channel
+            ), '[]'::json) AS telegram_deliveries
+     FROM nh_signal_events e WHERE e.signal_id = $1 ORDER BY e.created_at, e.id`,
     [id],
   );
   res.json({ events: rows });

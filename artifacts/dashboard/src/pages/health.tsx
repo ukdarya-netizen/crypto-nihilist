@@ -30,6 +30,18 @@ export default function Health() {
         </dl>
         <p className="mt-3 text-xs text-muted">Монета без свечей в цикле не оценивается: нет данных — нет сигнала.</p>
       </Panel>
+      <Panel title="Telegram-доставка">
+        <dl className="grid grid-cols-2 gap-y-2 font-mono text-sm md:grid-cols-4">
+          <dt className="text-muted">Бот настроен</dt><dd className={data.telegram?.configured ? "text-up" : "text-down"}>{data.telegram?.configured ? "да" : "нет"}</dd>
+          <dt className="text-muted">Канал</dt><dd className={data.telegram?.channel ? "text-up" : "text-down"}>{data.telegram?.channel ?? "не настроен"}</dd>
+          <dt className="text-muted">Отправка включена</dt><dd className={data.telegram?.enabled ? "text-up" : "text-warn"}>{data.telegram?.enabled ? "да" : "нет"}</dd>
+          <dt className="text-muted">Доставлено</dt><dd className="text-up" data-testid="status-telegram-delivered">{data.telegram?.deliveries?.sent ?? 0}</dd>
+          <dt className="text-muted">Ожидают</dt><dd className={data.telegram?.deliveries?.pending ? "text-warn" : ""} data-testid="status-telegram-pending">{data.telegram?.deliveries?.pending ?? 0}</dd>
+          <dt className="text-muted">Ошибки</dt><dd className={data.telegram?.deliveries?.failed ? "text-down" : ""} data-testid="status-telegram-failed">{data.telegram?.deliveries?.failed ?? 0}</dd>
+          <dt className="text-muted">Пропущено</dt><dd>{data.telegram?.deliveries?.skipped ?? 0}</dd>
+        </dl>
+        <p className="mt-3 text-xs text-muted">Счётчики относятся к отправкам в канал и показывают фактический статус в очереди, а не состояние движка.</p>
+      </Panel>
       <Panel title="CoinGlass">
         <dl className="grid grid-cols-2 gap-y-2 font-mono text-sm md:grid-cols-4">
           <dt className="text-muted">запросов</dt><dd>{cg.started}</dd>

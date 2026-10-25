@@ -49,7 +49,10 @@ export type Status = {
   coinglass: { started: number; ok: number; failed: number; rateLimited: number; keys: number; cooldownMs: number; minGapMs: number };
   health: Record<string, { lastError: string | null; lastErrorAt: number | null; lastSuccessAt: number | null; consecutiveFailures: number }>;
   signals: { open: number; closed: number };
-  telegram?: { configured: boolean; enabled?: boolean; channel: string | null };
+  telegram?: {
+    configured: boolean; enabled?: boolean; channel: string | null;
+    deliveries?: { sent: number; pending: number; failed: number; skipped: number };
+  };
 };
 export type CycleNow = { bar: number; startedAt: number; stage: "refresh" | "late_retry" | "evaluate"; done: number; total: number };
 export type CycleRecord = {

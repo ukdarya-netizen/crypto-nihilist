@@ -63,7 +63,7 @@ export default function Scanner() {
   return (
     <div className="space-y-4 md:space-y-6">
       <ScanState data={scan ?? null} />
-      <Panel title={`Кандидаты · ${candidates.length}`} right={<Segmented<"" | "long" | "short"> value={side} onChange={setSide} options={[{ id: "", label: "все" }, { id: "long", label: "лонг" }, { id: "short", label: "шорт" }]} />}>
+      <Panel title={`Кандидаты · ${candidates.length}`} right={<Segmented value={side} onChange={(value) => setSide(value as typeof side)} options={[{ id: "", label: "все" }, { id: "long", label: "лонг" }, { id: "short", label: "шорт" }]} />}>
         <p className="mb-3 text-xs text-muted">Цена коснулась ордер-блока старшего ТФ за последние 12 свечей младшего ТФ, блок не пробит. Сигнал будет, если на младшем ТФ сломается структура.</p>
         {scan ? <Candidates rows={candidates} /> : <Empty>Загрузка…</Empty>}
       </Panel>
@@ -99,7 +99,7 @@ export default function Scanner() {
           </div>
         )}
       </Panel>
-      <Panel title="Последние решения" right={<Segmented<"" | "accepted" | "rejected"> value={filter} onChange={setFilter} options={[{ id: "", label: "все" }, { id: "accepted", label: "сигналы" }, { id: "rejected", label: "отказы" }]} />}>
+      <Panel title="Последние решения" right={<Segmented value={filter} onChange={(value) => setFilter(value as typeof filter)} options={[{ id: "", label: "все" }, { id: "accepted", label: "сигналы" }, { id: "rejected", label: "отказы" }]} />}>
         {!rows.length ? <Empty>{data ? "Пока пусто." : "Загрузка…"}</Empty> : (
           <Table head={["Время", "Монета", "Сетап", "Решение", "Вход", "Стоп %", "R до тейка 1"]} minWidth={820}>
             {rows.map((d) => {

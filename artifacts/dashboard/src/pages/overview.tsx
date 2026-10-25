@@ -113,8 +113,8 @@ export default function Overview() {
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
         <p className="text-xs text-muted">Общая статистика · сигналы, открытые за {days >= 3650 ? "всё время" : `${days} дн`}</p>
         <div className="flex flex-wrap gap-2">
-          <Segmented<boolean> value={live} onChange={setLive} options={[{ id: false, label: "все сетапы" }, { id: true, label: "только канал" }]} />
-          <Segmented<number> value={days} onChange={setDays} options={[{ id: 7, label: "7 дн" }, { id: 14, label: "14 дн" }, { id: 30, label: "30 дн" }, { id: 90, label: "90 дн" }, { id: 3650, label: "всё" }]} />
+          <Segmented value={live} onChange={(value) => setLive(value as boolean)} options={[{ id: false, label: "все сетапы" }, { id: true, label: "только канал" }]} />
+          <Segmented value={days} onChange={(value) => setDays(value as number)} options={[{ id: 7, label: "7 дн" }, { id: 14, label: "14 дн" }, { id: 30, label: "30 дн" }, { id: 90, label: "90 дн" }, { id: 3650, label: "всё" }]} />
         </div>
       </div>
 
@@ -149,7 +149,7 @@ export default function Overview() {
         </div>
       )}
 
-      <Panel title="График прибыльности по дням" right={<Segmented<"pnl" | "r"> value={metric} onChange={setMetric} options={[{ id: "pnl", label: "%" }, { id: "r", label: "R" }]} />}>
+      <Panel title="График прибыльности по дням" right={<Segmented value={metric} onChange={(value) => setMetric(value as typeof metric)} options={[{ id: "pnl", label: "%" }, { id: "r", label: "R" }]} />}>
         <DailyChart rows={data?.daily ?? []} metric={metric} />
       </Panel>
 

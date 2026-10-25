@@ -1,1 +1,2 @@
 - [Telegram channel](telegram-channel.md) — the user selected @nihilystcryptotrading for signal delivery.
+- [Dashboard JSX dev transform](dashboard-jsx-dev-transform.md) — avoid explicit generic type arguments in JSX tags; the dev metadata plugin injects props into them and breaks parsing.

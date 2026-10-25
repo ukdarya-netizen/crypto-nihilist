@@ -23,7 +23,18 @@ const EVENT_LABEL: Record<string, string> = {
   trailing_on: "Трейлинг включён", closed: "Закрыта",
 };
 
-type Event = { id: number; kind: string; price: number | null; detail: Record<string, unknown>; created_at: string; telegram_sent_at: string | null };
+type Event = {
+  id: number; kind: string; price: number | null; detail: Record<string, unknown>;
+  created_at: string; telegram_sent_at: string | null; telegram_deliveries: string[];
+};
+
+function deliveryStatus(statuses: string[]): { label: string; className: string } {
+  if (statuses.includes("pending")) return { label: "в очереди", className: "text-warn" };
+  if (statuses.includes("failed")) return { label: "ошибка", className: "text-down" };
+  if (statuses.includes("sent")) return { label: "доставлен", className: "text-up" };
+  if (statuses.includes("skipped")) return { label: "пропущен", className: "text-muted" };
+  return { label: "нет записи", className: "text-muted" };
+}
 
 function duration(from: string, to: string | null): string {
   const ms = Math.max(0, (to ? new Date(to).getTime() : Date.now()) - new Date(from).getTime());
@@ -66,7 +77,7 @@ function Details({ s }: { s: HistoryRow }) {
         <dt className="text-muted">Стоп сейчас</dt><dd>{s.current_stop !== null ? `${price(s.current_stop)} (${signed(pct(s.current_stop), 1, "%")})` : "—"}</dd>
         <dt className="text-muted">Пик / просадка</dt><dd>{signed(s.peak_pct, 1, "%")} / {signed(s.mae_pct, 1, "%")}</dd>
         <dt className="text-muted">R</dt><dd className={tone(s.r_multiple)}>{signed(s.r_multiple)}</dd>
-        <dt className="text-muted">Telegram</dt><dd>{s.live ? "в канале" : "тень (не публикуется)"}</dd>
+        <dt className="text-muted">Публикация</dt><dd>{s.live ? "live-сигнал" : "тень (не публикуется)"}</dd>
       </dl>
       <div className="md:col-span-2">
         <p className="label mb-2">Траектория: рынок после входа</p>
@@ -86,6 +97,10 @@ function Details({ s }: { s: HistoryRow }) {
                 <span className="flex-1">
                   {e.kind === "milestone" ? `${EVENT_LABEL.milestone} ${signed(Number(e.detail.milestone), 0, "%")}` : EVENT_LABEL[e.kind] ?? e.kind}
                   {e.kind === "closed" && ` · ${signed(Number(e.detail.pnlPct), 2, "%")}`}
+                  {s.live && (() => {
+                    const status = deliveryStatus(e.telegram_deliveries ?? []);
+                    return <span className={`ml-2 font-mono ${status.className}`} data-testid={`status-telegram-event-${e.id}`}>{status.label}</span>;
+                  })()}
                 </span>
                 <span className="font-mono text-muted">{e.price !== null ? price(e.price) : ""}</span>
               </li>
