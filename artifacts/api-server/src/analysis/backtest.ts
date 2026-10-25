@@ -4,6 +4,12 @@
  *   node --import tsx src/analysis/backtest.ts                 # JCT-USDT, 60 days
  *   node --import tsx src/analysis/backtest.ts --symbols JCT-USDT,BTC-USDT --days 90
  *   node --import tsx src/analysis/backtest.ts --universe 150 --days 60
+ *   node --import tsx src/analysis/backtest.ts --universe 0 --days 60    # every BingX pair
+ *
+ * Two variants are printed from the same candles: the live rule (one trade
+ * per order block) and, for comparison, a block allowed to give another
+ * signal after a fresh touch. Stop the API while running a large backtest:
+ * both share one CoinGlass key.
  *
  * Candles: BingX via CoinGlass (NIHILIST_COINGLASS_API_KEY). Trades are
  * simulated exactly as live: entry = close of the CHoCH bar, 50% at TP1 then
@@ -13,7 +19,7 @@
  */
 import { INTERVAL_MS, type Candle, type Interval } from "../engine/candles";
 import { COMBOS, MAX_HOLD_MS } from "../engine/config";
-import { evaluateSetups, type SetupSignal } from "../engine/setups";
+import { evaluateSetups, type SetupOptions, type SetupSignal } from "../engine/setups";
 import { applyCandles, openTrade, tradeResult } from "../engine/trade";
 import { getCandleHistory, getUniverse } from "../market/coinglass";
 
@@ -41,12 +47,12 @@ async function history(symbol: string): Promise<Record<Interval, Candle[]> | nul
   return out;
 }
 
-function simulate(symbol: string, data: Record<Interval, Candle[]>): Row[] {
+function simulate(symbol: string, data: Record<Interval, Candle[]>, options: Partial<SetupOptions> = {}): Row[] {
   const rows: Row[] = [];
   const from = Date.now() - DAYS * 86_400_000;
   for (const combo of COMBOS) {
     const { signals } = evaluateSetups({
-      htf: combo.htf, ltf: combo.ltf, htfCandles: data[combo.htf], ltfCandles: data[combo.ltf],
+      htf: combo.htf, ltf: combo.ltf, htfCandles: data[combo.htf], ltfCandles: data[combo.ltf], options,
     });
     let busyUntil = 0;
     for (const s of signals.sort((a, b) => a.signalAt - b.signalAt)) {
@@ -67,7 +73,8 @@ function simulate(symbol: string, data: Record<Interval, Candle[]>): Row[] {
 const fmt = (n: number, d = 2) => (Number.isFinite(n) ? n.toFixed(d) : "—");
 const date = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
 
-function summary(rows: Row[]): void {
+function summary(title: string, rows: Row[]): void {
+  console.log(`\n== ${title}`);
   const bySetup = new Map<string, Row[]>();
   for (const r of rows) bySetup.set(r.setup, [...(bySetup.get(r.setup) ?? []), r]);
   console.log("\nsetup            | n    | win%  | tp1%  | stop% | avgR  | sumR    | avg pnl%");
@@ -92,19 +99,27 @@ async function main(): Promise<void> {
   if (universeCount) {
     const universe = await getUniverse();
     if (!universe) throw new Error("CoinGlass universe request failed");
-    symbols = universe.slice(0, Number(universeCount)).map((u) => u.instrumentId);
+    const n = Number(universeCount);
+    symbols = (n > 0 ? universe.slice(0, n) : universe).map((u) => u.instrumentId);
   }
   console.log(`Crypto Nihilist backtest: ${symbols.length} symbols, ${DAYS} days (BingX via CoinGlass)`);
   const all: Row[] = [];
+  const allReuse: Row[] = [];
   let skipped = 0;
+  let done = 0;
   for (const symbol of symbols) {
     const data = await history(symbol);
-    if (!data) { skipped += 1; console.log(`${symbol}: no data — skipped`); continue; }
+    done += 1;
+    if (done % 50 === 0) console.log(`… ${done}/${symbols.length}`);
+    if (!data) { skipped += 1; if (symbols.length <= 20) console.log(`${symbol}: no data — skipped`); continue; }
     const rows = simulate(symbol, data);
     all.push(...rows);
+    allReuse.push(...simulate(symbol, data, { reuseBlocks: true }));
     if (symbols.length <= 5) {
-      console.log(`\n${symbol}: ${rows.length} trades`);
-      for (const r of rows) {
+      const live = new Set(rows.map((x) => `${x.setup}:${x.signalAt}`));
+      const extra = allReuse.filter((x) => x.symbol === symbol && !live.has(`${x.setup}:${x.signalAt}`));
+      console.log(`\n${symbol}: ${rows.length} trades (+${extra.length} more if a block may trade again, marked *)`);
+      for (const r of [...rows, ...extra.map((x) => ({ ...x, setup: `${x.setup}*` }))]) {
         console.log(
           `  ${date(r.signalAt)} ${r.setup.padEnd(13)} ${r.block.scope.padEnd(8)} OB ${fmt(r.block.bottom, 6)}–${fmt(r.block.top, 6)}` +
           ` entry ${fmt(r.entry, 6)} stop ${fmt(r.stop, 6)} (${fmt(r.riskPct)}%) tp1 ${fmt(r.tp1, 6)} tp2 ${fmt(r.tp2, 6)}` +
@@ -113,7 +128,8 @@ async function main(): Promise<void> {
       }
     }
   }
-  summary(all);
+  summary("live rule: one trade per order block", all);
+  summary("comparison: a block may trade again after a fresh touch", allReuse);
   console.log(`\nsymbols with data: ${symbols.length - skipped}, skipped: ${skipped}`);
 }
 

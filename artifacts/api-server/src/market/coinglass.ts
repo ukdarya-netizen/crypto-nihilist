@@ -50,8 +50,23 @@ async function admit(): Promise<void> {
 
 export type CgResult = { ok: true; data: unknown } | { ok: false; error: string };
 
-/** One GET with the raw outcome (used by the diagnostics route). Never throws. */
+const MAX_429_RETRIES = 4;
+
+/**
+ * One GET with the raw outcome. A rate-limit answer (HTTP 429 or code 429 in
+ * a 200 body) waits out the shared cooldown and retries, up to 4 times; any
+ * other failure is returned at once. Never throws.
+ */
 export async function cgRequest(path: string, params: Record<string, string | number>): Promise<CgResult> {
+  for (let attempt = 0; ; attempt++) {
+    const result = await cgRequestOnce(path, params);
+    if (result.ok || !result.rateLimited || attempt >= MAX_429_RETRIES) return result;
+  }
+}
+
+type CgAttempt = CgResult & { rateLimited?: boolean };
+
+async function cgRequestOnce(path: string, params: Record<string, string | number>): Promise<CgAttempt> {
   const all = keys();
   if (all.length === 0) {
     recordFailure("coinglass", "NIHILIST_COINGLASS_API_KEY не задан");
@@ -67,13 +82,14 @@ export async function cgRequest(path: string, params: Record<string, string | nu
       headers: { "CG-API-KEY": key, Accept: "application/json" },
       signal: AbortSignal.timeout(15_000),
     });
-    if (res.status === 429) {
+    const body = (await res.json().catch(() => null)) as { code?: unknown; msg?: unknown; data?: unknown } | null;
+    // CoinGlass also signals the limit as HTTP 200 with code 429 in the body.
+    if (res.status === 429 || String(body?.code) === "429") {
       stats.rateLimited += 1;
       consecutive429 += 1;
       cooldownUntil = Date.now() + Math.min(MAX_COOLDOWN_MS, 2_000 * 2 ** (consecutive429 - 1));
-      return { ok: false, error: "HTTP 429" };
+      return { ok: false, error: `${path}: rate limited (429)`, rateLimited: true };
     }
-    const body = (await res.json().catch(() => null)) as { code?: unknown; msg?: unknown; data?: unknown } | null;
     if (!res.ok || String(body?.code) !== "0") {
       stats.failed += 1;
       const error = `${path}: HTTP ${res.status} code ${String(body?.code)} ${String(body?.msg ?? "")}`;

@@ -33,6 +33,8 @@ export type SetupOptions = {
   maxRiskPct: number;
   /** Which HTF order blocks to trade. */
   blockScopes: Array<"internal" | "swing">;
+  /** Research only: a block may give another signal after a new touch (live: one trade per block). */
+  reuseBlocks: boolean;
 };
 
 export const DEFAULT_SETUP_OPTIONS: SetupOptions = {
@@ -42,6 +44,7 @@ export const DEFAULT_SETUP_OPTIONS: SetupOptions = {
   minRr: 1,
   maxRiskPct: 20,
   blockScopes: ["internal", "swing"],
+  reuseBlocks: false,
 };
 
 export type SetupSignal = {
@@ -239,14 +242,21 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
       candidates.sort((a, b) => (b.lastTouchIndex! - a.lastTouchIndex!) ||
         (side === "long" ? b.block.top - a.block.top : a.block.bottom - b.block.bottom));
       const zone = candidates[0];
-      zone.used = true;
+      const touched = { extreme: zone.extreme, firstTouchAt: zone.firstTouchAt, lastTouchAt: zone.lastTouchAt };
+      if (options.reuseBlocks) {
+        // The next signal from this block needs a fresh touch after this one.
+        zone.firstTouchIndex = null; zone.firstTouchAt = null;
+        zone.lastTouchIndex = null; zone.lastTouchAt = null; zone.extreme = null;
+      } else {
+        zone.used = true;
+      }
       const setup = setupName(input.htf, input.ltf, side);
       const ltfAtr = atr[j] ?? (bar.h - bar.l);
       const entry = bar.c;
       const reject = (reason: string, details: Record<string, number | string | null> = {}) => {
         rejections.push({ setup, side, barTime: bar.t, signalAt: closeAt, reason, blockId: zone.block.id, details });
       };
-      const extreme = zone.extreme as number;
+      const extreme = touched.extreme as number;
       let stop: number;
       if (side === "long") {
         const base = options.stopMode === "ob" ? Math.min(zone.block.bottom, extreme) : extreme;
@@ -284,8 +294,8 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
         barTime: bar.t, signalAt: closeAt, entry, stop, tp1, tp2,
         riskPct: round(riskPct, 3), rr1: round(rr1, 3), rr2: round(rr2, 3), targetsSource,
         block: zone.block,
-        firstTouchAt: zone.firstTouchAt as number,
-        lastTouchAt: zone.lastTouchAt as number,
+        firstTouchAt: touched.firstTouchAt as number,
+        lastTouchAt: touched.lastTouchAt as number,
         extreme, chochLevel: event.level,
         htfSwingTrend: snap.swingTrend, htfInternalTrend: snap.internalTrend,
         ltfAtr,
