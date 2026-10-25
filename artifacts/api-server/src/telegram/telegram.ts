@@ -12,6 +12,7 @@ import { logger } from "../lib/logger";
 import { formatEvent, type EventForText, type SignalForText } from "./format";
 import { startReports } from "./reports";
 import { sendMessage, signalChannel, subscriptionCommand, telegramCall, telegramEnabled, TelegramError, type TelegramUpdate } from "./transport";
+import { MAX_AUTO_DELIVERY_AGE_MS, planEventDelivery, type DeliveryRecipient } from "./delivery-policy";
 
 const MAX_ATTEMPTS = 8;
 let delivering = false;
@@ -19,6 +20,8 @@ let delivering = false;
 type QueueRow = SignalForText & EventForText & { event_id: number; signal_live: boolean; silent: boolean };
 
 async function enqueue(): Promise<QueueRow[]> {
+  const channel = signalChannel();
+  const now = Date.now();
   const { rows } = await pool.query<QueueRow>(
     `SELECT e.id AS event_id, e.kind, e.price, e.detail, e.created_at, s.live AS signal_live,
             s.symbol, s.setup, s.htf, s.ltf, s.side, s.entry, s.stop, s.tp1, s.block_top, s.block_bottom,
@@ -41,32 +44,36 @@ async function enqueue(): Promise<QueueRow[]> {
             ) AS silent
      FROM nh_signal_events e JOIN nh_signals s ON s.id = e.signal_id
      WHERE e.telegram_sent_at IS NULL AND e.telegram_attempts < $1
+        AND (NOT s.live OR e.created_at >= $2)
+        AND (NOT s.live OR $3::text IS NOT NULL OR EXISTS (
+          SELECT 1 FROM nh_telegram_subscribers sub
+          WHERE sub.active AND sub.subscribed_at <= e.created_at
+        ))
      ORDER BY e.id LIMIT 20`,
-    [MAX_ATTEMPTS],
+    [MAX_ATTEMPTS, new Date(now - MAX_AUTO_DELIVERY_AGE_MS), channel],
   );
-  const channel = signalChannel();
   for (const row of rows) {
     if (!row.signal_live || row.silent) {
       await pool.query("UPDATE nh_signal_events SET telegram_sent_at = now() WHERE id = $1", [row.event_id]);
       continue;
     }
-    const text = formatEvent(row, row);
     const subs = await pool.query<{ chat_id: string }>(
       "SELECT chat_id FROM nh_telegram_subscribers WHERE active AND subscribed_at <= $1", [row.created_at],
     );
-    const recipients = [
+    const recipients: DeliveryRecipient[] = [
       ...(channel ? [{ chat: channel, isChannel: true }] : []),
       ...subs.rows.map((s) => ({ chat: s.chat_id, isChannel: false })),
     ];
-    for (const r of recipients) {
+    const plan = planEventDelivery({ signalLive: row.signal_live, createdAt: row.created_at }, recipients, now);
+    if (plan.action !== "enqueue") continue;
+
+    const text = formatEvent(row, row);
+    for (const r of plan.recipients) {
       await pool.query(
         `INSERT INTO nh_telegram_deliveries (event_id, chat_id, channel, text) VALUES ($1, $2, $3, $4)
          ON CONFLICT (event_id, chat_id) DO NOTHING`,
         [row.event_id, r.chat, r.isChannel, text],
       );
-    }
-    if (!recipients.length) {
-      await pool.query("UPDATE nh_signal_events SET telegram_sent_at = now() WHERE id = $1", [row.event_id]);
     }
   }
   return rows.filter((r) => r.signal_live && !r.silent);
