@@ -65,8 +65,8 @@ export default function Metrics() {
         <Kpi label="Не восстановить" value={c?.unavailable ?? "—"} hint="история свечей позже сигнала" />
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Segmented<number> value={days} onChange={setDays} options={[{ id: 30, label: "30 дн" }, { id: 90, label: "90 дн" }, { id: 3650, label: "всё" }]} />
-        <Segmented<"" | "long" | "short"> value={side} onChange={setSide} options={[{ id: "", label: "все" }, { id: "long", label: "лонг" }, { id: "short", label: "шорт" }]} />
+        <Segmented value={days} onChange={(id) => setDays(id as number)} options={[{ id: 30, label: "30 дн" }, { id: 90, label: "90 дн" }, { id: 3650, label: "всё" }]} />
+        <Segmented value={side} onChange={(id) => setSide(id as "" | "long" | "short")} options={[{ id: "", label: "все" }, { id: "long", label: "лонг" }, { id: "short", label: "шорт" }]} />
         <select value={setup} onChange={(e) => setSetup(e.target.value)} className="h-8 border border-border bg-background px-2 text-xs">
           <option value="">Все сетапы</option>
           {SETUPS.map((s) => <option key={s} value={s}>{setupLabel(s)}</option>)}

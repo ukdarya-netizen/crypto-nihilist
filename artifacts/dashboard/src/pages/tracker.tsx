@@ -126,8 +126,8 @@ export default function Tracker() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted">Сделки ведутся по 5-минутным свечам. Метрики — на момент сигнала; нажми строку — карточка, траектория и все метрики.</p>
         <div className="flex flex-wrap gap-2">
-          <Segmented<"" | "long" | "short"> value={side} onChange={setSide} options={[{ id: "", label: "все" }, { id: "long", label: "лонг" }, { id: "short", label: "шорт" }]} />
-          <Segmented<Sort> value={sort} onChange={setSort} options={[{ id: "time", label: "новые" }, { id: "pnl", label: "по %" }, { id: "peak", label: "по пику" }]} />
+          <Segmented value={side} onChange={(id) => setSide(id as "" | "long" | "short")} options={[{ id: "", label: "все" }, { id: "long", label: "лонг" }, { id: "short", label: "шорт" }]} />
+          <Segmented value={sort} onChange={(id) => setSort(id as Sort)} options={[{ id: "time", label: "новые" }, { id: "pnl", label: "по %" }, { id: "peak", label: "по пику" }]} />
         </div>
       </div>
       <Panel title={`Открытые позиции · ${rows.length}`}>

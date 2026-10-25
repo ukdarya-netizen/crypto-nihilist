@@ -70,7 +70,7 @@ export function ChartModal({ symbol, signal, onClose }: { symbol: string; signal
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <p className="font-semibold">{coin(symbol)} <span className="font-mono text-xs text-muted">BingX · CoinGlass</span></p>
           <div className="flex items-center gap-2">
-            <Segmented<Tf> value={tf} onChange={setTf} options={(["30m", "1h", "4h", "1d"] as Tf[]).map((t) => ({ id: t, label: t === "1d" ? "1D" : t }))} />
+            <Segmented value={tf} onChange={(id) => setTf(id as Tf)} options={(["30m", "1h", "4h", "1d"] as Tf[]).map((t) => ({ id: t, label: t === "1d" ? "1D" : t }))} />
             <a href={`https://bingx.com/en/perpetual/${coin(symbol)}-USDT/`} target="_blank" rel="noreferrer" className="border border-border px-2 py-1.5 font-mono text-[11px] text-muted hover:text-foreground">BingX ↗</a>
             <button type="button" onClick={onClose} aria-label="Закрыть" className="p-1 text-muted hover:text-foreground"><X className="size-5" /></button>
           </div>
