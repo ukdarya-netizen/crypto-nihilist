@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  logSnapshotBackfillFailure, logSnapshotBackfillResult, selectTrajectoryDue,
+  logSnapshotBackfillFailure, logSnapshotBackfillResult, runSnapshotBackfillStage, selectTrajectoryDue,
 } from "./snapshots";
 
 test("snapshot backfill failures log full structured err at error level", () => {
@@ -33,6 +33,37 @@ test("snapshot backfill failures log full structured err at error level", () => 
       stack: cause.stack,
     },
   });
+});
+
+test("snapshot backfill failures keep the original err and identify each failing stage", async () => {
+  const stages = ["entry", "close", "derivs", "trajectory"] as const;
+
+  for (const stage of stages) {
+    const original = Object.assign(new Error(`${stage} operation failed`), { code: `ERR_${stage}` });
+    const records: Array<{ fields: Record<string, unknown>; message: string }> = [];
+    const target = {
+      error: (fields: Record<string, unknown>, message: string) => records.push({ fields, message }),
+      info: () => assert.fail("failure must not be logged as success"),
+    };
+
+    await assert.rejects(
+      runSnapshotBackfillStage(stage, async () => { throw original; }),
+      (err: unknown) => {
+        logSnapshotBackfillFailure(err, "nihilist: snapshot backfill failed", target);
+        return true;
+      },
+    );
+
+    assert.equal(records.length, 1);
+    assert.equal(records[0].fields.stage, stage);
+    assert.deepEqual(records[0].fields.err, {
+      code: `ERR_${stage}`,
+      type: "Error",
+      message: `${stage} operation failed`,
+      stack: original.stack,
+    });
+    assert.equal(records[0].message, "nihilist: snapshot backfill failed");
+  }
 });
 
 test("successful snapshot backfill stays an info record without err", () => {

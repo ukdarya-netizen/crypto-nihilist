@@ -114,7 +114,33 @@ function serializeThrown(err: unknown, seen = new WeakSet<object>()): unknown {
   }
 }
 
-export function snapshotBackfillErrorFields(err: unknown): { err: unknown } {
+export type SnapshotBackfillStage = "entry" | "close" | "derivs" | "trajectory";
+
+export class SnapshotBackfillStageError extends Error {
+  constructor(
+    readonly stage: SnapshotBackfillStage,
+    readonly originalError: unknown,
+  ) {
+    super(`snapshot backfill ${stage} stage failed`, { cause: originalError });
+    this.name = "SnapshotBackfillStageError";
+  }
+}
+
+export async function runSnapshotBackfillStage<T>(
+  stage: SnapshotBackfillStage,
+  action: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await action();
+  } catch (err) {
+    throw new SnapshotBackfillStageError(stage, err);
+  }
+}
+
+export function snapshotBackfillErrorFields(err: unknown): { stage?: SnapshotBackfillStage; err: unknown } {
+  if (err instanceof SnapshotBackfillStageError) {
+    return { stage: err.stage, err: serializeThrown(err.originalError) };
+  }
   return { err: serializeThrown(err) };
 }
 
@@ -204,59 +230,67 @@ function priceAt(symbol: string, at: number): number | null {
 
 /** One backfill pass: missing entry snapshots, then missing close contexts. */
 export async function backfillSnapshots(limit = 300): Promise<{ entries: number; closes: number; unavailable: number; derivs: number; trajectory: number }> {
-  await ensureSnapshotTable();
   let entries = 0; let closes = 0; let unavailable = 0;
-  const { rows } = await pool.query<SignalRow>(
-    `SELECT s.id, s.symbol, s.side, s.htf, s.ltf, s.entry, s.stop, s.tp1, s.risk_pct, s.rr1, s.block_top, s.block_bottom,
-            s.block_scope, s.targets_source, s.opened_at, s.closed_at, s.details
-     FROM nh_signals s LEFT JOIN nh_signal_snapshots n ON n.signal_id = s.id
-     WHERE n.signal_id IS NULL ORDER BY s.id DESC LIMIT $1`, [limit],
-  );
-  for (const row of rows) {
-    const sig = signalLikeFromRow(row);
-    const coin = book(row.symbol);
-    if (coversAsOf(coin, sig.signalAt)) {
-      const btc = row.symbol === BTC ? null : book(BTC);
-      await write(row.id, "ready", true, signalSnapshot(sig, coin, btc && coversAsOf(btc, sig.signalAt) ? btc : null));
-      entries += 1;
-    } else if (coin["30m"].length >= 200 && coin["30m"][0].t > sig.signalAt) {
-      // History is loaded but starts after the signal: it can never be rebuilt.
-      await write(row.id, "unavailable", true, null);
-      unavailable += 1;
-    }
-  }
-  const closed = await pool.query<SignalRow & { reconstructed_entry: boolean }>(
-    `SELECT s.id, s.symbol, s.closed_at FROM nh_signals s JOIN nh_signal_snapshots n ON n.signal_id = s.id
-     WHERE s.status = 'closed' AND s.closed_at IS NOT NULL AND n.close_context IS NULL
-     ORDER BY s.id DESC LIMIT $1`, [limit],
-  );
-  for (const row of closed.rows) {
-    const at = new Date(row.closed_at as Date).getTime();
-    const coin = book(row.symbol);
-    if (!coversAsOf(coin, at)) continue;
-    const btc = row.symbol === BTC ? null : book(BTC);
-    const late = Date.now() - at > 60 * 60_000;
-    await pool.query(
-      `UPDATE nh_signal_snapshots SET close_context = $2, close_reconstructed = $3, close_captured_at = now()
-       WHERE signal_id = $1 AND close_context IS NULL`,
-      [row.id, JSON.stringify(closeContext(coin, btc && coversAsOf(btc, at) ? btc : null, at)), late],
+  await runSnapshotBackfillStage("entry", async () => {
+    await ensureSnapshotTable();
+    const { rows } = await pool.query<SignalRow>(
+      `SELECT s.id, s.symbol, s.side, s.htf, s.ltf, s.entry, s.stop, s.tp1, s.risk_pct, s.rr1, s.block_top, s.block_bottom,
+              s.block_scope, s.targets_source, s.opened_at, s.closed_at, s.details
+       FROM nh_signals s LEFT JOIN nh_signal_snapshots n ON n.signal_id = s.id
+       WHERE n.signal_id IS NULL ORDER BY s.id DESC LIMIT $1`, [limit],
     );
-    closes += 1;
-  }
+    for (const row of rows) {
+      const sig = signalLikeFromRow(row);
+      const coin = book(row.symbol);
+      if (coversAsOf(coin, sig.signalAt)) {
+        const btc = row.symbol === BTC ? null : book(BTC);
+        await write(row.id, "ready", true, signalSnapshot(sig, coin, btc && coversAsOf(btc, sig.signalAt) ? btc : null));
+        entries += 1;
+      } else if (coin["30m"].length >= 200 && coin["30m"][0].t > sig.signalAt) {
+        // History is loaded but starts after the signal: it can never be rebuilt.
+        await write(row.id, "unavailable", true, null);
+        unavailable += 1;
+      }
+    }
+  });
+  await runSnapshotBackfillStage("close", async () => {
+    const closed = await pool.query<SignalRow & { reconstructed_entry: boolean }>(
+      `SELECT s.id, s.symbol, s.closed_at FROM nh_signals s JOIN nh_signal_snapshots n ON n.signal_id = s.id
+       WHERE s.status = 'closed' AND s.closed_at IS NOT NULL AND n.close_context IS NULL
+       ORDER BY s.id DESC LIMIT $1`, [limit],
+    );
+    for (const row of closed.rows) {
+      const at = new Date(row.closed_at as Date).getTime();
+      const coin = book(row.symbol);
+      if (!coversAsOf(coin, at)) continue;
+      const btc = row.symbol === BTC ? null : book(BTC);
+      const late = Date.now() - at > 60 * 60_000;
+      await pool.query(
+        `UPDATE nh_signal_snapshots SET close_context = $2, close_reconstructed = $3, close_captured_at = now()
+         WHERE signal_id = $1 AND close_context IS NULL`,
+        [row.id, JSON.stringify(closeContext(coin, btc && coversAsOf(btc, at) ? btc : null, at)), late],
+      );
+      closes += 1;
+    }
+  });
+
   // Derivatives for entry snapshots and closes (CoinGlass budget: bounded per pass).
   let derivs = 0;
-  const needDeriv = await pool.query<{ signal_id: number; symbol: string; opened_at: Date; closed_at: Date | null; entry_missing: boolean }>(
-    `SELECT n.signal_id, s.symbol, s.opened_at, s.closed_at, (n.deriv_at IS NULL) AS entry_missing
-     FROM nh_signal_snapshots n JOIN nh_signals s ON s.id = n.signal_id
-     WHERE n.status = 'ready' AND (n.deriv_at IS NULL OR (n.close_context IS NOT NULL AND n.close_deriv_at IS NULL))
-     ORDER BY n.signal_id DESC LIMIT 25`,
-  );
-  for (const row of needDeriv.rows) {
-    if (row.entry_missing) await addDerivatives(row.signal_id, row.symbol, new Date(row.opened_at).getTime(), "entry");
-    else if (row.closed_at) await addDerivatives(row.signal_id, row.symbol, new Date(row.closed_at).getTime(), "close");
-    derivs += 1;
-  }
-  const trajectory = await backfillTrajectory(200);
+  await runSnapshotBackfillStage("derivs", async () => {
+    const needDeriv = await pool.query<{ signal_id: number; symbol: string; opened_at: Date; closed_at: Date | null; entry_missing: boolean }>(
+      `SELECT n.signal_id, s.symbol, s.opened_at, s.closed_at, (n.deriv_at IS NULL) AS entry_missing
+       FROM nh_signal_snapshots n JOIN nh_signals s ON s.id = n.signal_id
+       WHERE n.status = 'ready' AND (n.deriv_at IS NULL OR (n.close_context IS NOT NULL AND n.close_deriv_at IS NULL))
+       ORDER BY n.signal_id DESC LIMIT 25`,
+    );
+    for (const row of needDeriv.rows) {
+      if (row.entry_missing) await addDerivatives(row.signal_id, row.symbol, new Date(row.opened_at).getTime(), "entry");
+      else if (row.closed_at) await addDerivatives(row.signal_id, row.symbol, new Date(row.closed_at).getTime(), "close");
+      derivs += 1;
+    }
+  });
+
+  const trajectory = await runSnapshotBackfillStage("trajectory", () => backfillTrajectory(200));
   return { entries, closes, unavailable, derivs, trajectory };
 }
 
