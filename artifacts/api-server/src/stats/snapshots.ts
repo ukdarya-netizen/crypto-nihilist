@@ -52,6 +52,72 @@ export function ensureSnapshotTable(): Promise<void> {
   return ensured;
 }
 
+function serializeValue(value: unknown, seen: WeakSet<object>): unknown {
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "symbol" || typeof value === "function") return String(value);
+  if (value === null || typeof value !== "object") return value;
+  if (value instanceof Error) return serializeThrown(value, seen);
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) return value.map((item) => serializeValue(item, seen));
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, serializeValue(item, seen)]));
+  } finally {
+    seen.delete(value);
+  }
+}
+
+function serializeThrown(err: unknown, seen = new WeakSet<object>()): unknown {
+  if (err === null || (typeof err !== "object" && typeof err !== "function")) {
+    return { type: typeof err, message: String(err), value: serializeValue(err, seen) };
+  }
+  if (seen.has(err)) return "[Circular]";
+  seen.add(err);
+  try {
+    const fields: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(err)) fields[key] = serializeValue(value, seen);
+    if (err instanceof Error) {
+      fields.type = err.name;
+      fields.message = err.message;
+      if (err.stack) fields.stack = err.stack;
+      if (err.cause !== undefined) fields.cause = serializeValue(err.cause, seen);
+    } else {
+      const type = Object.getPrototypeOf(err)?.constructor?.name;
+      if (type && type !== "Object") fields.type = type;
+      if (fields.message === undefined) fields.message = String(err);
+    }
+    return fields;
+  } finally {
+    seen.delete(err);
+  }
+}
+
+export function snapshotBackfillErrorFields(err: unknown): { err: unknown } {
+  return { err: serializeThrown(err) };
+}
+
+type SnapshotBackfillLog = {
+  error: (fields: Record<string, unknown>, message: string) => void;
+  info: (fields: Record<string, unknown>, message: string) => void;
+};
+
+export function logSnapshotBackfillFailure(
+  err: unknown,
+  message = "nihilist: snapshot backfill failed",
+  target: SnapshotBackfillLog = logger,
+): void {
+  target.error(snapshotBackfillErrorFields(err), message);
+}
+
+export function logSnapshotBackfillResult(
+  result: { entries: number; closes: number; unavailable: number; derivs: number; trajectory: number },
+  target: SnapshotBackfillLog = logger,
+): void {
+  if (result.entries || result.closes || result.unavailable || result.derivs || result.trajectory) {
+    target.info(result, "nihilist: snapshot backfill");
+  }
+}
+
 type SignalRow = {
   id: number; symbol: string; side: "long" | "short"; htf: string; ltf: string; entry: number; stop: number; tp1: number;
   risk_pct: number; rr1: number; block_top: number; block_bottom: number; block_scope: string; targets_source: string;
@@ -238,8 +304,8 @@ export function startSnapshotBackfill(): void {
     if (backfillRunning) return;
     backfillRunning = true;
     void backfillSnapshots().then((r) => {
-    if (r.entries || r.closes || r.unavailable || r.derivs || r.trajectory) logger.info(r, "nihilist: snapshot backfill");
-    }).catch((err) => logger.warn({ err }, "nihilist: snapshot backfill failed"))
+      logSnapshotBackfillResult(r);
+    }).catch((err) => logSnapshotBackfillFailure(err))
       .finally(() => { backfillRunning = false; });
   };
   setTimeout(run, 30_000).unref?.();

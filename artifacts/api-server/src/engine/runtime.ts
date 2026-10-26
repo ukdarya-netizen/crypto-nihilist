@@ -14,7 +14,9 @@
  */
 import { pool } from "@workspace/db";
 import { INTERVAL_MS, type Interval } from "./candles";
-import { captureSnapshot, ensureSnapshotTable, startSnapshotBackfill } from "../stats/snapshots";
+import {
+  captureSnapshot, ensureSnapshotTable, logSnapshotBackfillFailure, startSnapshotBackfill,
+} from "../stats/snapshots";
 import { removeDuplicateSignals } from "../stats/dedupe";
 import { evaluateSetups, type HtfInterval, type SetupCandidate, type SetupSignal } from "./setups";
 import { COMBOS, MAX_HOLD_MS } from "./config";
@@ -369,7 +371,7 @@ export async function startEngine(): Promise<void> {
   }
   status.phase = "running";
   status.ready = ready.size;
-  await ensureSnapshotTable().catch((err) => logger.error({ err }, "nihilist: snapshot table unavailable"));
+  await ensureSnapshotTable().catch((err) => logSnapshotBackfillFailure(err, "nihilist: snapshot table unavailable"));
   startSnapshotBackfill();
   void backfillLoop();
   startTracker();
