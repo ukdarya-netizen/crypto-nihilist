@@ -143,12 +143,23 @@ async function recordDecision(
   );
 }
 
-async function openSignal(symbol: string, s: SetupSignal): Promise<boolean> {
-  const busy = await pool.query(
-    "SELECT 1 FROM nh_signals WHERE status = 'open' AND symbol = $1 AND setup = $2 LIMIT 1", [symbol, s.setup],
+/**
+ * One trade per coin and direction. Several setups often fire on the same
+ * move (OB 4h and 1D, break 30m and 1h at the hour): that used to open the
+ * same trade two or three times (duplicates in Telegram and in the stats).
+ * When they fire together the highest-priority setup opens and records the
+ * others as its confluence; while a trade is open, the coin is busy.
+ */
+export const SETUP_PRIORITY = ["1d_1h", "1d_30m", "4h_1h", "4h_30m"];
+const priorityOf = (setup: string) => SETUP_PRIORITY.indexOf(setup.replace(/_(long|short)$/, ""));
+
+async function openSignal(symbol: string, s: SetupSignal, confluence: string[] = [s.setup]): Promise<boolean> {
+  const busy = await pool.query<{ id: number; setup: string }>(
+    "SELECT id, setup FROM nh_signals WHERE status = 'open' AND symbol = $1 AND side = $2 LIMIT 1", [symbol, s.side],
   );
   if (busy.rowCount) {
-    await recordDecision(symbol, s.setup, s.barTime, "skipped", "open_signal_same_setup", s.block.id, signalDetails(s));
+    await recordDecision(symbol, s.setup, s.barTime, "skipped", "open_signal_same_symbol", s.block.id,
+      { ...signalDetails(s), openSignalId: busy.rows[0].id, openSetup: busy.rows[0].setup });
     return false;
   }
   const trade = openTrade({
@@ -165,7 +176,7 @@ async function openSignal(symbol: string, s: SetupSignal): Promise<boolean> {
     [
       symbol, s.setup, s.htf, s.ltf, s.side, s.block.id, s.block.top, s.block.bottom, s.block.scope,
       s.barTime, s.entry, s.stop, s.tp1, s.tp2, s.riskPct, s.rr1, s.targetsSource,
-      new Date(trade.openedAt), new Date(trade.expiresAt), JSON.stringify(signalDetails(s)),
+      new Date(trade.openedAt), new Date(trade.expiresAt), JSON.stringify({ ...signalDetails(s), confluenceSetups: confluence }),
       live, s.stop,
     ],
   );
@@ -177,7 +188,7 @@ async function openSignal(symbol: string, s: SetupSignal): Promise<boolean> {
     riskPct: s.riskPct, rr1: s.rr1, blockTop: s.block.top, blockBottom: s.block.bottom, blockScope: s.block.scope,
     blockTime: s.block.time, blockCreatedAt: s.block.createdAt, firstTouchAt: s.firstTouchAt, lastTouchAt: s.lastTouchAt,
     htfSwingTrend: s.htfSwingTrend, htfInternalTrend: s.htfInternalTrend, ltfAtr: s.ltfAtr,
-    ob: s.ob, targetsSource: s.targetsSource, signalAt: s.signalAt,
+    ob: s.ob, confluenceSetups: confluence, targetsSource: s.targetsSource, signalAt: s.signalAt,
   });
   await insertEvent(id, `${id}:opened`, "opened", s.entry, signalDetails(s), s.signalAt);
   return true;
@@ -207,6 +218,7 @@ export async function evaluateSymbol(symbol: string, now = Date.now()): Promise<
   const b = book(symbol);
   let signals = 0;
   let decisions = 0;
+  const fresh: SetupSignal[] = [];
   for (const combo of COMBOS) {
     const ltfSeries = b[combo.ltf];
     const last = ltfSeries[ltfSeries.length - 1];
@@ -229,10 +241,19 @@ export async function evaluateSymbol(symbol: string, now = Date.now()): Promise<
       decisions += 1;
       await recordDecision(symbol, r.setup, r.barTime, "rejected", r.reason, r.blockId, r.details);
     }
-    for (const s of found) {
-      if (s.signalAt !== closeAt) continue;
-      decisions += 1;
-      if (await openSignal(symbol, s)) signals += 1;
+    for (const s of found) if (s.signalAt === closeAt) fresh.push(s);
+  }
+  // Same move, several setups: open one per direction, the rest is confluence.
+  for (const side of ["long", "short"] as const) {
+    const group = fresh.filter((x) => x.side === side).sort((a, b) => priorityOf(a.setup) - priorityOf(b.setup));
+    if (!group.length) continue;
+    const [main, ...rest] = group;
+    const confluence = group.map((x) => x.setup);
+    decisions += group.length;
+    if (await openSignal(symbol, main, confluence)) signals += 1;
+    for (const dup of rest) {
+      await recordDecision(symbol, dup.setup, dup.barTime, "skipped", "duplicate_same_move", dup.block.id,
+        { ...signalDetails(dup), mainSetup: main.setup });
     }
   }
   return { signals, decisions };

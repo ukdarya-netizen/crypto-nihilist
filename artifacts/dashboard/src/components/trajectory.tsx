@@ -16,7 +16,7 @@ export function Trajectory({ id }: { id: number }) {
     return () => { alive = false; };
   }, [id]);
   if (points === null) return <p className="text-muted">Загрузка…</p>;
-  if (!points.length) return <p className="text-muted">Первая точка — через 15 минут после входа (дальше 30м, 1ч, 2ч, 4ч, 8ч, 24ч, 48ч, 72ч и раз в сутки).</p>;
+  if (!points.length) return <p className="text-muted">Точки: касание блока и каждые 30 мин до сигнала; после входа +15 мин, каждые 30 мин первые сутки, дальше каждые 4 часа до закрытия.</p>;
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[640px] font-mono text-[11px]">
@@ -24,7 +24,7 @@ export function Trajectory({ id }: { id: number }) {
         <tbody>
           {points.map((p) => (
             <tr key={p.label} className="border-t border-border">
-              <td className="py-1 pr-3">{p.label}{p.reconstructed ? <span className="text-muted">*</span> : ""}</td>
+              <td className={`py-1 pr-3 ${p.label === "touch" || p.label.startsWith("-") ? "text-warn" : ""}`}>{p.label === "touch" ? "касание ОБ" : p.label}{p.reconstructed ? <span className="text-muted">*</span> : ""}</td>
               <td className="pr-3 text-muted">{when(p.at)}</td>
               <td className="pr-3">{p.price === null ? "—" : compact(p.price)}</td>
               <td className={`pr-3 ${tone(p.pct_from_entry)}`}>{signed(p.pct_from_entry, 2, "%")}</td>

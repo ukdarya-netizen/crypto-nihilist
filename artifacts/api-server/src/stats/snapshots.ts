@@ -16,15 +16,8 @@ import {
 } from "../engine/metrics";
 import { derivativeMetrics } from "../market/derivatives";
 
-/**
- * Trajectory points after entry (AltBullet's 15m…72h), then once a day for
- * the rest of the holding time (up to 21 days for 1D blocks).
- */
-export const TRAJECTORY: Array<{ label: string; ms: number }> = [
-  ...[["15m", 0.25], ["30m", 0.5], ["1h", 1], ["2h", 2], ["4h", 4], ["8h", 8], ["24h", 24], ["48h", 48], ["72h", 72]]
-    .map(([label, h]) => ({ label: String(label), ms: Number(h) * 3_600_000 })),
-  ...Array.from({ length: 18 }, (_, i) => ({ label: `d${i + 4}`, ms: (i + 4) * 86_400_000 })),
-];
+import { trajectoryPoints } from "../engine/trajectory";
+export { trajectoryPoints };
 
 const BTC = "BTC-USDT";
 let ensured: Promise<void> | null = null;
@@ -78,6 +71,7 @@ export function signalLikeFromRow(row: SignalRow): SignalLike {
     htfSwingTrend: n(d.htfSwingTrend), htfInternalTrend: n(d.htfInternalTrend), ltfAtr: n(d.ltfAtr),
     targetsSource: row.targets_source, signalAt: new Date(row.opened_at).getTime(),
     ob: d.ob && typeof d.ob === "object" ? d.ob as SignalLike["ob"] : null,
+    confluenceSetups: Array.isArray(d.confluenceSetups) ? d.confluenceSetups as string[] : null,
   };
 }
 
@@ -174,46 +168,53 @@ export async function backfillSnapshots(limit = 300): Promise<{ entries: number;
     else if (row.closed_at) await addDerivatives(row.signal_id, row.symbol, new Date(row.closed_at).getTime(), "close");
     derivs += 1;
   }
-  const trajectory = await backfillTrajectory(12);
+  const trajectory = await backfillTrajectory(25);
   return { entries, closes, unavailable, derivs, trajectory };
 }
 
-/** Due trajectory points (open trades and closed ones up to their close). */
+/** Due trajectory points, newest first (the live picture stays current; history fills behind). */
 export async function backfillTrajectory(limit: number, now = Date.now()): Promise<number> {
-  const { rows } = await pool.query<{ id: number; symbol: string; side: "long" | "short"; entry: number; opened_at: Date; closed_at: Date | null; have: string[] | null }>(
-    `SELECT s.id, s.symbol, s.side, s.entry, s.opened_at, s.closed_at,
+  const { rows } = await pool.query<{ id: number; symbol: string; side: "long" | "short"; entry: number; opened_at: Date; closed_at: Date | null; details: Record<string, unknown>; have: string[] | null }>(
+    `SELECT s.id, s.symbol, s.side, s.entry, s.opened_at, s.closed_at, s.details,
             (SELECT array_agg(t.label) FROM nh_signal_trajectory t WHERE t.signal_id = s.id) AS have
      FROM nh_signals s WHERE s.opened_at > now() - interval '40 days' ORDER BY s.id DESC LIMIT 400`,
   );
-  let done = 0;
+  const due: Array<{ row: (typeof rows)[number]; label: string; offsetMs: number; at: number }> = [];
   for (const row of rows) {
     const opened = new Date(row.opened_at).getTime();
     const end = row.closed_at ? new Date(row.closed_at).getTime() : now;
+    const touch = Number(row.details?.firstTouchAt);
     const have = new Set(row.have ?? []);
-    for (const point of TRAJECTORY) {
-      if (done >= limit) return done;
-      const at = opened + point.ms;
-      if (at > end || at > now || have.has(point.label)) continue;
-      const coin = book(row.symbol);
-      if (!coversAsOf(coin, at)) continue; // candles not loaded yet / too old: later pass or never
-      const price = priceAt(row.symbol, at);
-      const dir = row.side === "long" ? 1 : -1;
-      const btc = row.symbol === BTC ? null : book(BTC);
-      const metrics = {
-        ...marketMetrics(coin, at),
-        ...(btc && coversAsOf(btc, at) ? { btc_chg1h: marketMetrics(btc, at, "btc_").btc_chg1h,
-          btc_chg24h: marketMetrics(btc, at, "btc_").btc_chg24h } : {}),
-        ...(await derivativeMetrics(row.symbol, at)),
-      };
-      await pool.query(
-        `INSERT INTO nh_signal_trajectory (signal_id, label, at, elapsed_ms, price, pct_from_entry, metrics, reconstructed)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (signal_id, label) DO NOTHING`,
-        [row.id, point.label, new Date(at), point.ms, price,
-          price === null ? null : Math.round(((price - row.entry) / row.entry) * 100 * dir * 100) / 100,
-          JSON.stringify(metrics), now - at > 15 * 60_000],
-      );
-      done += 1;
+    for (const p of trajectoryPoints(opened, Number.isFinite(touch) ? touch : null, end)) {
+      const at = opened + p.offsetMs;
+      if (at > now || have.has(p.label)) continue;
+      due.push({ row, label: p.label, offsetMs: p.offsetMs, at });
     }
+  }
+  due.sort((a, b) => b.at - a.at);
+  let done = 0;
+  for (const d of due) {
+    if (done >= limit) break;
+    const { row, at } = d;
+    const coin = book(row.symbol);
+    if (!coversAsOf(coin, at)) continue; // candles not loaded yet / too old
+    const price = priceAt(row.symbol, at);
+    const dir = row.side === "long" ? 1 : -1;
+    const btc = row.symbol === BTC ? null : book(BTC);
+    const b = btc && coversAsOf(btc, at) ? marketMetrics(btc, at, "btc_") : null;
+    const metrics = {
+      ...marketMetrics(coin, at),
+      ...(b ? { btc_chg1h: b.btc_chg1h, btc_chg24h: b.btc_chg24h } : {}),
+      ...(await derivativeMetrics(row.symbol, at)),
+    };
+    await pool.query(
+      `INSERT INTO nh_signal_trajectory (signal_id, label, at, elapsed_ms, price, pct_from_entry, metrics, reconstructed)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (signal_id, label) DO NOTHING`,
+      [row.id, d.label, new Date(at), d.offsetMs, price,
+        price === null ? null : Math.round(((price - row.entry) / row.entry) * 100 * dir * 100) / 100,
+        JSON.stringify(metrics), now - at > 15 * 60_000],
+    );
+    done += 1;
   }
   return done;
 }

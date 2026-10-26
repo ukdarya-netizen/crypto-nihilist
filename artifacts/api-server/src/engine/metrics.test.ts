@@ -70,3 +70,15 @@ test("metric analysis: quartiles and labels with CAB win rate and avg R", () => 
   const flag = out.find((m) => m.key === "aligned")!;
   assert.deepEqual(flag.buckets.map((b) => [b.label, b.winRate]).sort(), [["false", 0], ["true", 100]]);
 });
+
+import { trajectoryPoints } from "./trajectory";
+test("trajectory: touch and every 30m before the signal, 30m for a day after, then every 4h", () => {
+  const sig = Date.UTC(2026, 9, 26, 12);
+  const pts = trajectoryPoints(sig, sig - 100 * 60_000, sig + 3 * 86_400_000);
+  const labels = pts.map((p) => p.label);
+  assert.deepEqual(labels.slice(0, 4), ["touch", "-90m", "-60m", "-30m"]);
+  assert.ok(labels.includes("+15m") && labels.includes("+30m") && labels.includes("+1440m"));
+  assert.ok(labels.includes("+28h") && labels.includes("+72h"));
+  assert.ok(!labels.includes("+76h"), "nothing after the close");
+  assert.equal(new Set(labels).size, labels.length);
+});
