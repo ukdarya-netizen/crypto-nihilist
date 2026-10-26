@@ -161,14 +161,14 @@ export async function backfillSnapshots(limit = 300): Promise<{ entries: number;
     `SELECT n.signal_id, s.symbol, s.opened_at, s.closed_at, (n.deriv_at IS NULL) AS entry_missing
      FROM nh_signal_snapshots n JOIN nh_signals s ON s.id = n.signal_id
      WHERE n.status = 'ready' AND (n.deriv_at IS NULL OR (n.close_context IS NOT NULL AND n.close_deriv_at IS NULL))
-     ORDER BY n.signal_id DESC LIMIT 10`,
+     ORDER BY n.signal_id DESC LIMIT 25`,
   );
   for (const row of needDeriv.rows) {
     if (row.entry_missing) await addDerivatives(row.signal_id, row.symbol, new Date(row.opened_at).getTime(), "entry");
     else if (row.closed_at) await addDerivatives(row.signal_id, row.symbol, new Date(row.closed_at).getTime(), "close");
     derivs += 1;
   }
-  const trajectory = await backfillTrajectory(25);
+  const trajectory = await backfillTrajectory(60);
   return { entries, closes, unavailable, derivs, trajectory };
 }
 
@@ -191,7 +191,11 @@ export async function backfillTrajectory(limit: number, now = Date.now()): Promi
       due.push({ row, label: p.label, offsetMs: p.offsetMs, at });
     }
   }
-  due.sort((a, b) => b.at - a.at);
+  // Live points (due in the last 30 min) first, newest first; then history
+  // signal by signal from the oldest, so whole trajectories complete for analysis.
+  const live = (d: (typeof due)[number]) => now - d.at < 30 * 60_000;
+  due.sort((a, b) => (Number(live(b)) - Number(live(a))) ||
+    (live(a) ? b.at - a.at : a.row.id - b.row.id || a.at - b.at));
   let done = 0;
   for (const d of due) {
     if (done >= limit) break;
