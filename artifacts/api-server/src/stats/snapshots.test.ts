@@ -1,8 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  logSnapshotBackfillFailure, logSnapshotBackfillResult, runSnapshotBackfillStage, selectTrajectoryDue,
+  logSnapshotBackfillFailure, logSnapshotBackfillResult, runSnapshotBackfillRows, runSnapshotBackfillStage, selectTrajectoryDue,
 } from "./snapshots";
+
+test("snapshot backfill continues after a row failure and logs its stage and signal id", async () => {
+  const records: Array<{ fields: Record<string, unknown>; message: string }> = [];
+  const target = {
+    error: (fields: Record<string, unknown>, message: string) => records.push({ fields, message }),
+    info: () => assert.fail("row failure must not be logged as success"),
+  };
+  const handled: number[] = [];
+  const rows = [{ id: 1 }, { id: 2 }, { id: 3 }];
+
+  await runSnapshotBackfillRows("entry", rows, (row) => row.id, async (row) => {
+    if (row.id === 2) throw Object.assign(new Error("insert failed"), { code: "23505" });
+    handled.push(row.id);
+  }, target);
+
+  assert.deepEqual(handled, [1, 3]);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].message, "nihilist: snapshot backfill record failed");
+  assert.equal(records[0].fields.stage, "entry");
+  assert.equal(records[0].fields.signalId, 2);
+  const loggedError = records[0].fields.err as { code: string; type: string; message: string; stack: string };
+  assert.equal(loggedError.code, "23505");
+  assert.equal(loggedError.type, "Error");
+  assert.equal(loggedError.message, "insert failed");
+  assert.match(loggedError.stack, /Error: insert failed/);
+});
 
 test("snapshot backfill failures log full structured err at error level", () => {
   const cause = new Error("connection refused");

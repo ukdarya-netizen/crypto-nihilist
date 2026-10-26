@@ -157,6 +157,26 @@ export function logSnapshotBackfillFailure(
   target.error(snapshotBackfillErrorFields(err), message);
 }
 
+export async function runSnapshotBackfillRows<T>(
+  stage: SnapshotBackfillStage,
+  rows: T[],
+  signalId: (row: T) => number,
+  action: (row: T) => Promise<void>,
+  target: SnapshotBackfillLog = logger,
+): Promise<void> {
+  for (const row of rows) {
+    const id = signalId(row);
+    try {
+      await action(row);
+    } catch (err) {
+      target.error(
+        { stage, signalId: id, err: serializeThrown(err) },
+        "nihilist: snapshot backfill record failed",
+      );
+    }
+  }
+}
+
 export function logSnapshotBackfillResult(
   result: { entries: number; closes: number; unavailable: number; derivs: number; trajectory: number },
   target: SnapshotBackfillLog = logger,
@@ -239,7 +259,7 @@ export async function backfillSnapshots(limit = 300): Promise<{ entries: number;
        FROM nh_signals s LEFT JOIN nh_signal_snapshots n ON n.signal_id = s.id
        WHERE n.signal_id IS NULL ORDER BY s.id DESC LIMIT $1`, [limit],
     );
-    for (const row of rows) {
+    await runSnapshotBackfillRows("entry", rows, (row) => row.id, async (row) => {
       const sig = signalLikeFromRow(row);
       const coin = book(row.symbol);
       if (coversAsOf(coin, sig.signalAt)) {
@@ -251,7 +271,7 @@ export async function backfillSnapshots(limit = 300): Promise<{ entries: number;
         await write(row.id, "unavailable", true, null);
         unavailable += 1;
       }
-    }
+    });
   });
   await runSnapshotBackfillStage("close", async () => {
     const closed = await pool.query<SignalRow & { reconstructed_entry: boolean }>(
@@ -259,10 +279,10 @@ export async function backfillSnapshots(limit = 300): Promise<{ entries: number;
        WHERE s.status = 'closed' AND s.closed_at IS NOT NULL AND n.close_context IS NULL
        ORDER BY s.id DESC LIMIT $1`, [limit],
     );
-    for (const row of closed.rows) {
+    await runSnapshotBackfillRows("close", closed.rows, (row) => row.id, async (row) => {
       const at = new Date(row.closed_at as Date).getTime();
       const coin = book(row.symbol);
-      if (!coversAsOf(coin, at)) continue;
+      if (!coversAsOf(coin, at)) return;
       const btc = row.symbol === BTC ? null : book(BTC);
       const late = Date.now() - at > 60 * 60_000;
       await pool.query(
@@ -271,7 +291,7 @@ export async function backfillSnapshots(limit = 300): Promise<{ entries: number;
         [row.id, JSON.stringify(closeContext(coin, btc && coversAsOf(btc, at) ? btc : null, at)), late],
       );
       closes += 1;
-    }
+    });
   });
 
   // Derivatives for entry snapshots and closes (CoinGlass budget: bounded per pass).
@@ -283,11 +303,11 @@ export async function backfillSnapshots(limit = 300): Promise<{ entries: number;
        WHERE n.status = 'ready' AND (n.deriv_at IS NULL OR (n.close_context IS NOT NULL AND n.close_deriv_at IS NULL))
        ORDER BY n.signal_id DESC LIMIT 25`,
     );
-    for (const row of needDeriv.rows) {
+    await runSnapshotBackfillRows("derivs", needDeriv.rows, (row) => row.signal_id, async (row) => {
       if (row.entry_missing) await addDerivatives(row.signal_id, row.symbol, new Date(row.opened_at).getTime(), "entry");
       else if (row.closed_at) await addDerivatives(row.signal_id, row.symbol, new Date(row.closed_at).getTime(), "close");
       derivs += 1;
-    }
+    });
   });
 
   const trajectory = await runSnapshotBackfillStage("trajectory", () => backfillTrajectory(200));
@@ -318,11 +338,11 @@ export async function backfillTrajectory(limit: number, now = Date.now()): Promi
   const picked = selectTrajectoryDue(due.map((d) => ({ ...d, value: d })), limit, now)
     .map((d) => d.value);
   let done = 0;
-  for (const d of picked) {
-    if (done >= limit) break;
+  await runSnapshotBackfillRows("trajectory", picked, (d) => d.row.id, async (d) => {
+    if (done >= limit) return;
     const { row, at } = d;
     const coin = book(row.symbol);
-    if (!coversAsOf(coin, at)) continue; // candles not loaded yet / too old
+    if (!coversAsOf(coin, at)) return; // candles not loaded yet / too old
     const price = priceAt(row.symbol, at);
     const dir = row.side === "long" ? 1 : -1;
     const btc = row.symbol === BTC ? null : book(BTC);
@@ -340,7 +360,7 @@ export async function backfillTrajectory(limit: number, now = Date.now()): Promi
         JSON.stringify(metrics), now - at > 15 * 60_000],
     );
     done += 1;
-  }
+  });
   return done;
 }
 
