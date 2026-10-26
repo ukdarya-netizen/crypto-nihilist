@@ -19,8 +19,12 @@ export const LIVE_SETUPS: ReadonlySet<string> = new Set<string>(
   COMBOS.flatMap(({ htf, ltf }) => [`${htf}_${ltf}_long`, `${htf}_${ltf}_short`]),
 );
 
-/** AltBullet's break-even at +5% before TP1 (null = stop moves to entry only at TP1). */
-export const BREAKEVEN_AT_PCT: number | null = null;
+/**
+ * AltBullet's break-even: at +5% before TP1 the stop moves to entry (null =
+ * only at TP1). On (owner 2026-10-26): in the 60-day backtest it raised avg R
+ * in all 8 setups (stops 60-77% -> 43-59%).
+ */
+export const BREAKEVEN_AT_PCT: number | null = 5;
 
 /** Open trades are followed on 5-minute candles. */
 export const TRACK_INTERVAL = "5m" as const;
