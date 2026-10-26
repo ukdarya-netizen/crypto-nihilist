@@ -5,7 +5,7 @@ import { telegramEnabled } from "../telegram/transport";
 import { cgRequest, coinglassGovernorStats, EXCHANGE } from "../market/coinglass";
 import { apiHealth } from "../lib/apiHealth";
 import { buildJournal, tradeStatus, type JournalRow } from "../stats/journal";
-import { ensureSnapshotTable } from "../stats/snapshots";
+import { ensureSnapshotTable, snapshotBackfillDiagnostics } from "../stats/snapshots";
 import { analyzeMetrics, type AnalysisRow } from "../stats/metricAnalysis";
 import { book } from "../market/candleStore";
 import { INTERVAL_MS, type Interval } from "../engine/candles";
@@ -38,7 +38,14 @@ router.get("/nh/status", async (_req, res) => {
     channel: process.env.NIHILIST_TELEGRAM_CHANNEL?.trim() || null,
     deliveries: deliveryRows[0],
   };
-  res.json({ engine: engineStatus(), coinglass: coinglassGovernorStats(), health: apiHealth(), signals: rows[0], telegram });
+  res.json({
+    engine: engineStatus(),
+    snapshotBackfill: snapshotBackfillDiagnostics(),
+    coinglass: coinglassGovernorStats(),
+    health: apiHealth(),
+    signals: rows[0],
+    telegram,
+  });
 });
 
 /** Scan cycles (last two days), the scan running now, and current candidates. */

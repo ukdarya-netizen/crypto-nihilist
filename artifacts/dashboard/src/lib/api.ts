@@ -46,6 +46,10 @@ export type Status = {
     leaseAcquired: boolean; startedAt: number; phase?: string; loadedFromDb?: number;
     cycle?: CycleNow | null;
   };
+  snapshotBackfill: {
+    monitoringSince: number | null; lastStartedAt: number | null; lastSuccessfulAt: number | null;
+    lastFailedAt: number | null; running: boolean; ageMs: number | null; staleAfterMs: number; overdue: boolean;
+  };
   coinglass: { started: number; ok: number; failed: number; rateLimited: number; keys: number; cooldownMs: number; minGapMs: number };
   health: Record<string, { lastError: string | null; lastErrorAt: number | null; lastSuccessAt: number | null; consecutiveFailures: number }>;
   signals: { open: number; closed: number };

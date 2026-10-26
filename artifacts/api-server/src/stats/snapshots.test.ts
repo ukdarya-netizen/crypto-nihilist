@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   logSnapshotBackfillFailure, logSnapshotBackfillResult, runLiveSnapshotCapture, runSnapshotBackfillRows,
-  runSnapshotBackfillStage, selectTrajectoryDue,
+  runSnapshotBackfillStage, selectTrajectoryDue, SnapshotBackfillMonitor,
 } from "./snapshots";
 
 test("successful live snapshot capture completes without a warning", async () => {
@@ -146,6 +146,53 @@ test("successful snapshot backfill stays an info record without err", () => {
     fields: { entries: 1, closes: 0, unavailable: 0, derivs: 0, trajectory: 0 },
     message: "nihilist: snapshot backfill",
   }]);
+});
+
+test("snapshot backfill diagnostics report stale success and rate-limit warnings", () => {
+  const monitor = new SnapshotBackfillMonitor(30_000);
+  monitor.startMonitoring(1_000, 500);
+  monitor.markStarted(20_000);
+  const records: Array<{ fields: Record<string, unknown>; message: string }> = [];
+  const target = {
+    warn: (fields: Record<string, unknown>, message: string) => records.push({ fields, message }),
+  };
+
+  assert.equal(monitor.status(30_499).overdue, false);
+  assert.equal(monitor.logOverdueIfNeeded(30_500, target), true);
+  assert.deepEqual(records[0], {
+    fields: {
+      lastSuccessfulAt: 500,
+      lastStartedAt: 20_000,
+      lastFailedAt: null,
+      ageMs: 30_000,
+      staleAfterMs: 30_000,
+      running: true,
+    },
+    message: "nihilist: snapshot backfill overdue",
+  });
+  assert.equal(monitor.logOverdueIfNeeded(40_000, target), false);
+  assert.equal(monitor.logOverdueIfNeeded(60_500, target), true);
+
+  monitor.markFailed(61_000);
+  assert.equal(monitor.status(61_000).lastSuccessfulAt, 500);
+  assert.equal(monitor.status(61_000).lastFailedAt, 61_000);
+  assert.equal(monitor.status(61_000).overdue, true);
+
+  monitor.markSucceeded(61_001);
+  assert.equal(monitor.status(61_001).lastSuccessfulAt, 61_001);
+  assert.equal(monitor.status(61_001).overdue, false);
+  assert.equal(monitor.status(61_001).running, false);
+  assert.equal(monitor.logOverdueIfNeeded(61_001, target), false);
+});
+
+test("snapshot backfill diagnoses a long wait before its first successful pass", () => {
+  const monitor = new SnapshotBackfillMonitor(30_000);
+  monitor.startMonitoring(1_000);
+  const status = monitor.status(31_000);
+
+  assert.equal(status.lastSuccessfulAt, null);
+  assert.equal(status.ageMs, 30_000);
+  assert.equal(status.overdue, true);
 });
 
 test("trajectory history advances on every pass while live points keep arriving", () => {

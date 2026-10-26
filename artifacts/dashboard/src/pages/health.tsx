@@ -7,7 +7,9 @@ export default function Health() {
   const e = data.engine;
   const cg = data.coinglass;
   const h = data.health.coinglass;
+  const backfill = data.snapshotBackfill;
   const ago = e.lastCycleAt ? Math.round((Date.now() - e.lastCycleAt) / 60_000) : null;
+  const backfillAge = backfill.ageMs === null ? null : Math.floor(backfill.ageMs / 60_000);
   const scanning = Boolean(e.cycle);
   const healthy = e.leaseAcquired && (scanning || (ago !== null && ago <= 35));
   return (
@@ -21,6 +23,24 @@ export default function Health() {
           : e.backfillPending ? `догружается история: ${e.backfillPending}` : "история загружена"} />
         <Kpi label="Сделки" value={data.signals.open} hint={`открыто · закрыто ${data.signals.closed}`} />
       </div>
+      <Panel title="Snapshot backfill">
+        <dl className="grid grid-cols-2 gap-y-2 font-mono text-sm md:grid-cols-4">
+          <dt className="text-muted">Состояние</dt>
+          <dd className={backfill.overdue ? "text-down" : backfill.running ? "text-warn" : "text-up"}>
+            {backfill.overdue
+              ? `задержка · ${backfillAge ?? 0} мин без успеха`
+              : backfill.running ? "проход выполняется" : backfill.monitoringSince === null ? "не запущен" : "в срок"}
+          </dd>
+          <dt className="text-muted">Последнее успешное завершение</dt>
+          <dd>{backfill.lastSuccessfulAt === null ? "ещё не было" : when(backfill.lastSuccessfulAt)}</dd>
+          <dt className="text-muted">Без успешного прохода</dt>
+          <dd className={backfill.overdue ? "text-down" : ""}>{backfillAge === null ? "—" : `${backfillAge} мин`}</dd>
+          <dt className="text-muted">Порог сигнала</dt>
+          <dd>{Math.round(backfill.staleAfterMs / 60_000)} мин</dd>
+          <dt className="text-muted">Последний сбой</dt>
+          <dd>{backfill.lastFailedAt === null ? "нет" : when(backfill.lastFailedAt)}</dd>
+        </dl>
+      </Panel>
       <Panel title="Последний цикл">
         <dl className="grid grid-cols-2 gap-y-2 font-mono text-sm md:grid-cols-4">
           <dt className="text-muted">решений</dt><dd>{e.lastCycleDecisions}</dd>

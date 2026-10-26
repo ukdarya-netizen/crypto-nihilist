@@ -116,6 +116,94 @@ function serializeThrown(err: unknown, seen = new WeakSet<object>()): unknown {
 
 export type SnapshotBackfillStage = "entry" | "close" | "derivs" | "trajectory";
 
+export const SNAPSHOT_BACKFILL_STALE_AFTER_MS = 30 * 60_000;
+
+export type SnapshotBackfillDiagnostics = {
+  monitoringSince: number | null;
+  lastStartedAt: number | null;
+  lastSuccessfulAt: number | null;
+  lastFailedAt: number | null;
+  running: boolean;
+  ageMs: number | null;
+  staleAfterMs: number;
+  overdue: boolean;
+};
+
+type SnapshotBackfillWarningTarget = {
+  warn?: (fields: Record<string, unknown>, message: string) => void;
+};
+
+/** Tracks backfill completion health and rate-limits repeated overdue warnings. */
+export class SnapshotBackfillMonitor {
+  private monitoringSince: number | null = null;
+  private lastStartedAt: number | null = null;
+  private lastSuccessfulAt: number | null = null;
+  private lastFailedAt: number | null = null;
+  private lastWarningAt: number | null = null;
+  private running = false;
+
+  constructor(private readonly staleAfterMs = SNAPSHOT_BACKFILL_STALE_AFTER_MS) {}
+
+  startMonitoring(now: number, lastSuccessfulAt: number | null = null): void {
+    this.monitoringSince ??= now;
+    this.restoreLastSuccessfulAt(lastSuccessfulAt);
+  }
+
+  restoreLastSuccessfulAt(at: number | null): void {
+    if (at === null || !Number.isFinite(at) || at < 0) return;
+    if (this.lastSuccessfulAt === null || at > this.lastSuccessfulAt) this.lastSuccessfulAt = at;
+  }
+
+  markStarted(now: number): void {
+    this.monitoringSince ??= now;
+    this.lastStartedAt = now;
+    this.running = true;
+  }
+
+  markSucceeded(now: number): void {
+    this.monitoringSince ??= now;
+    this.lastSuccessfulAt = now;
+    this.running = false;
+    this.lastWarningAt = null;
+  }
+
+  markFailed(now: number): void {
+    this.lastFailedAt = now;
+    this.running = false;
+  }
+
+  status(now: number): SnapshotBackfillDiagnostics {
+    const baseline = this.lastSuccessfulAt ?? this.monitoringSince;
+    const ageMs = baseline === null ? null : Math.max(0, now - baseline);
+    return {
+      monitoringSince: this.monitoringSince,
+      lastStartedAt: this.lastStartedAt,
+      lastSuccessfulAt: this.lastSuccessfulAt,
+      lastFailedAt: this.lastFailedAt,
+      running: this.running,
+      ageMs,
+      staleAfterMs: this.staleAfterMs,
+      overdue: ageMs !== null && ageMs >= this.staleAfterMs,
+    };
+  }
+
+  logOverdueIfNeeded(now: number, target: SnapshotBackfillWarningTarget): boolean {
+    const status = this.status(now);
+    if (!status.overdue) return false;
+    if (this.lastWarningAt !== null && now - this.lastWarningAt < this.staleAfterMs) return false;
+    this.lastWarningAt = now;
+    target.warn?.({
+      lastSuccessfulAt: status.lastSuccessfulAt,
+      lastStartedAt: status.lastStartedAt,
+      lastFailedAt: status.lastFailedAt,
+      ageMs: status.ageMs,
+      staleAfterMs: status.staleAfterMs,
+      running: status.running,
+    }, "nihilist: snapshot backfill overdue");
+    return true;
+  }
+}
+
 export class SnapshotBackfillStageError extends Error {
   constructor(
     readonly stage: SnapshotBackfillStage,
@@ -147,6 +235,7 @@ export function snapshotBackfillErrorFields(err: unknown): { stage?: SnapshotBac
 type SnapshotBackfillLog = {
   error: (fields: Record<string, unknown>, message: string) => void;
   info: (fields: Record<string, unknown>, message: string) => void;
+  warn?: (fields: Record<string, unknown>, message: string) => void;
 };
 
 export function logSnapshotBackfillFailure(
@@ -382,14 +471,59 @@ export async function backfillTrajectory(limit: number, now = Date.now()): Promi
 }
 
 let backfillRunning = false;
+let backfillScheduled = false;
+const BACKFILL_LAST_SUCCESS_KEY = "snapshot_backfill:last_success_at";
+const backfillMonitor = new SnapshotBackfillMonitor();
+
+function storedTimestamp(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+export function snapshotBackfillDiagnostics(now = Date.now()): SnapshotBackfillDiagnostics {
+  return backfillMonitor.status(now);
+}
+
 export function startSnapshotBackfill(): void {
+  if (backfillScheduled) return;
+  backfillScheduled = true;
+  backfillMonitor.startMonitoring(Date.now());
+  const lastSuccessLoaded = pool.query<{ value: unknown }>(
+    "SELECT value FROM nh_state WHERE key = $1",
+    [BACKFILL_LAST_SUCCESS_KEY],
+  ).then(({ rows }) => {
+    backfillMonitor.restoreLastSuccessfulAt(storedTimestamp(rows[0]?.value));
+  }).catch((err) => {
+    logger.warn({ err }, "nihilist: snapshot backfill health state unavailable");
+  });
+
   const run = () => {
+    backfillMonitor.logOverdueIfNeeded(Date.now(), logger);
     if (backfillRunning) return;
     backfillRunning = true;
-    void backfillSnapshots().then((r) => {
-      logSnapshotBackfillResult(r);
-    }).catch((err) => logSnapshotBackfillFailure(err))
-      .finally(() => { backfillRunning = false; });
+    backfillMonitor.markStarted(Date.now());
+    void (async () => {
+      try {
+        await lastSuccessLoaded;
+        const result = await backfillSnapshots();
+        const completedAt = Date.now();
+        backfillMonitor.markSucceeded(completedAt);
+        logSnapshotBackfillResult(result);
+        void pool.query(
+          `INSERT INTO nh_state (key, value, updated_at) VALUES ($1, $2::jsonb, now())
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+          [BACKFILL_LAST_SUCCESS_KEY, JSON.stringify(completedAt)],
+        ).catch((err) => logger.warn(
+          { err, lastSuccessfulAt: completedAt },
+          "nihilist: snapshot backfill completion time persistence failed",
+        ));
+      } catch (err) {
+        backfillMonitor.markFailed(Date.now());
+        logSnapshotBackfillFailure(err);
+      } finally {
+        backfillRunning = false;
+      }
+    })();
   };
   setTimeout(run, 30_000).unref?.();
   // Every 2 minutes: trajectory points are due 15 minutes after entry.
