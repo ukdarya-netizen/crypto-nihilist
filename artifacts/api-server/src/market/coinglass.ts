@@ -55,9 +55,9 @@ async function admit(): Promise<void> {
  */
 let scanBusy = false;
 export function setScanBusy(value: boolean): void { scanBusy = value; }
-export async function waitForScanIdle(maxMs = 10 * 60_000): Promise<void> {
+export async function waitForScanIdle(maxMs = 10 * 60_000, pollMs = 2_000): Promise<void> {
   const until = Date.now() + maxMs;
-  while (scanBusy && Date.now() < until) await sleep(2_000);
+  while (scanBusy && Date.now() < until) await sleep(Math.min(pollMs, until - Date.now()));
 }
 
 export type CgResult = { ok: true; data: unknown } | { ok: false; error: string };

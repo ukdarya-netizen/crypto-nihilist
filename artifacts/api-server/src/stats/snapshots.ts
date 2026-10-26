@@ -19,6 +19,28 @@ import { derivativeMetrics } from "../market/derivatives";
 import { trajectoryPoints } from "../engine/trajectory";
 export { trajectoryPoints };
 
+type DueTrajectoryPoint<T> = { row: { id: number }; at: number; value: T };
+
+/** Keep recent points responsive without letting them consume the history budget. */
+export function selectTrajectoryDue<T>(
+  due: DueTrajectoryPoint<T>[],
+  limit: number,
+  now: number,
+): DueTrajectoryPoint<T>[] {
+  if (limit <= 0 || due.length === 0) return [];
+  const live = (d: DueTrajectoryPoint<T>) => now - d.at < 30 * 60_000;
+  const liveDue = due.filter(live).sort((a, b) => b.at - a.at);
+  const history = due.filter((d) => !live(d)).sort((a, b) => a.row.id - b.row.id || a.at - b.at);
+  const historyReserve = history.length ? Math.min(history.length, Math.ceil(limit / 2)) : 0;
+  const liveCount = Math.min(liveDue.length, limit - historyReserve);
+  const historyCount = Math.min(history.length, limit - liveCount);
+  const selected = [...liveDue.slice(0, liveCount), ...history.slice(0, historyCount)];
+  if (selected.length < limit) {
+    selected.push(...liveDue.slice(liveCount, liveCount + limit - selected.length));
+  }
+  return selected;
+}
+
 const BTC = "BTC-USDT";
 let ensured: Promise<void> | null = null;
 
@@ -257,22 +279,12 @@ export async function backfillTrajectory(limit: number, now = Date.now()): Promi
       due.push({ row, label: p.label, offsetMs: p.offsetMs, at });
     }
   }
-  // Live points (due in the last 30 min) first, newest first; then history
-  // signal by signal from the oldest, so whole trajectories complete for analysis.
-  const live = (d: (typeof due)[number]) => now - d.at < 30 * 60_000;
-  due.sort((a, b) => (Number(live(b)) - Number(live(a))) ||
-    (live(a) ? b.at - a.at : a.row.id - b.row.id || a.at - b.at));
-  // With ~100 open trades the live points alone could fill every pass and
-  // starve history (2026-10-26: signals after #4 got nothing). At most half
-  // of a pass goes to live points; the rest always advances history.
-  const liveDue = due.filter(live);
-  const history = due.filter((d) => !live(d));
-  const half = Math.ceil(limit / 2);
-  const picked = [...liveDue.slice(0, Math.max(half, limit - history.length)), ...history];
-  due.length = 0;
-  due.push(...picked);
+  // The scan's current picture stays responsive, while each pass reserves
+  // capacity for older history even when new live points keep arriving.
+  const picked = selectTrajectoryDue(due.map((d) => ({ ...d, value: d })), limit, now)
+    .map((d) => d.value);
   let done = 0;
-  for (const d of due) {
+  for (const d of picked) {
     if (done >= limit) break;
     const { row, at } = d;
     const coin = book(row.symbol);

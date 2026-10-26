@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setScanBusy } from "./coinglass";
 import { cgBase, derivativeMetrics } from "./derivatives";
 
 const H = 3_600_000;
@@ -38,6 +39,32 @@ test("CoinGlass flow metrics at a moment: OI, taker, CVD, liquidations, long/sho
     assert.equal(m.d_funding_pct, 0.01);
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+test("derivative history requests wait until the CoinGlass candle scan is idle", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.NIHILIST_COINGLASS_API_KEY;
+  let requests = 0;
+  process.env.NIHILIST_COINGLASS_API_KEY = "test";
+  globalThis.fetch = (async () => {
+    requests += 1;
+    return new Response(JSON.stringify({ code: "0", data: [] }), { status: 200 });
+  }) as typeof fetch;
+  setScanBusy(true);
+  const lookup = derivativeMetrics("JCT-USDT", asOf);
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(requests, 0, "derivative history must not compete with the active candle scan");
+    setScanBusy(false);
+    await lookup;
+    assert.equal(requests, 6, "all six history endpoints should run after the scan finishes");
+  } finally {
+    setScanBusy(false);
+    await lookup.catch(() => {});
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.NIHILIST_COINGLASS_API_KEY;
+    else process.env.NIHILIST_COINGLASS_API_KEY = originalKey;
   }
 });
 

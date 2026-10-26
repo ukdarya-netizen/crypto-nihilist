@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  logSnapshotBackfillFailure, logSnapshotBackfillResult,
+  logSnapshotBackfillFailure, logSnapshotBackfillResult, selectTrajectoryDue,
 } from "./snapshots";
 
 test("snapshot backfill failures log full structured err at error level", () => {
@@ -49,4 +49,47 @@ test("successful snapshot backfill stays an info record without err", () => {
     fields: { entries: 1, closes: 0, unavailable: 0, derivs: 0, trajectory: 0 },
     message: "nihilist: snapshot backfill",
   }]);
+});
+
+test("trajectory history advances on every pass while live points keep arriving", () => {
+  const now = 10_000_000;
+  const limit = 10;
+  let history = Array.from({ length: 60 }, (_, i) => ({
+    row: { id: i + 1 },
+    at: now - 60 * 60_000 - i * 60_000,
+    value: `history-${i + 1}`,
+  }));
+  let liveQueue: Array<{ row: { id: number }; at: number; value: string }> = [];
+  let historicalSaved = 0;
+  let liveSaved = 0;
+
+  for (let pass = 0; pass < 10; pass++) {
+    const incomingLive = Array.from({ length: 50 }, (_, i) => ({
+      row: { id: 1000 + pass * 50 + i },
+      at: now - 1_000 - i,
+      value: `live-${pass}-${i}`,
+    }));
+    liveQueue.push(...incomingLive);
+    const picked = selectTrajectoryDue([...liveQueue, ...history], limit, now);
+    const savedHistory = picked.filter((point) => point.value.startsWith("history-"));
+    const savedLive = picked.filter((point) => point.value.startsWith("live-"));
+
+    assert.equal(picked.length, limit);
+    assert.ok(savedHistory.length >= 5, "each pass must reserve capacity for old trajectory points");
+    assert.ok(savedLive.length > 0, "recent points must still be processed");
+    assert.deepEqual(
+      savedHistory.map((point) => point.row.id),
+      [...savedHistory.map((point) => point.row.id)].sort((a, b) => a - b),
+      "history should proceed from the oldest signal",
+    );
+    historicalSaved += savedHistory.length;
+    liveSaved += savedLive.length;
+    const savedHistoryValues = new Set(savedHistory.map((point) => point.value));
+    const savedLiveValues = new Set(savedLive.map((point) => point.value));
+    history = history.filter((point) => !savedHistoryValues.has(point.value));
+    liveQueue = liveQueue.filter((point) => !savedLiveValues.has(point.value));
+  }
+
+  assert.equal(historicalSaved, 50, "history must make measurable progress despite a continuous live stream");
+  assert.equal(liveSaved, 50);
 });

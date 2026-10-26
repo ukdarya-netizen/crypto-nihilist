@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parsePriceRows, parseSupportedPairs } from "./coinglass";
+import { parsePriceRows, parseSupportedPairs, setScanBusy, waitForScanIdle } from "./coinglass";
 
 test("BingX USDT pairs from supported-exchange-pairs; USDC excluded", () => {
   const data = {
@@ -26,4 +26,19 @@ test("price history rows: seconds or ms, strings or numbers, sorted, invalid dro
   assert.equal(candles[0].t, 1761336000000);
   assert.equal(candles[1].t, 1761350400000);
   assert.equal(candles[1].h, 0.0073);
+});
+
+test("CoinGlass scan keeps priority over derivative history lookups", async () => {
+  setScanBusy(true);
+  let finished = false;
+  try {
+    const waiting = waitForScanIdle(5_000, 5).then(() => { finished = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(finished, false, "history lookups must remain queued while candle scanning is active");
+    setScanBusy(false);
+    await waiting;
+    assert.equal(finished, true);
+  } finally {
+    setScanBusy(false);
+  }
 });
