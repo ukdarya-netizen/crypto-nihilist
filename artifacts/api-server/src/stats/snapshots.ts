@@ -186,6 +186,25 @@ export function logSnapshotBackfillResult(
   }
 }
 
+type SnapshotCaptureLog = {
+  warn: (fields: Record<string, unknown>, message: string) => void;
+};
+
+export async function runLiveSnapshotCapture(
+  signalId: number,
+  capture: () => Promise<void>,
+  target: SnapshotCaptureLog = logger,
+): Promise<void> {
+  try {
+    await capture();
+  } catch (err) {
+    target.warn(
+      { signalId, err: serializeThrown(err) },
+      "nihilist: live snapshot capture failed (backfill will retry)",
+    );
+  }
+}
+
 type SignalRow = {
   id: number; symbol: string; side: "long" | "short"; htf: string; ltf: string; entry: number; stop: number; tp1: number;
   risk_pct: number; rr1: number; block_top: number; block_bottom: number; block_scope: string; targets_source: string;
@@ -220,14 +239,12 @@ async function write(signalId: number, status: string, reconstructed: boolean, m
 
 /** Live capture at signal time. Never throws: a snapshot must not block a signal. */
 export async function captureSnapshot(signalId: number, sig: SignalLike): Promise<void> {
-  try {
+  await runLiveSnapshotCapture(signalId, async () => {
     const btc = sig.symbol === BTC ? null : book(BTC);
     await write(signalId, "ready", false, signalSnapshot(sig, book(sig.symbol), btc));
     // CoinGlass reads take a few seconds: never hold up the signal for them.
     void addDerivatives(signalId, sig.symbol, sig.signalAt, "entry").catch(() => undefined);
-  } catch (err) {
-    logger.warn({ err, signalId }, "nihilist: snapshot capture failed (backfill will retry)");
-  }
+  });
 }
 
 /** Merges CoinGlass metrics at `at` into the entry snapshot or the close context. */

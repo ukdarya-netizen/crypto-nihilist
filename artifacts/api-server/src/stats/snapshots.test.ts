@@ -1,8 +1,48 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  logSnapshotBackfillFailure, logSnapshotBackfillResult, runSnapshotBackfillRows, runSnapshotBackfillStage, selectTrajectoryDue,
+  logSnapshotBackfillFailure, logSnapshotBackfillResult, runLiveSnapshotCapture, runSnapshotBackfillRows,
+  runSnapshotBackfillStage, selectTrajectoryDue,
 } from "./snapshots";
+
+test("successful live snapshot capture completes without a warning", async () => {
+  const records: Array<{ fields: Record<string, unknown>; message: string }> = [];
+  const target = { warn: (fields: Record<string, unknown>, message: string) => records.push({ fields, message }) };
+  let captured = false;
+
+  await runLiveSnapshotCapture(42, async () => { captured = true; }, target);
+
+  assert.equal(captured, true);
+  assert.deepEqual(records, []);
+});
+
+test("live snapshot capture failure logs signal id and structured original error", async () => {
+  const cause = new Error("connection refused");
+  const err = Object.assign(new Error("snapshot insert failed", { cause }), {
+    code: "23505",
+    detail: "signal_id already exists",
+  });
+  const records: Array<{ fields: Record<string, unknown>; message: string }> = [];
+  const target = { warn: (fields: Record<string, unknown>, message: string) => records.push({ fields, message }) };
+
+  await runLiveSnapshotCapture(42, async () => { throw err; }, target);
+
+  assert.equal(records.length, 1);
+  assert.equal(records[0].message, "nihilist: live snapshot capture failed (backfill will retry)");
+  assert.equal(records[0].fields.signalId, 42);
+  assert.deepEqual(records[0].fields.err, {
+    code: "23505",
+    detail: "signal_id already exists",
+    type: "Error",
+    message: "snapshot insert failed",
+    stack: err.stack,
+    cause: {
+      type: "Error",
+      message: "connection refused",
+      stack: cause.stack,
+    },
+  });
+});
 
 test("snapshot backfill continues after a row failure and logs its stage and signal id", async () => {
   const records: Array<{ fields: Record<string, unknown>; message: string }> = [];
