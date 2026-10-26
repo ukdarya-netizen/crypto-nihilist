@@ -6,7 +6,7 @@
  * `asOf` (end_time), so old signals are reconstructed at their own moment.
  * A coin CoinGlass does not cover simply has null metrics.
  */
-import { cgRequest } from "./coinglass";
+import { cgRequest, waitForScanIdle } from "./coinglass";
 
 const SPOT_EXCHANGES = "Binance,Bitfinex,Bitget,Bybit,Coinbase,Crypto.com,Gate,Kraken,OKX,Upbit";
 const FUTURES_EXCHANGES = "Binance,BingX,Bitfinex,Bitget,Bybit,Coinbase,Crypto.com,Deribit,Gate,HTX,Hyperliquid,Kraken,KuCoin,LBank,MEXC,OKX,WhiteBIT,dYdX";
@@ -38,6 +38,7 @@ const netPct = (buy: number, sell: number) => (buy + sell > 0 ? ((buy - sell) / 
 
 /** All metrics at `asOf` (ms). Keys are prefixed "d_". Never throws. */
 export async function derivativeMetrics(symbol: string, asOf: number): Promise<Record<string, number | null>> {
+  await waitForScanIdle();
   const base = cgBase(symbol);
   const m: Record<string, number | null> = {};
   const [oi, fut, cvd, liq, ratio, funding] = await Promise.all([

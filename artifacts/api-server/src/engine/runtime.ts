@@ -22,7 +22,7 @@ import { BREAKEVEN_AT_PCT, LIVE_SETUPS, OB_MIN_DISPLACEMENT_ATR } from "./config
 import { insertEvent, startTracker } from "./tracker";
 import { startTelegram } from "../telegram/telegram";
 import { backfill, book, loadFromDb, needsBackfill, pruneDb, refresh } from "../market/candleStore";
-import { getUniverse, type UniverseSymbol } from "../market/coinglass";
+import { getUniverse, setScanBusy, type UniverseSymbol } from "../market/coinglass";
 import { waitForEngineLease } from "../ops/lease";
 import { logger } from "../lib/logger";
 
@@ -270,6 +270,7 @@ async function runCycle(bar: number): Promise<void> {
   const symbols = universe.map((s) => s.instrumentId).filter((s) => ready.has(s));
   const cycle = { bar, startedAt: started, stage: "refresh" as "refresh" | "late_retry" | "evaluate", done: 0, total: symbols.length };
   status.cycle = cycle;
+  setScanBusy(true);
   try {
     // Requests run in parallel up to the CoinGlass governor's limits.
     const refreshed = await Promise.all(symbols.map(async (symbol) => {
@@ -296,6 +297,7 @@ async function runCycle(bar: number): Promise<void> {
         try { item.ok = (await refresh(item.symbol)) !== null; } catch { item.ok = false; }
       }));
     }
+    setScanBusy(false);
     cycle.stage = "evaluate";
     cycle.done = 0;
     for (const { symbol, ok } of refreshed) {
@@ -312,6 +314,7 @@ async function runCycle(bar: number): Promise<void> {
       }
     }
   } finally {
+    setScanBusy(false);
     status.cycle = null;
     const finishedAt = Date.now();
     cycleLog.push({

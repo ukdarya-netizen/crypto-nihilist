@@ -48,6 +48,18 @@ async function admit(): Promise<void> {
   }
 }
 
+/**
+ * The 30-minute scan refreshes ~1,200 coins through CoinGlass in a few
+ * minutes; signals depend on it. Background metric backfills wait while it
+ * runs, so they never delay a scan.
+ */
+let scanBusy = false;
+export function setScanBusy(value: boolean): void { scanBusy = value; }
+export async function waitForScanIdle(maxMs = 10 * 60_000): Promise<void> {
+  const until = Date.now() + maxMs;
+  while (scanBusy && Date.now() < until) await sleep(2_000);
+}
+
 export type CgResult = { ok: true; data: unknown } | { ok: false; error: string };
 
 const MAX_429_RETRIES = 4;

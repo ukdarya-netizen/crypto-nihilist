@@ -168,7 +168,7 @@ export async function backfillSnapshots(limit = 300): Promise<{ entries: number;
     else if (row.closed_at) await addDerivatives(row.signal_id, row.symbol, new Date(row.closed_at).getTime(), "close");
     derivs += 1;
   }
-  const trajectory = await backfillTrajectory(60);
+  const trajectory = await backfillTrajectory(200);
   return { entries, closes, unavailable, derivs, trajectory };
 }
 
@@ -196,6 +196,15 @@ export async function backfillTrajectory(limit: number, now = Date.now()): Promi
   const live = (d: (typeof due)[number]) => now - d.at < 30 * 60_000;
   due.sort((a, b) => (Number(live(b)) - Number(live(a))) ||
     (live(a) ? b.at - a.at : a.row.id - b.row.id || a.at - b.at));
+  // With ~100 open trades the live points alone could fill every pass and
+  // starve history (2026-10-26: signals after #4 got nothing). At most half
+  // of a pass goes to live points; the rest always advances history.
+  const liveDue = due.filter(live);
+  const history = due.filter((d) => !live(d));
+  const half = Math.ceil(limit / 2);
+  const picked = [...liveDue.slice(0, Math.max(half, limit - history.length)), ...history];
+  due.length = 0;
+  due.push(...picked);
   let done = 0;
   for (const d of due) {
     if (done >= limit) break;
