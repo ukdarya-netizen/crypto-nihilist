@@ -101,6 +101,34 @@ function summary(title: string, rows: Row[]): void {
   }
 }
 
+/** Results by order-block strength, long and short separately: the data for OB_MIN_DISPLACEMENT_ATR. */
+function strengthBreakdown(rows: Row[]): void {
+  const edges = [-Infinity, 0.5, 1, 1.5, 2, 3, Infinity];
+  for (const [title, pick] of [
+    ["displacement (break close beyond block, HTF ATR)", (r: Row) => r.ob?.displacementAtr],
+    ["block height (HTF ATR)", (r: Row) => r.ob?.heightAtr],
+    ["penetration into block before signal (%)", (r: Row) => r.ob?.penetrationPct === null || r.ob?.penetrationPct === undefined ? null : r.ob.penetrationPct / 25],
+  ] as const) {
+    console.log(`\n== by OB ${title}`);
+    console.log("side  | bucket        | n    | win%  | stop% | avgR  | sumR");
+    for (const side of ["long", "short"] as const) {
+      for (let i = 0; i < edges.length - 1; i++) {
+        const lo = edges[i]; const hi = edges[i + 1];
+        const part = rows.filter((r) => !r.open && r.side === side && pick(r) !== null && pick(r) !== undefined &&
+          (pick(r) as number) >= lo && (pick(r) as number) < hi);
+        if (!part.length) continue;
+        const n = part.length;
+        const wins = part.filter((r) => r.pnlPct > 0).length;
+        const stops = part.filter((r) => r.closeReason === "stop").length;
+        const sumR = part.reduce((a, r) => a + r.r, 0);
+        const scale = title.startsWith("penetration") ? 25 : 1;
+        const label = `${lo === -Infinity ? "<" : fmt(lo * scale, 1)}…${hi === Infinity ? "" : fmt(hi * scale, 1)}`;
+        console.log(`${side.padEnd(5)} | ${label.padEnd(13)} | ${String(n).padEnd(4)} | ${fmt((wins / n) * 100, 1).padEnd(5)} | ${fmt((stops / n) * 100, 1).padEnd(5)} | ${fmt(sumR / n).padEnd(5)} | ${fmt(sumR)}`);
+      }
+    }
+  }
+}
+
 async function main(): Promise<void> {
   let symbols = (arg("symbols") ?? "JCT-USDT").split(",").map((s) => s.trim()).filter(Boolean);
   const universeCount = arg("universe");
@@ -141,6 +169,7 @@ async function main(): Promise<void> {
   summary("live rule: one trade per order block; TP1 50% + stop to entry; trailing from +15% (peak − 10 p.p.)", all);
   summary("comparison A: a block may trade again after a fresh touch", allReuse);
   summary("comparison B: AltBullet break-even at +5% before TP1", allBe5);
+  strengthBreakdown(all);
   console.log(`\nsymbols with data: ${symbols.length - skipped}, skipped: ${skipped}`);
 }
 

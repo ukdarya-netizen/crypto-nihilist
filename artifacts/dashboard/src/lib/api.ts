@@ -109,6 +109,7 @@ export const REASON_LABEL: Record<string, string> = {
   risk_too_large: "стоп дальше 20%",
   stop_not_behind_entry: "стоп не за входом",
   open_signal_same_setup: "уже есть открытая сделка этого сетапа",
+  ob_too_weak: "слабый ордер-блок",
   accepted: "сигнал",
   rejected: "отказ",
   skipped: "пропуск",
@@ -148,6 +149,17 @@ const BASE_LABEL: Record<string, string> = {
   hour_utc: "Час сигнала (UTC)", weekday_utc: "День недели (0 = вс)", price: "Цена",
   chg1h: "Изм. 1ч, %", chg4h: "Изм. 4ч, %", chg24h: "Изм. 24ч, %", chg7d: "Изм. 7д, %", chg30d: "Изм. 30д, %",
   range24h_pos: "Позиция в диапазоне 24ч (0–100)", range7d_pos: "Позиция в диапазоне 7д (0–100)", range30d_pos: "Позиция в диапазоне 30д (0–100)",
+  ob_displacement_atr: "Сила ОБ: слом за блоком, ATR", ob_break_bars: "Свечей от ОБ до слома", ob_height_atr: "Высота ОБ, ATR",
+  ob_penetration_pct: "Глубина захода в ОБ, %",
+  d_oi_usd: "OI, $", d_oi_chg1h: "OI Δ1ч, %", d_oi_chg4h: "OI Δ4ч, %", d_oi_chg24h: "OI Δ24ч, %",
+  d_fut_taker_net_1h: "Фьюч. тейкер net 1ч, %", d_fut_taker_net_4h: "Фьюч. тейкер net 4ч, %", d_fut_taker_net_24h: "Фьюч. тейкер net 24ч, %",
+  d_fut_vol24h_usd: "Объём фьючерсов 24ч, $", d_fut_vol4h_vs_avg: "Объём фьюч. 4ч к среднему, ×",
+  d_spot_cvd_chg1h: "Spot CVD Δ1ч", d_spot_cvd_chg4h: "Spot CVD Δ4ч", d_spot_cvd_chg24h: "Spot CVD Δ24ч",
+  d_spot_taker_net_1h: "Спот тейкер net 1ч, %", d_spot_taker_net_4h: "Спот тейкер net 4ч, %", d_spot_taker_net_24h: "Спот тейкер net 24ч, %",
+  d_spot_vol24h: "Объём спота 24ч", d_fut_spot_ratio: "Фьючерсы / спот, ×",
+  d_liq_long_1h: "Ликвидации лонгов 1ч, $", d_liq_short_1h: "Ликвидации шортов 1ч, $", d_liq_long_24h: "Ликвидации лонгов 24ч, $",
+  d_liq_short_24h: "Ликвидации шортов 24ч, $", d_liq_long_ratio_1h_24h: "Ликв. лонгов 1ч / 24ч",
+  d_ls_long_pct: "Binance: аккаунтов в лонге, %", d_ls_long_pct_chg: "Binance: Δ доли лонгов (5ч), п.п.", d_funding_pct: "Funding, %",
   trend_4h_aligned: "Тренд 4h (EMA50/200) по ходу", trend_1d_aligned: "Тренд 1D (EMA50/200) по ходу", btc_trend_4h_aligned: "Тренд BTC 4h по ходу",
 };
 export function metricLabel(key: string): string {
@@ -169,8 +181,19 @@ export function metricValue(v: unknown): string {
   if (typeof v === "boolean") return v ? "да" : "нет";
   if (v === "up") return "вверх";
   if (v === "down") return "вниз";
-  if (typeof v === "number") return Math.abs(v) >= 1000 ? v.toFixed(0) : String(Number(v.toFixed(4)));
+  if (typeof v === "number") return compact(v);
   return String(v);
 }
 export const fmtHours = (h: number | null | undefined) =>
   h === null || h === undefined ? "—" : h >= 24 ? `${Math.floor(h / 24)}д ${Math.round(h % 24)}ч` : `${h.toFixed(1)}ч`;
+
+/** 1234567 → 1.23M; small numbers keep 2–4 significant decimals. */
+export function compact(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return "—";
+  const a = Math.abs(v);
+  if (a >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+  if (a >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
+  if (a >= 1e4) return `${(v / 1e3).toFixed(1)}K`;
+  if (a >= 100) return v.toFixed(0);
+  return String(Number(v.toFixed(a >= 1 ? 2 : 4)));
+}

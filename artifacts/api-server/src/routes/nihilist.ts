@@ -211,6 +211,18 @@ router.get("/nh/signals/:id/events", async (req, res) => {
   res.json({ events: rows });
 });
 
+/** Trajectory of one trade: the market at fixed points after entry. */
+router.get("/nh/signals/:id/trajectory", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id)) { res.status(400).json({ error: "bad_id" }); return; }
+  await ensureSnapshotTable();
+  const { rows } = await pool.query(
+    `SELECT label, at, elapsed_ms, price, pct_from_entry, metrics, reconstructed FROM nh_signal_trajectory
+     WHERE signal_id = $1 ORDER BY elapsed_ms`, [id],
+  );
+  res.json({ points: rows });
+});
+
 /** Raw CoinGlass answer for one symbol (to verify candles against the chart). */
 router.get("/nh/diag/candles", async (req, res) => {
   const symbol = String(req.query.symbol ?? "BTC-USDT");

@@ -1,16 +1,30 @@
 /**
  * Signal snapshots (as AltBullet): one immutable row per signal with every
- * technical metric at signal time, plus the market at close. Live signals
- * are captured when they open; older signals (and closes) are filled by a
- * background backfill from stored candles and marked `reconstructed`.
- * The table creates itself (no schema push needed).
+ * metric at signal time — technical (candles) and derivatives/flow from
+ * CoinGlass (OI, taker, CVD, funding, liquidations, long/short) — plus the
+ * market at close, and a trajectory: the same picture at fixed points of the
+ * trade (TRAJECTORY below). Live signals are captured when they open; older
+ * signals, closes and due trajectory points are filled by a background
+ * backfill (candles from memory, CoinGlass history with end_time = that
+ * moment) and marked `reconstructed`. Tables create themselves.
  */
 import { pool } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { book } from "../market/candleStore";
 import {
-  SNAPSHOT_VERSION, closeContext, coversAsOf, signalSnapshot, type Metrics, type SignalLike,
+  SNAPSHOT_VERSION, closeContext, closedAsOf, coversAsOf, marketMetrics, signalSnapshot, type Metrics, type SignalLike,
 } from "../engine/metrics";
+import { derivativeMetrics } from "../market/derivatives";
+
+/**
+ * Trajectory points after entry (AltBullet's 15m…72h), then once a day for
+ * the rest of the holding time (up to 21 days for 1D blocks).
+ */
+export const TRAJECTORY: Array<{ label: string; ms: number }> = [
+  ...[["15m", 0.25], ["30m", 0.5], ["1h", 1], ["2h", 2], ["4h", 4], ["8h", 8], ["24h", 24], ["48h", 48], ["72h", 72]]
+    .map(([label, h]) => ({ label: String(label), ms: Number(h) * 3_600_000 })),
+  ...Array.from({ length: 18 }, (_, i) => ({ label: `d${i + 4}`, ms: (i + 4) * 86_400_000 })),
+];
 
 const BTC = "BTC-USDT";
 let ensured: Promise<void> | null = null;
@@ -27,6 +41,20 @@ export function ensureSnapshotTable(): Promise<void> {
       close_context jsonb,
       close_reconstructed boolean,
       close_captured_at timestamptz
+    );
+    ALTER TABLE nh_signal_snapshots ADD COLUMN IF NOT EXISTS deriv_at timestamptz;
+    ALTER TABLE nh_signal_snapshots ADD COLUMN IF NOT EXISTS close_deriv_at timestamptz;
+    CREATE TABLE IF NOT EXISTS nh_signal_trajectory (
+      signal_id integer NOT NULL,
+      label text NOT NULL,
+      at timestamptz NOT NULL,
+      elapsed_ms bigint NOT NULL,
+      price double precision,
+      pct_from_entry double precision,
+      metrics jsonb,
+      reconstructed boolean NOT NULL DEFAULT false,
+      captured_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (signal_id, label)
     )`).then(() => undefined).catch((err) => { ensured = null; throw err; });
   return ensured;
 }
@@ -49,6 +77,7 @@ export function signalLikeFromRow(row: SignalRow): SignalLike {
     firstTouchAt: n(d.firstTouchAt), lastTouchAt: n(d.lastTouchAt),
     htfSwingTrend: n(d.htfSwingTrend), htfInternalTrend: n(d.htfInternalTrend), ltfAtr: n(d.ltfAtr),
     targetsSource: row.targets_source, signalAt: new Date(row.opened_at).getTime(),
+    ob: d.ob && typeof d.ob === "object" ? d.ob as SignalLike["ob"] : null,
   };
 }
 
@@ -66,13 +95,33 @@ export async function captureSnapshot(signalId: number, sig: SignalLike): Promis
   try {
     const btc = sig.symbol === BTC ? null : book(BTC);
     await write(signalId, "ready", false, signalSnapshot(sig, book(sig.symbol), btc));
+    // CoinGlass reads take a few seconds: never hold up the signal for them.
+    void addDerivatives(signalId, sig.symbol, sig.signalAt, "entry").catch(() => undefined);
   } catch (err) {
     logger.warn({ err, signalId }, "nihilist: snapshot capture failed (backfill will retry)");
   }
 }
 
+/** Merges CoinGlass metrics at `at` into the entry snapshot or the close context. */
+async function addDerivatives(signalId: number, symbol: string, at: number, which: "entry" | "close"): Promise<void> {
+  const d = await derivativeMetrics(symbol, at);
+  const col = which === "entry" ? "metrics" : "close_context";
+  const mark = which === "entry" ? "deriv_at" : "close_deriv_at";
+  await pool.query(
+    `UPDATE nh_signal_snapshots SET ${col} = coalesce(${col}, '{}'::jsonb) || $2::jsonb, ${mark} = now()
+     WHERE signal_id = $1`,
+    [signalId, JSON.stringify(d)],
+  );
+}
+
+/** Price at a moment: close of the last 30m bar closed by then. */
+function priceAt(symbol: string, at: number): number | null {
+  const s = closedAsOf(book(symbol)["30m"], "30m", at);
+  return s.length ? s[s.length - 1].c : null;
+}
+
 /** One backfill pass: missing entry snapshots, then missing close contexts. */
-export async function backfillSnapshots(limit = 300): Promise<{ entries: number; closes: number; unavailable: number }> {
+export async function backfillSnapshots(limit = 300): Promise<{ entries: number; closes: number; unavailable: number; derivs: number; trajectory: number }> {
   await ensureSnapshotTable();
   let entries = 0; let closes = 0; let unavailable = 0;
   const { rows } = await pool.query<SignalRow>(
@@ -112,13 +161,74 @@ export async function backfillSnapshots(limit = 300): Promise<{ entries: number;
     );
     closes += 1;
   }
-  return { entries, closes, unavailable };
+  // Derivatives for entry snapshots and closes (CoinGlass budget: bounded per pass).
+  let derivs = 0;
+  const needDeriv = await pool.query<{ signal_id: number; symbol: string; opened_at: Date; closed_at: Date | null; entry_missing: boolean }>(
+    `SELECT n.signal_id, s.symbol, s.opened_at, s.closed_at, (n.deriv_at IS NULL) AS entry_missing
+     FROM nh_signal_snapshots n JOIN nh_signals s ON s.id = n.signal_id
+     WHERE n.status = 'ready' AND (n.deriv_at IS NULL OR (n.close_context IS NOT NULL AND n.close_deriv_at IS NULL))
+     ORDER BY n.signal_id DESC LIMIT 10`,
+  );
+  for (const row of needDeriv.rows) {
+    if (row.entry_missing) await addDerivatives(row.signal_id, row.symbol, new Date(row.opened_at).getTime(), "entry");
+    else if (row.closed_at) await addDerivatives(row.signal_id, row.symbol, new Date(row.closed_at).getTime(), "close");
+    derivs += 1;
+  }
+  const trajectory = await backfillTrajectory(12);
+  return { entries, closes, unavailable, derivs, trajectory };
 }
 
+/** Due trajectory points (open trades and closed ones up to their close). */
+export async function backfillTrajectory(limit: number, now = Date.now()): Promise<number> {
+  const { rows } = await pool.query<{ id: number; symbol: string; side: "long" | "short"; entry: number; opened_at: Date; closed_at: Date | null; have: string[] | null }>(
+    `SELECT s.id, s.symbol, s.side, s.entry, s.opened_at, s.closed_at,
+            (SELECT array_agg(t.label) FROM nh_signal_trajectory t WHERE t.signal_id = s.id) AS have
+     FROM nh_signals s WHERE s.opened_at > now() - interval '40 days' ORDER BY s.id DESC LIMIT 400`,
+  );
+  let done = 0;
+  for (const row of rows) {
+    const opened = new Date(row.opened_at).getTime();
+    const end = row.closed_at ? new Date(row.closed_at).getTime() : now;
+    const have = new Set(row.have ?? []);
+    for (const point of TRAJECTORY) {
+      if (done >= limit) return done;
+      const at = opened + point.ms;
+      if (at > end || at > now || have.has(point.label)) continue;
+      const coin = book(row.symbol);
+      if (!coversAsOf(coin, at)) continue; // candles not loaded yet / too old: later pass or never
+      const price = priceAt(row.symbol, at);
+      const dir = row.side === "long" ? 1 : -1;
+      const btc = row.symbol === BTC ? null : book(BTC);
+      const metrics = {
+        ...marketMetrics(coin, at),
+        ...(btc && coversAsOf(btc, at) ? { btc_chg1h: marketMetrics(btc, at, "btc_").btc_chg1h,
+          btc_chg24h: marketMetrics(btc, at, "btc_").btc_chg24h } : {}),
+        ...(await derivativeMetrics(row.symbol, at)),
+      };
+      await pool.query(
+        `INSERT INTO nh_signal_trajectory (signal_id, label, at, elapsed_ms, price, pct_from_entry, metrics, reconstructed)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (signal_id, label) DO NOTHING`,
+        [row.id, point.label, new Date(at), point.ms, price,
+          price === null ? null : Math.round(((price - row.entry) / row.entry) * 100 * dir * 100) / 100,
+          JSON.stringify(metrics), now - at > 15 * 60_000],
+      );
+      done += 1;
+    }
+  }
+  return done;
+}
+
+let backfillRunning = false;
 export function startSnapshotBackfill(): void {
-  const run = () => void backfillSnapshots().then((r) => {
-    if (r.entries || r.closes || r.unavailable) logger.info(r, "nihilist: snapshot backfill");
-  }).catch((err) => logger.warn({ err }, "nihilist: snapshot backfill failed"));
+  const run = () => {
+    if (backfillRunning) return;
+    backfillRunning = true;
+    void backfillSnapshots().then((r) => {
+    if (r.entries || r.closes || r.unavailable || r.derivs || r.trajectory) logger.info(r, "nihilist: snapshot backfill");
+    }).catch((err) => logger.warn({ err }, "nihilist: snapshot backfill failed"))
+      .finally(() => { backfillRunning = false; });
+  };
   setTimeout(run, 30_000).unref?.();
-  setInterval(run, 5 * 60_000).unref?.();
+  // Every 2 minutes: trajectory points are due 15 minutes after entry.
+  setInterval(run, 2 * 60_000).unref?.();
 }

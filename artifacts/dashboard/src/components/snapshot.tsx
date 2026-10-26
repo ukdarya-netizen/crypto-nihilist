@@ -2,6 +2,8 @@ import { metricLabel, metricValue, type Snapshot } from "../lib/api";
 
 const GROUPS: Array<{ title: string; keys: (k: string) => boolean }> = [
   { title: "Сетап", keys: (k) => ["risk_pct", "rr1", "tp1_pct", "targets_source", "block_scope", "block_size_pct", "entry_from_block_pct", "block_age_h", "since_first_touch_h", "since_last_touch_h", "touch_span_h", "ltf_atr_pct", "htf_swing_aligned", "htf_internal_aligned"].includes(k) },
+  { title: "Ордер-блок", keys: (k) => k.startsWith("ob_") },
+  { title: "Деривативы и поток (CoinGlass)", keys: (k) => k.startsWith("d_") },
   { title: "Монета", keys: (k) => !k.startsWith("btc_") && /^(chg|rsi_|atrpct_|ema|trend_|range)/.test(k) },
   { title: "BTC", keys: (k) => k.startsWith("btc_") && k !== "btc_price" },
 ];

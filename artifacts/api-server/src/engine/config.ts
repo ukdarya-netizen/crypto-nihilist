@@ -24,3 +24,10 @@ export const BREAKEVEN_AT_PCT: number | null = null;
 
 /** Open trades are followed on 5-minute candles. */
 export const TRACK_INTERVAL = "5m" as const;
+
+/**
+ * Order-block strength filter: minimum close of the structure-break bar
+ * beyond the block, in HTF ATR(14). null = off (measured and recorded only).
+ * Chosen from the backtest breakdown by strength ("--ob" in analysis/backtest.ts).
+ */
+export const OB_MIN_DISPLACEMENT_ATR: number | null = null;

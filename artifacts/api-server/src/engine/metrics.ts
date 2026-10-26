@@ -19,6 +19,7 @@ export type SignalLike = {
   firstTouchAt?: number | null; lastTouchAt?: number | null;
   htfSwingTrend?: number | null; htfInternalTrend?: number | null; ltfAtr?: number | null;
   targetsSource?: string | null;
+  ob?: { displacementAtr: number | null; breakBars: number | null; heightAtr: number | null; penetrationPct: number | null } | null;
   signalAt: number;
 };
 
@@ -140,6 +141,10 @@ export function signalSnapshot(sig: SignalLike, coin: BookLike, btc: BookLike | 
     ltf_atr_pct: sig.ltfAtr ? r2((sig.ltfAtr / sig.entry) * 100) : null,
     htf_swing_aligned: sig.htfSwingTrend ? sig.htfSwingTrend === dir : null,
     htf_internal_aligned: sig.htfInternalTrend ? sig.htfInternalTrend === dir : null,
+    ob_displacement_atr: sig.ob?.displacementAtr ?? null,
+    ob_break_bars: sig.ob?.breakBars ?? null,
+    ob_height_atr: sig.ob?.heightAtr ?? null,
+    ob_penetration_pct: sig.ob?.penetrationPct ?? null,
     hour_utc: new Date(sig.signalAt).getUTCHours(),
     weekday_utc: new Date(sig.signalAt).getUTCDay(),
     ...marketMetrics(coin, sig.signalAt),

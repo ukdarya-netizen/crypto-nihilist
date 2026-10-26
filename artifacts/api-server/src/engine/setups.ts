@@ -37,6 +37,12 @@ export type SetupOptions = {
   reuseBlocks: boolean;
   /** Extra room beyond the TA stop, % of the stop price (owner 2026-10-25: 3). */
   stopExtraPct: number;
+  /**
+   * Minimum strength of the order block: how far (in HTF ATR) the close of
+   * the bar that broke structure went beyond the block. null = no filter
+   * (the value is still measured and recorded on every signal).
+   */
+  minObDisplacementAtr: number | null;
 };
 
 export const DEFAULT_SETUP_OPTIONS: SetupOptions = {
@@ -48,6 +54,7 @@ export const DEFAULT_SETUP_OPTIONS: SetupOptions = {
   blockScopes: ["internal", "swing"],
   reuseBlocks: false,
   stopExtraPct: 3,
+  minObDisplacementAtr: null,
 };
 
 export type SetupSignal = {
@@ -75,6 +82,19 @@ export type SetupSignal = {
   htfSwingTrend: number;
   htfInternalTrend: number;
   ltfAtr: number;
+  /** Order-block strength (see obStrength). */
+  ob: ObStrength;
+};
+
+export type ObStrength = {
+  /** Close of the structure-break bar beyond the block, in HTF ATR(14). */
+  displacementAtr: number | null;
+  /** HTF bars from the block candle to the structure break. */
+  breakBars: number | null;
+  /** Block height in HTF ATR(14). */
+  heightAtr: number | null;
+  /** How deep price went into the block before the signal, % of its height. */
+  penetrationPct: number | null;
 };
 
 export type SetupRejection = {
@@ -186,6 +206,25 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
 
   const ltfEngine = new SmcEngine();
   const atr = atrSeries(ltfCandles);
+  const htfAtr = atrSeries(htfCandles);
+  const htfIndex = new Map(htfCandles.map((c, i) => [c.t, i]));
+  const obStrength = (block: OrderBlock, extreme: number | null): ObStrength => {
+    const obIdx = htfIndex.get(block.time);
+    const brIdx = htfIndex.get(block.createdAt);
+    const a = brIdx === undefined ? null : htfAtr[brIdx];
+    const height = block.top - block.bottom;
+    const breakClose = brIdx === undefined ? null : htfCandles[brIdx].c;
+    const disp = a && breakClose !== null
+      ? (block.bias === 1 ? breakClose - block.top : block.bottom - breakClose) / a : null;
+    const pen = extreme !== null && height > 0
+      ? (block.bias === 1 ? (block.top - extreme) / height : (extreme - block.bottom) / height) * 100 : null;
+    return {
+      displacementAtr: disp === null ? null : round(disp, 3),
+      breakBars: obIdx !== undefined && brIdx !== undefined ? brIdx - obIdx : null,
+      heightAtr: a ? round(height / a, 3) : null,
+      penetrationPct: pen === null ? null : round(Math.max(0, pen), 1),
+    };
+  };
   const zones = new Map<string, Zone>();
   let htfPointer = -1;
 
@@ -297,6 +336,12 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
       const rr1 = Math.abs(tp1 - entry) / risk;
       const rr2 = Math.abs(tp2 - entry) / risk;
       if (rr1 < options.minRr) { reject("rr_too_low", { rr1: round(rr1, 2), tp1, entry, stop }); continue; }
+      const ob = obStrength(zone.block, extreme);
+      if (options.minObDisplacementAtr !== null &&
+          (ob.displacementAtr === null || ob.displacementAtr < options.minObDisplacementAtr)) {
+        reject("ob_too_weak", { obDisplacementAtr: ob.displacementAtr, min: options.minObDisplacementAtr });
+        continue;
+      }
 
       signals.push({
         setup, htf: input.htf, ltf: input.ltf, side,
@@ -307,7 +352,7 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
         lastTouchAt: touched.lastTouchAt as number,
         extreme, chochLevel: event.level,
         htfSwingTrend: snap.swingTrend, htfInternalTrend: snap.internalTrend,
-        ltfAtr,
+        ltfAtr, ob,
       });
     }
   }

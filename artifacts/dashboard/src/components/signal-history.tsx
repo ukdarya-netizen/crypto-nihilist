@@ -3,6 +3,8 @@ import { ChevronDown, Search } from "lucide-react";
 import { Empty, Panel, SideTag } from "./ui";
 import { CoinLink } from "./chart";
 import { SnapshotPanel } from "./snapshot";
+import { METRIC_COLUMNS, MetricCell } from "./metric-columns";
+import { Trajectory } from "./trajectory";
 import { coin, get, price, SETUPS, setupLabel, signed, tone, usePoll, when, type Signal } from "../lib/api";
 
 export type TradeStatus = "profit" | "be_stop" | "stop_loss" | "expired" | "open";
@@ -66,6 +68,10 @@ function Details({ s }: { s: HistoryRow }) {
         <dt className="text-muted">R</dt><dd className={tone(s.r_multiple)}>{signed(s.r_multiple)}</dd>
         <dt className="text-muted">Telegram</dt><dd>{s.live ? "в канале" : "тень (не публикуется)"}</dd>
       </dl>
+      <div className="md:col-span-2">
+        <p className="label mb-2">Траектория: рынок после входа</p>
+        <Trajectory id={s.id} />
+      </div>
       <div className="md:col-span-2 md:order-last">
         <p className="label mb-2">Метрики при сигнале</p>
         <SnapshotPanel snapshot={s.snapshot} close={s.close_context} reconstructed={s.snapshot_reconstructed} status={s.snapshot_status} />
@@ -158,9 +164,10 @@ export function SignalHistory({ days, live, status, onStatus, limit = 200, title
           </ul>
           {/* Desktop: table */}
           <div className="hidden md:block">
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[1500px] text-sm">
               <thead>
-                <tr className="text-left">{["Открыт", "Монета", "Сетап", "Вход", "Сейчас / выход", "Пик", "Результат", "R", "Статус", "Время", ""].map((h) => <th key={h} className="label pb-2 pr-3 font-normal">{h}</th>)}</tr>
+                <tr className="text-left">{["Открыт", "Монета", "Сетап", "Вход", "Сейчас / выход", "Пик", "Результат", "R", "Статус", "Время", ...METRIC_COLUMNS.map((c) => c.head), ""].map((h) => <th key={h} className="label whitespace-nowrap pb-2 pr-3 font-normal">{h}</th>)}</tr>
               </thead>
               <tbody className="tabular">
                 {rows.map((s) => {
@@ -169,9 +176,9 @@ export function SignalHistory({ days, live, status, onStatus, limit = 200, title
                   return (
                     <Fragment key={s.id}>
                       <tr onClick={() => setOpen(isOpen ? null : s.id)} className="cursor-pointer border-t border-border hover:bg-white/[0.02]">
-                        <td className="py-2.5 pr-3 text-muted">{when(s.opened_at)}</td>
+                        <td className="whitespace-nowrap py-2.5 pr-3 text-muted">{when(s.opened_at)}</td>
                         <td className="pr-3 font-sans font-semibold"><span className="flex items-center gap-2"><CoinLink symbol={s.symbol} signal={s} /> <SideTag side={s.side} />{!s.live && <span className="font-mono text-[10px] font-normal text-muted">тень</span>}</span></td>
-                        <td className="pr-3 font-sans text-xs text-muted">{setupLabel(s.setup)}</td>
+                        <td className="whitespace-nowrap pr-3 font-sans text-xs text-muted">{setupLabel(s.setup)}</td>
                         <td className="pr-3">{price(s.entry)}</td>
                         <td className="pr-3">{price(s.status === "closed" ? s.exit_price : s.last_price)}</td>
                         <td className="pr-3 text-up">{signed(s.peak_pct, 1, "%")}</td>
@@ -179,14 +186,16 @@ export function SignalHistory({ days, live, status, onStatus, limit = 200, title
                         <td className={`pr-3 ${tone(s.r_multiple)}`}>{s.status === "closed" ? signed(s.r_multiple) : "—"}</td>
                         <td className="pr-3"><Status s={s} /></td>
                         <td className="pr-3 text-muted">{duration(s.opened_at, s.closed_at)}</td>
+                        {METRIC_COLUMNS.map((c) => <MetricCell key={c.key} snapshot={s.snapshot} col={c} />)}
                         <td><ChevronDown className={`size-4 text-muted transition ${isOpen ? "rotate-180" : ""}`} /></td>
                       </tr>
-                      {isOpen && <tr><td colSpan={11} className="p-0"><Details s={s} /></td></tr>}
+                      {isOpen && <tr><td colSpan={11 + METRIC_COLUMNS.length} className="p-0"><Details s={s} /></td></tr>}
                     </Fragment>
                   );
                 })}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       )}

@@ -79,3 +79,15 @@ test("stop sits 3% beyond the TA stop (owner rule); rr and risk follow it", () =
   assert.ok(Math.abs(live.stop - ta.stop * 0.97) < 1e-9, `${live.stop} vs ${ta.stop}`);
   assert.ok(live.riskPct > ta.riskPct && live.rr1 < ta.rr1);
 });
+
+test("order-block strength is measured on every signal and can filter weak blocks", () => {
+  const { ltf, htf } = scenario(84.8);
+  const base = { htf: "4h" as const, ltf: "30m" as const, htfCandles: htf, ltfCandles: ltf, sides: ["long" as const] };
+  const s = evaluateSetups(base).signals[0];
+  assert.ok(s.ob.displacementAtr !== null && s.ob.displacementAtr > 0, JSON.stringify(s.ob));
+  assert.ok(s.ob.breakBars !== null && s.ob.breakBars >= 1);
+  assert.ok(s.ob.penetrationPct !== null && s.ob.penetrationPct >= 0);
+  const strict = evaluateSetups({ ...base, options: { minObDisplacementAtr: s.ob.displacementAtr! + 1 } });
+  assert.equal(strict.signals.length, 0);
+  assert.equal(strict.rejections[0]?.reason, "ob_too_weak");
+});

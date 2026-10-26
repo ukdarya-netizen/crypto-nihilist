@@ -18,7 +18,7 @@ import { captureSnapshot, ensureSnapshotTable, startSnapshotBackfill } from "../
 import { evaluateSetups, type HtfInterval, type SetupCandidate, type SetupSignal } from "./setups";
 import { COMBOS, MAX_HOLD_MS } from "./config";
 import { openTrade } from "./trade";
-import { BREAKEVEN_AT_PCT, LIVE_SETUPS } from "./config";
+import { BREAKEVEN_AT_PCT, LIVE_SETUPS, OB_MIN_DISPLACEMENT_ATR } from "./config";
 import { insertEvent, startTracker } from "./tracker";
 import { startTelegram } from "../telegram/telegram";
 import { backfill, book, loadFromDb, needsBackfill, pruneDb, refresh } from "../market/candleStore";
@@ -177,7 +177,7 @@ async function openSignal(symbol: string, s: SetupSignal): Promise<boolean> {
     riskPct: s.riskPct, rr1: s.rr1, blockTop: s.block.top, blockBottom: s.block.bottom, blockScope: s.block.scope,
     blockTime: s.block.time, blockCreatedAt: s.block.createdAt, firstTouchAt: s.firstTouchAt, lastTouchAt: s.lastTouchAt,
     htfSwingTrend: s.htfSwingTrend, htfInternalTrend: s.htfInternalTrend, ltfAtr: s.ltfAtr,
-    targetsSource: s.targetsSource, signalAt: s.signalAt,
+    ob: s.ob, targetsSource: s.targetsSource, signalAt: s.signalAt,
   });
   await insertEvent(id, `${id}:opened`, "opened", s.entry, signalDetails(s), s.signalAt);
   return true;
@@ -190,6 +190,7 @@ function signalDetails(s: SetupSignal): Record<string, unknown> {
     blockTime: s.block.time, blockCreatedAt: s.block.createdAt, firstTouchAt: s.firstTouchAt,
     lastTouchAt: s.lastTouchAt, extreme: s.extreme, chochLevel: s.chochLevel,
     htfSwingTrend: s.htfSwingTrend, htfInternalTrend: s.htfInternalTrend, ltfAtr: s.ltfAtr,
+    ob: s.ob,
   };
 }
 
@@ -220,6 +221,7 @@ export async function evaluateSymbol(symbol: string, now = Date.now()): Promise<
     const { signals: found, rejections, candidates } = evaluateSetups({
       htf: combo.htf, ltf: combo.ltf,
       htfCandles: b[combo.htf], ltfCandles: ltfSeries.slice(-LTF_WINDOW),
+      options: { minObDisplacementAtr: OB_MIN_DISPLACEMENT_ATR },
     });
     candidateMap.set(key, candidates.map((c) => ({ ...c, symbol, htf: combo.htf, ltf: combo.ltf, updatedAt: now })));
     for (const r of rejections) {

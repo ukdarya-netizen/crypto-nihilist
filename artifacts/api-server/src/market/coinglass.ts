@@ -57,16 +57,18 @@ const MAX_429_RETRIES = 4;
  * a 200 body) waits out the shared cooldown and retries, up to 4 times; any
  * other failure is returned at once. Never throws.
  */
-export async function cgRequest(path: string, params: Record<string, string | number>): Promise<CgResult> {
+export async function cgRequest(
+  path: string, params: Record<string, string | number>, opts: { health?: boolean } = {},
+): Promise<CgResult> {
   for (let attempt = 0; ; attempt++) {
-    const result = await cgRequestOnce(path, params);
+    const result = await cgRequestOnce(path, params, opts.health !== false);
     if (result.ok || !result.rateLimited || attempt >= MAX_429_RETRIES) return result;
   }
 }
 
 type CgAttempt = CgResult & { rateLimited?: boolean };
 
-async function cgRequestOnce(path: string, params: Record<string, string | number>): Promise<CgAttempt> {
+async function cgRequestOnce(path: string, params: Record<string, string | number>, health = true): Promise<CgAttempt> {
   const all = keys();
   if (all.length === 0) {
     recordFailure("coinglass", "NIHILIST_COINGLASS_API_KEY не задан");
@@ -93,7 +95,8 @@ async function cgRequestOnce(path: string, params: Record<string, string | numbe
     if (!res.ok || String(body?.code) !== "0") {
       stats.failed += 1;
       const error = `${path}: HTTP ${res.status} code ${String(body?.code)} ${String(body?.msg ?? "")}`;
-      recordFailure("coinglass", error);
+      // Metric reads of coins CoinGlass does not cover are not an API outage.
+      if (health) recordFailure("coinglass", error);
       return { ok: false, error };
     }
     consecutive429 = 0;
