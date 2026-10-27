@@ -21,6 +21,8 @@ test("sendPhoto sends each image with its caption and keeps separate Telegram fi
         ? "telegram-stop-loss-id"
         : photoName === "take-profit.png"
           ? "telegram-take-profit-id"
+          : photoName === "position-update.png"
+            ? "telegram-position-update-id"
           : "telegram-signal-id";
     return new Response(JSON.stringify({
       ok: true,
@@ -35,13 +37,15 @@ test("sendPhoto sends each image with its caption and keeps separate Telegram fi
     await sendPhoto("@signals", "Another stopped signal", "stopLoss");
     await sendPhoto("@signals", "Take profit reached", "takeProfit");
     await sendPhoto("@signals", "Trailing profit closed", "takeProfit");
+    await sendPhoto("@signals", "Position update", "positionUpdate");
+    await sendPhoto("@signals", "Another position update", "positionUpdate");
   } finally {
     globalThis.fetch = previousFetch;
     if (previousToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
     else process.env.TELEGRAM_BOT_TOKEN = previousToken;
   }
 
-  assert.equal(forms.length, 6);
+  assert.equal(forms.length, 8);
   assert.equal(forms[0].get("chat_id"), "@signals");
   assert.equal(forms[0].get("caption"), "First signal");
   const uploaded = forms[0].get("photo");
@@ -64,4 +68,11 @@ test("sendPhoto sends each image with its caption and keeps separate Telegram fi
   assert.ok(takeProfitUploaded.size > 1_000_000);
   assert.equal(forms[5].get("caption"), "Trailing profit closed");
   assert.equal(forms[5].get("photo"), "telegram-take-profit-id");
+  assert.equal(forms[6].get("caption"), "Position update");
+  const positionUpdateUploaded = forms[6].get("photo");
+  assert.ok(positionUpdateUploaded instanceof Blob);
+  assert.equal((positionUpdateUploaded as File).name, "position-update.png");
+  assert.ok(positionUpdateUploaded.size > 1_000_000);
+  assert.equal(forms[7].get("caption"), "Another position update");
+  assert.equal(forms[7].get("photo"), "telegram-position-update-id");
 });

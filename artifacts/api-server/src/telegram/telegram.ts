@@ -10,6 +10,7 @@
 import { pool } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { formatEvent, type EventForText, type SignalForText } from "./format";
+import { notificationPhotoKind } from "./notification-media";
 import { startReports } from "./reports";
 import { sendMessage, sendPhoto, signalChannel, subscriptionCommand, telegramCall, telegramEnabled, TelegramError, type TelegramUpdate } from "./transport";
 import { MAX_AUTO_DELIVERY_AGE_MS, planEventDelivery, type DeliveryRecipient } from "./delivery-policy";
@@ -99,11 +100,9 @@ async function sendPending(): Promise<void> {
       }
     }
     try {
-      if (d.event_kind === "opened") await sendPhoto(d.chat_id, d.text);
-      else if (d.event_kind === "closed" && d.event_reason === "stop") await sendPhoto(d.chat_id, d.text, "stopLoss");
-      else if (d.event_kind === "tp1" || (d.event_kind === "closed" && d.event_reason === "trailing")) {
-        await sendPhoto(d.chat_id, d.text, "takeProfit");
-      } else await sendMessage(d.chat_id, d.text);
+      const photoKind = notificationPhotoKind(d.event_kind, d.event_reason);
+      if (photoKind) await sendPhoto(d.chat_id, d.text, photoKind);
+      else await sendMessage(d.chat_id, d.text);
       await pool.query("UPDATE nh_telegram_deliveries SET status = 'sent', sent_at = now() WHERE id = $1", [d.id]);
     } catch (err) {
       const attempts = d.attempts + 1;

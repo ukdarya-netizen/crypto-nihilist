@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { TelegramPhotoKind } from "./notification-media";
 
 /**
  * Telegram runs only in the published deployment: the dev workspace and the
@@ -8,12 +9,12 @@ import { fileURLToPath } from "node:url";
  * (409) and would send every signal twice. NIHILIST_TELEGRAM_IN_DEV=1 forces it on.
  */
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-type PhotoKind = "signal" | "stopLoss" | "takeProfit";
 type PhotoAsset = { filename: string; bytes: Promise<Buffer> | null; fileId: string | null };
-const photoAssets: Record<PhotoKind, PhotoAsset> = {
+const photoAssets: Record<TelegramPhotoKind, PhotoAsset> = {
   signal: { filename: "new-signal.png", bytes: null, fileId: null },
   stopLoss: { filename: "stop-loss.png", bytes: null, fileId: null },
   takeProfit: { filename: "take-profit.png", bytes: null, fileId: null },
+  positionUpdate: { filename: "position-update.png", bytes: null, fileId: null },
 };
 
 export function telegramEnabled(): boolean {
@@ -66,7 +67,7 @@ export async function sendMessage(chatId: string, text: string): Promise<void> {
   await telegramCall("sendMessage", { chat_id: chatId, text, disable_web_page_preview: true });
 }
 
-async function getPhotoBytes(kind: PhotoKind): Promise<Buffer> {
+async function getPhotoBytes(kind: TelegramPhotoKind): Promise<Buffer> {
   const asset = photoAssets[kind];
   asset.bytes ??= (async () => {
     for (const filePath of [
@@ -85,7 +86,7 @@ async function getPhotoBytes(kind: PhotoKind): Promise<Buffer> {
   return asset.bytes;
 }
 
-export async function sendPhoto(chatId: string, caption: string, kind: PhotoKind = "signal"): Promise<void> {
+export async function sendPhoto(chatId: string, caption: string, kind: TelegramPhotoKind = "signal"): Promise<void> {
   const asset = photoAssets[kind];
   const form = new FormData();
   form.set("chat_id", chatId);
