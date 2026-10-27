@@ -15,6 +15,7 @@
 import { pool } from "@workspace/db";
 import { INTERVAL_MS, type Interval } from "./candles";
 import { captureSnapshot, ensureSnapshotTable, startSnapshotBackfill } from "../stats/snapshots";
+import { removeDuplicateSignals } from "../stats/dedupe";
 import { evaluateSetups, type HtfInterval, type SetupCandidate, type SetupSignal } from "./setups";
 import { COMBOS, MAX_HOLD_MS } from "./config";
 import { openTrade } from "./trade";
@@ -338,6 +339,8 @@ async function runCycle(bar: number): Promise<void> {
 export async function startEngine(): Promise<void> {
   await waitForEngineLease();
   status.leaseAcquired = true;
+  // Before the tracker starts: duplicates of an open signal are the same trade.
+  await removeDuplicateSignals().catch((err) => logger.error({ err }, "nihilist: duplicate cleanup failed"));
   cycleLog = (await loadState<CycleRecord[]>("cycles").catch(() => null)) ?? [];
   status.phase = "universe";
   await refreshUniverse(Date.now());
