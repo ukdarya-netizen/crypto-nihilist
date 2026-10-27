@@ -11,7 +11,7 @@ import { pool } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { formatEvent, type EventForText, type SignalForText } from "./format";
 import { startReports } from "./reports";
-import { sendMessage, signalChannel, subscriptionCommand, telegramCall, telegramEnabled, TelegramError, type TelegramUpdate } from "./transport";
+import { sendMessage, sendPhoto, signalChannel, subscriptionCommand, telegramCall, telegramEnabled, TelegramError, type TelegramUpdate } from "./transport";
 import { MAX_AUTO_DELIVERY_AGE_MS, planEventDelivery, type DeliveryRecipient } from "./delivery-policy";
 
 const MAX_ATTEMPTS = 8;
@@ -80,9 +80,13 @@ async function enqueue(): Promise<QueueRow[]> {
 }
 
 async function sendPending(): Promise<void> {
-  const { rows } = await pool.query<{ id: number; chat_id: string; channel: boolean; text: string; attempts: number }>(
-    `SELECT id, chat_id, channel, text, attempts FROM nh_telegram_deliveries
-     WHERE status = 'pending' AND next_attempt_at <= now() ORDER BY id LIMIT 20`,
+  const { rows } = await pool.query<{
+    id: number; chat_id: string; channel: boolean; text: string; attempts: number; event_kind: string | null;
+  }>(
+    `SELECT d.id, d.chat_id, d.channel, d.text, d.attempts,
+            (SELECT e.kind FROM nh_signal_events e WHERE e.id = d.event_id) AS event_kind
+     FROM nh_telegram_deliveries d
+     WHERE d.status = 'pending' AND d.next_attempt_at <= now() ORDER BY d.id LIMIT 20`,
   );
   for (const d of rows) {
     if (!d.channel) {
@@ -93,7 +97,8 @@ async function sendPending(): Promise<void> {
       }
     }
     try {
-      await sendMessage(d.chat_id, d.text);
+      if (d.event_kind === "opened") await sendPhoto(d.chat_id, d.text);
+      else await sendMessage(d.chat_id, d.text);
       await pool.query("UPDATE nh_telegram_deliveries SET status = 'sent', sent_at = now() WHERE id = $1", [d.id]);
     } catch (err) {
       const attempts = d.attempts + 1;

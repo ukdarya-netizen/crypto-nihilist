@@ -1,8 +1,20 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 /**
  * Telegram runs only in the published deployment: the dev workspace and the
  * deployment share one bot token, and two getUpdates pollers kill each other
  * (409) and would send every signal twice. NIHILIST_TELEGRAM_IN_DEV=1 forces it on.
  */
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const signalPhotoPaths = [
+  path.resolve(moduleDir, "assets/new-signal.png"),
+  path.resolve(moduleDir, "../../assets/new-signal.png"),
+];
+let signalPhotoBytes: Promise<Buffer> | null = null;
+let signalPhotoFileId: string | null = null;
+
 export function telegramEnabled(): boolean {
   if (!process.env.TELEGRAM_BOT_TOKEN) return false;
   return process.env.REPLIT_DEPLOYMENT === "1" || process.env.NIHILIST_TELEGRAM_IN_DEV === "1";
@@ -20,15 +32,16 @@ export class TelegramError extends Error {
   }
 }
 
-export async function telegramCall<T>(method: string, payload: object): Promise<T> {
+async function telegramRequest<T>(method: string, payload: object | FormData): Promise<T> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) throw new Error("TELEGRAM_BOT_TOKEN not set");
   let response: Response;
   try {
     response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      ...(payload instanceof FormData
+        ? { body: payload }
+        : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
       signal: AbortSignal.timeout(method === "getUpdates" ? 40_000 : 10_000),
     });
   } catch {
@@ -44,8 +57,42 @@ export async function telegramCall<T>(method: string, payload: object): Promise<
   return body.result;
 }
 
+export async function telegramCall<T>(method: string, payload: object): Promise<T> {
+  return telegramRequest(method, payload);
+}
+
 export async function sendMessage(chatId: string, text: string): Promise<void> {
   await telegramCall("sendMessage", { chat_id: chatId, text, disable_web_page_preview: true });
+}
+
+async function getSignalPhotoBytes(): Promise<Buffer> {
+  signalPhotoBytes ??= (async () => {
+    for (const filePath of signalPhotoPaths) {
+      try {
+        return await readFile(filePath);
+      } catch (error) {
+        const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+        if (code !== "ENOENT") throw error;
+      }
+    }
+    throw new Error("New-signal Telegram image is missing from the API build");
+  })();
+  return signalPhotoBytes;
+}
+
+export async function sendPhoto(chatId: string, caption: string): Promise<void> {
+  const form = new FormData();
+  form.set("chat_id", chatId);
+  form.set("caption", caption);
+  if (signalPhotoFileId) {
+    form.set("photo", signalPhotoFileId);
+  } else {
+    const bytes = await getSignalPhotoBytes();
+    form.set("photo", new Blob([new Uint8Array(bytes)], { type: "image/png" }), "new-signal.png");
+  }
+  const result = await telegramRequest<{ photo?: Array<{ file_id: string }> }>("sendPhoto", form);
+  const photo = result.photo?.[result.photo.length - 1];
+  if (photo?.file_id) signalPhotoFileId = photo.file_id;
 }
 
 export type TelegramUpdate = {
