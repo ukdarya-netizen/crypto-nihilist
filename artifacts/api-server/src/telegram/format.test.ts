@@ -28,3 +28,13 @@ test("milestone and close texts follow the AltBullet layout", () => {
   assert.match(c, /Пик позиции: \+53\.2%/);
   assert.match(c, /Итог сделки: \+33\.4% цены с комиссиями · 5\.20R/);
 });
+
+test("the 15% milestone includes trailing activation instead of a separate message", () => {
+  const m = formatEvent(s, {
+    kind: "milestone",
+    price: 0.0021,
+    detail: { milestone: 15, currentStop: 0.0019, peakPct: 15, trailingActivated: true },
+    created_at: "2026-10-20T05:30:00Z",
+  });
+  assert.match(m, /^📊 POSITION UPDATE — JCT ЛОНГ\n🚀 \+15\.0%\n📈 Трейлинг активирован с \+15%:/);
+});

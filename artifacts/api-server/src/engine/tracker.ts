@@ -83,8 +83,10 @@ async function trackRow(row: OpenRow, now: number): Promise<void> {
       mark ?? null,
     ],
   );
+  const trailingActivationAt = events.find((event) => event.kind === "trailing_on")?.at;
   for (const e of events) {
     const detail: Record<string, unknown> = { ...e, currentStop: after.currentStop, peakPct: after.peakPct };
+    if (e.kind === "milestone" && e.at === trailingActivationAt) detail.trailingActivated = true;
     if (e.kind === "closed") Object.assign(detail, { pnlPct: result.pnlPct, r: result.r, tp1Hit: after.tp1Hit });
     await insertEvent(row.id, eventKey(row.id, e), e.kind, e.price, detail, e.at);
   }

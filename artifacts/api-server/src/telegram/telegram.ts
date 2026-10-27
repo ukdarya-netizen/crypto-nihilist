@@ -10,7 +10,7 @@
 import { pool } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { formatEvent, type EventForText, type SignalForText } from "./format";
-import { notificationPhotoKind } from "./notification-media";
+import { notificationPhotoKind, shouldSuppressTelegramEvent } from "./notification-media";
 import { startReports } from "./reports";
 import { sendMessage, sendPhoto, signalChannel, subscriptionCommand, telegramCall, telegramEnabled, TelegramError, type TelegramUpdate } from "./transport";
 import { MAX_AUTO_DELIVERY_AGE_MS, planEventDelivery, type DeliveryRecipient } from "./delivery-policy";
@@ -30,10 +30,15 @@ async function enqueue(): Promise<QueueRow[]> {
             (
               -- One message per candle: a progress alert in the same candle as
               -- break-even or TP1 repeats that message (+5% = break-even).
-              (e.kind = 'milestone' AND EXISTS (
+              -- Keep the milestone that also carries the trailing activation.
+              (e.kind = 'milestone'
+                AND NOT COALESCE((e.detail->>'trailingActivated')::boolean, false)
+                AND EXISTS (
                 SELECT 1 FROM nh_signal_events b
                 WHERE b.signal_id = e.signal_id AND b.kind IN ('breakeven', 'tp1')
                   AND b.created_at = e.created_at))
+              -- Trailing activation is included in the milestone alert.
+              OR e.kind = 'trailing_on'
               -- One position per coin and side in Telegram: a signal opened while an
               -- earlier live one on the same coin/side was still open stays silent
               -- (duplicates opened before the one-per-coin rule; stats unchanged).
@@ -92,6 +97,10 @@ async function sendPending(): Promise<void> {
      WHERE d.status = 'pending' AND d.next_attempt_at <= now() ORDER BY d.id LIMIT 20`,
   );
   for (const d of rows) {
+    if (shouldSuppressTelegramEvent(d.event_kind)) {
+      await pool.query("UPDATE nh_telegram_deliveries SET status = 'skipped', sent_at = now() WHERE id = $1", [d.id]);
+      continue;
+    }
     if (!d.channel) {
       const sub = await pool.query("SELECT 1 FROM nh_telegram_subscribers WHERE chat_id = $1 AND active", [d.chat_id]);
       if (!sub.rowCount) {

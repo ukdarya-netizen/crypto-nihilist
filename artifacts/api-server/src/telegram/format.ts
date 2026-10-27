@@ -87,7 +87,16 @@ export function formatEvent(s: SignalForText, e: EventForText): string {
   }
   const head = `📊 POSITION UPDATE — ${sym}`;
   if (e.kind === "milestone") {
-    return [head, `🚀 ${fmtPct(Number(d.milestone))}`, priceLine, ``, stopLine(s, currentStop, trailing), ``, tag(s)].join("\n");
+    return [
+      head,
+      `🚀 ${fmtPct(Number(d.milestone))}`,
+      Boolean(d.trailingActivated) ? `📈 Трейлинг активирован с +15%: стоп на 10 п.п. ниже пика` : null,
+      priceLine,
+      ``,
+      stopLine(s, currentStop, trailing),
+      ``,
+      tag(s),
+    ].filter((line) => line !== null).join("\n");
   }
   if (e.kind === "tp1") {
     return [head, `🎯 ТЕЙК 1 ${fmtPct(pctFrom(s, s.tp1))}`, priceLine, ``, `✂️ Фиксируем 50%`, stopLine(s, currentStop, trailing), `⏳ Дальше: трейлинг с +15%`, ``, tag(s)].join("\n");
