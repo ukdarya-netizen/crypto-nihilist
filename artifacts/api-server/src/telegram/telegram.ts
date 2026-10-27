@@ -101,7 +101,9 @@ async function sendPending(): Promise<void> {
     try {
       if (d.event_kind === "opened") await sendPhoto(d.chat_id, d.text);
       else if (d.event_kind === "closed" && d.event_reason === "stop") await sendPhoto(d.chat_id, d.text, "stopLoss");
-      else await sendMessage(d.chat_id, d.text);
+      else if (d.event_kind === "tp1" || (d.event_kind === "closed" && d.event_reason === "trailing")) {
+        await sendPhoto(d.chat_id, d.text, "takeProfit");
+      } else await sendMessage(d.chat_id, d.text);
       await pool.query("UPDATE nh_telegram_deliveries SET status = 'sent', sent_at = now() WHERE id = $1", [d.id]);
     } catch (err) {
       const attempts = d.attempts + 1;

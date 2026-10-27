@@ -14,11 +14,14 @@ test("sendPhoto sends each image with its caption and keeps separate Telegram fi
     const form = init.body;
     forms.push(form);
     const photo = form.get("photo");
+    const photoName = photo instanceof Blob ? (photo as File).name : "";
     const fileId = typeof photo === "string"
       ? photo
-      : photo instanceof Blob && (photo as File).name === "stop-loss.png"
+      : photoName === "stop-loss.png"
         ? "telegram-stop-loss-id"
-        : "telegram-signal-id";
+        : photoName === "take-profit.png"
+          ? "telegram-take-profit-id"
+          : "telegram-signal-id";
     return new Response(JSON.stringify({
       ok: true,
       result: { photo: [{ file_id: fileId }] },
@@ -30,13 +33,15 @@ test("sendPhoto sends each image with its caption and keeps separate Telegram fi
     await sendPhoto("@signals", "Second signal");
     await sendPhoto("@signals", "Stopped signal", "stopLoss");
     await sendPhoto("@signals", "Another stopped signal", "stopLoss");
+    await sendPhoto("@signals", "Take profit reached", "takeProfit");
+    await sendPhoto("@signals", "Trailing profit closed", "takeProfit");
   } finally {
     globalThis.fetch = previousFetch;
     if (previousToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
     else process.env.TELEGRAM_BOT_TOKEN = previousToken;
   }
 
-  assert.equal(forms.length, 4);
+  assert.equal(forms.length, 6);
   assert.equal(forms[0].get("chat_id"), "@signals");
   assert.equal(forms[0].get("caption"), "First signal");
   const uploaded = forms[0].get("photo");
@@ -52,4 +57,11 @@ test("sendPhoto sends each image with its caption and keeps separate Telegram fi
   assert.ok(stopLossUploaded.size > 1_000_000);
   assert.equal(forms[3].get("caption"), "Another stopped signal");
   assert.equal(forms[3].get("photo"), "telegram-stop-loss-id");
+  assert.equal(forms[4].get("caption"), "Take profit reached");
+  const takeProfitUploaded = forms[4].get("photo");
+  assert.ok(takeProfitUploaded instanceof Blob);
+  assert.equal((takeProfitUploaded as File).name, "take-profit.png");
+  assert.ok(takeProfitUploaded.size > 1_000_000);
+  assert.equal(forms[5].get("caption"), "Trailing profit closed");
+  assert.equal(forms[5].get("photo"), "telegram-take-profit-id");
 });

@@ -8,11 +8,12 @@ import { fileURLToPath } from "node:url";
  * (409) and would send every signal twice. NIHILIST_TELEGRAM_IN_DEV=1 forces it on.
  */
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-type PhotoKind = "signal" | "stopLoss";
+type PhotoKind = "signal" | "stopLoss" | "takeProfit";
 type PhotoAsset = { filename: string; bytes: Promise<Buffer> | null; fileId: string | null };
 const photoAssets: Record<PhotoKind, PhotoAsset> = {
   signal: { filename: "new-signal.png", bytes: null, fileId: null },
   stopLoss: { filename: "stop-loss.png", bytes: null, fileId: null },
+  takeProfit: { filename: "take-profit.png", bytes: null, fileId: null },
 };
 
 export function telegramEnabled(): boolean {
