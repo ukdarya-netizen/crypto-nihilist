@@ -16,13 +16,29 @@ import { sendMessage, signalChannel, subscriptionCommand, telegramCall, telegram
 const MAX_ATTEMPTS = 8;
 let delivering = false;
 
-type QueueRow = SignalForText & EventForText & { event_id: number; signal_live: boolean };
+type QueueRow = SignalForText & EventForText & { event_id: number; signal_live: boolean; silent: boolean };
 
 async function enqueue(): Promise<QueueRow[]> {
   const { rows } = await pool.query<QueueRow>(
     `SELECT e.id AS event_id, e.kind, e.price, e.detail, e.created_at, s.live AS signal_live,
             s.symbol, s.setup, s.htf, s.ltf, s.side, s.entry, s.stop, s.tp1, s.block_top, s.block_bottom,
-            s.block_scope, s.opened_at, s.targets_source
+            s.block_scope, s.opened_at, s.targets_source,
+            (
+              -- One message per candle: a progress alert in the same candle as
+              -- break-even or TP1 repeats that message (+5% = break-even).
+              (e.kind = 'milestone' AND EXISTS (
+                SELECT 1 FROM nh_signal_events b
+                WHERE b.signal_id = e.signal_id AND b.kind IN ('breakeven', 'tp1')
+                  AND b.created_at = e.created_at))
+              -- One position per coin and side in Telegram: a signal opened while an
+              -- earlier live one on the same coin/side was still open stays silent
+              -- (duplicates opened before the one-per-coin rule; stats unchanged).
+              OR EXISTS (
+                SELECT 1 FROM nh_signals p
+                WHERE p.live AND p.symbol = s.symbol AND p.side = s.side
+                  AND (p.opened_at, p.id) < (s.opened_at, s.id)
+                  AND (p.closed_at IS NULL OR p.closed_at > s.opened_at))
+            ) AS silent
      FROM nh_signal_events e JOIN nh_signals s ON s.id = e.signal_id
      WHERE e.telegram_sent_at IS NULL AND e.telegram_attempts < $1
      ORDER BY e.id LIMIT 20`,
@@ -30,7 +46,7 @@ async function enqueue(): Promise<QueueRow[]> {
   );
   const channel = signalChannel();
   for (const row of rows) {
-    if (!row.signal_live) {
+    if (!row.signal_live || row.silent) {
       await pool.query("UPDATE nh_signal_events SET telegram_sent_at = now() WHERE id = $1", [row.event_id]);
       continue;
     }
@@ -53,7 +69,7 @@ async function enqueue(): Promise<QueueRow[]> {
       await pool.query("UPDATE nh_signal_events SET telegram_sent_at = now() WHERE id = $1", [row.event_id]);
     }
   }
-  return rows.filter((r) => r.signal_live);
+  return rows.filter((r) => r.signal_live && !r.silent);
 }
 
 async function sendPending(): Promise<void> {
