@@ -8,12 +8,12 @@ import { fileURLToPath } from "node:url";
  * (409) and would send every signal twice. NIHILIST_TELEGRAM_IN_DEV=1 forces it on.
  */
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-const signalPhotoPaths = [
-  path.resolve(moduleDir, "assets/new-signal.png"),
-  path.resolve(moduleDir, "../../assets/new-signal.png"),
-];
-let signalPhotoBytes: Promise<Buffer> | null = null;
-let signalPhotoFileId: string | null = null;
+type PhotoKind = "signal" | "stopLoss";
+type PhotoAsset = { filename: string; bytes: Promise<Buffer> | null; fileId: string | null };
+const photoAssets: Record<PhotoKind, PhotoAsset> = {
+  signal: { filename: "new-signal.png", bytes: null, fileId: null },
+  stopLoss: { filename: "stop-loss.png", bytes: null, fileId: null },
+};
 
 export function telegramEnabled(): boolean {
   if (!process.env.TELEGRAM_BOT_TOKEN) return false;
@@ -65,9 +65,13 @@ export async function sendMessage(chatId: string, text: string): Promise<void> {
   await telegramCall("sendMessage", { chat_id: chatId, text, disable_web_page_preview: true });
 }
 
-async function getSignalPhotoBytes(): Promise<Buffer> {
-  signalPhotoBytes ??= (async () => {
-    for (const filePath of signalPhotoPaths) {
+async function getPhotoBytes(kind: PhotoKind): Promise<Buffer> {
+  const asset = photoAssets[kind];
+  asset.bytes ??= (async () => {
+    for (const filePath of [
+      path.resolve(moduleDir, "assets", asset.filename),
+      path.resolve(moduleDir, "../../assets", asset.filename),
+    ]) {
       try {
         return await readFile(filePath);
       } catch (error) {
@@ -75,24 +79,25 @@ async function getSignalPhotoBytes(): Promise<Buffer> {
         if (code !== "ENOENT") throw error;
       }
     }
-    throw new Error("New-signal Telegram image is missing from the API build");
+    throw new Error(`Telegram image is missing from the API build: ${asset.filename}`);
   })();
-  return signalPhotoBytes;
+  return asset.bytes;
 }
 
-export async function sendPhoto(chatId: string, caption: string): Promise<void> {
+export async function sendPhoto(chatId: string, caption: string, kind: PhotoKind = "signal"): Promise<void> {
+  const asset = photoAssets[kind];
   const form = new FormData();
   form.set("chat_id", chatId);
   form.set("caption", caption);
-  if (signalPhotoFileId) {
-    form.set("photo", signalPhotoFileId);
+  if (asset.fileId) {
+    form.set("photo", asset.fileId);
   } else {
-    const bytes = await getSignalPhotoBytes();
-    form.set("photo", new Blob([new Uint8Array(bytes)], { type: "image/png" }), "new-signal.png");
+    const bytes = await getPhotoBytes(kind);
+    form.set("photo", new Blob([new Uint8Array(bytes)], { type: "image/png" }), asset.filename);
   }
   const result = await telegramRequest<{ photo?: Array<{ file_id: string }> }>("sendPhoto", form);
   const photo = result.photo?.[result.photo.length - 1];
-  if (photo?.file_id) signalPhotoFileId = photo.file_id;
+  if (photo?.file_id) asset.fileId = photo.file_id;
 }
 
 export type TelegramUpdate = {

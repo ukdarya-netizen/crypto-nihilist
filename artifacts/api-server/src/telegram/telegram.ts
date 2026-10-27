@@ -81,10 +81,12 @@ async function enqueue(): Promise<QueueRow[]> {
 
 async function sendPending(): Promise<void> {
   const { rows } = await pool.query<{
-    id: number; chat_id: string; channel: boolean; text: string; attempts: number; event_kind: string | null;
+    id: number; chat_id: string; channel: boolean; text: string; attempts: number;
+    event_kind: string | null; event_reason: string | null;
   }>(
     `SELECT d.id, d.chat_id, d.channel, d.text, d.attempts,
-            (SELECT e.kind FROM nh_signal_events e WHERE e.id = d.event_id) AS event_kind
+            (SELECT e.kind FROM nh_signal_events e WHERE e.id = d.event_id) AS event_kind,
+            (SELECT e.detail->>'reason' FROM nh_signal_events e WHERE e.id = d.event_id) AS event_reason
      FROM nh_telegram_deliveries d
      WHERE d.status = 'pending' AND d.next_attempt_at <= now() ORDER BY d.id LIMIT 20`,
   );
@@ -98,6 +100,7 @@ async function sendPending(): Promise<void> {
     }
     try {
       if (d.event_kind === "opened") await sendPhoto(d.chat_id, d.text);
+      else if (d.event_kind === "closed" && d.event_reason === "stop") await sendPhoto(d.chat_id, d.text, "stopLoss");
       else await sendMessage(d.chat_id, d.text);
       await pool.query("UPDATE nh_telegram_deliveries SET status = 'sent', sent_at = now() WHERE id = $1", [d.id]);
     } catch (err) {

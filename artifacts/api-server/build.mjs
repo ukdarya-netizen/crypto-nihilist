@@ -121,10 +121,9 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
 
   const outputAssets = path.join(distDir, "assets");
   await mkdir(outputAssets, { recursive: true });
-  await cp(
-    path.join(artifactDir, "assets", "new-signal.png"),
-    path.join(outputAssets, "new-signal.png"),
-  );
+  for (const filename of ["new-signal.png", "stop-loss.png"]) {
+    await cp(path.join(artifactDir, "assets", filename), path.join(outputAssets, filename));
+  }
 }
 
 buildAll().catch((err) => {
