@@ -7,7 +7,7 @@ const COLS: Array<[string, string, string?]> = [
   ["d_funding_pct", "Funding", "%"], ["rsi_1h", "RSI 1ч"], ["btc_chg1h", "BTC 1ч", "%"],
 ];
 
-/** The market at fixed points after entry (AltBullet trajectory snapshots). */
+/** The market at fixed points after entry and hourly after break-even. */
 export function Trajectory({ id }: { id: number }) {
   const [points, setPoints] = useState<Point[] | null>(null);
   useEffect(() => {
@@ -16,7 +16,7 @@ export function Trajectory({ id }: { id: number }) {
     return () => { alive = false; };
   }, [id]);
   if (points === null) return <p className="text-muted">Загрузка…</p>;
-  if (!points.length) return <p className="text-muted">Точки: касание блока и каждые 30 мин до сигнала; после входа +15 мин, каждые 30 мин первые сутки, дальше каждые 4 часа до закрытия.</p>;
+  if (!points.length) return <p className="text-muted">Точки: касание блока и каждые 30 мин до сигнала; после входа — по текущему графику до закрытия; после БУ — каждый час до 72 часов, включая время после закрытия.</p>;
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[640px] font-mono text-[11px]">
@@ -36,6 +36,7 @@ export function Trajectory({ id }: { id: number }) {
           ))}
         </tbody>
       </table>
+      <p className="mt-1 text-[10px] text-muted">Точки `be+1h` … `be+72h` отсчитываются от переноса стопа в безубыток и продолжаются после закрытия сделки.</p>
       <p className="mt-1 text-[10px] text-muted">* восстановлено позже по истории свечей и CoinGlass</p>
     </div>
   );

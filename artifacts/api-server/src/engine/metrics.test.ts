@@ -71,7 +71,7 @@ test("metric analysis: quartiles and labels with CAB win rate and avg R", () => 
   assert.deepEqual(flag.buckets.map((b) => [b.label, b.winRate]).sort(), [["false", 0], ["true", 100]]);
 });
 
-import { trajectoryPoints } from "./trajectory";
+import { postBreakevenTrajectoryPoints, trajectoryPoints } from "./trajectory";
 test("trajectory: touch and every 30m before the signal, 30m for a day after, then every 4h", () => {
   const sig = Date.UTC(2026, 9, 26, 12);
   const pts = trajectoryPoints(sig, sig - 100 * 60_000, sig + 3 * 86_400_000);
@@ -81,4 +81,21 @@ test("trajectory: touch and every 30m before the signal, 30m for a day after, th
   assert.ok(labels.includes("+28h") && labels.includes("+72h"));
   assert.ok(!labels.includes("+76h"), "nothing after the close");
   assert.equal(new Set(labels).size, labels.length);
+});
+
+test("post-break-even trajectory records each hour through +72h", () => {
+  const beAt = Date.UTC(2026, 9, 26, 12);
+  const points = postBreakevenTrajectoryPoints(beAt, beAt + 4 * 86_400_000);
+  assert.equal(points.length, 72);
+  assert.deepEqual(points[0], { label: "be+1h", offsetMs: 3_600_000 });
+  assert.deepEqual(points[71], { label: "be+72h", offsetMs: 72 * 3_600_000 });
+  assert.deepEqual(
+    postBreakevenTrajectoryPoints(beAt, beAt + 2.5 * 3_600_000).map((p) => p.label),
+    ["be+1h", "be+2h"],
+  );
+});
+
+test("ordinary trajectory does not add a snapshot beyond an early close", () => {
+  const sig = Date.UTC(2026, 9, 26, 12);
+  assert.deepEqual(trajectoryPoints(sig, null, sig + 10 * 60_000), []);
 });
