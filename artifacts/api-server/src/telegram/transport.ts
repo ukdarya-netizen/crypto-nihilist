@@ -15,6 +15,7 @@ const photoAssets: Record<TelegramPhotoKind, PhotoAsset> = {
   stopLoss: { filename: "stop-loss.png", bytes: null, fileId: null },
   takeProfit: { filename: "take-profit.png", bytes: null, fileId: null },
   positionUpdate: { filename: "position-update.png", bytes: null, fileId: null },
+  beStop: { filename: "be-stop.png", bytes: null, fileId: null },
 };
 
 export function telegramEnabled(): boolean {
