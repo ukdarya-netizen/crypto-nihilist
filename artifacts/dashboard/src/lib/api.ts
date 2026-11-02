@@ -162,16 +162,17 @@ const BASE_LABEL: Record<string, string> = {
   ob_displacement_atr: "Сила ОБ: слом за блоком, ATR", ob_break_bars: "Свечей от ОБ до слома", ob_height_atr: "Высота ОБ, ATR",
   ob_penetration_pct: "Глубина захода в ОБ, %",
   d_oi_usd: "OI, $", d_oi_chg1h: "OI Δ1ч, %", d_oi_chg4h: "OI Δ4ч, %", d_oi_chg24h: "OI Δ24ч, %",
-  d_fut_taker_net_1h: "Фьюч. тейкер net 1ч, %", d_fut_taker_net_4h: "Фьюч. тейкер net 4ч, %", d_fut_taker_net_24h: "Фьюч. тейкер net 24ч, %",
-  d_fut_vol24h_usd: "Объём фьючерсов 24ч, $", d_fut_vol4h_vs_avg: "Объём фьюч. 4ч к среднему, ×",
-  d_spot_cvd_chg1h: "Spot CVD Δ1ч", d_spot_cvd_chg4h: "Spot CVD Δ4ч", d_spot_cvd_chg24h: "Spot CVD Δ24ч",
-  d_spot_taker_net_1h: "Спот тейкер net 1ч, %", d_spot_taker_net_4h: "Спот тейкер net 4ч, %", d_spot_taker_net_24h: "Спот тейкер net 24ч, %",
-  d_spot_vol24h: "Объём спота 24ч", d_fut_spot_ratio: "Фьючерсы / спот, ×",
-  d_liq_long_1h: "Ликвидации лонгов 1ч, $", d_liq_short_1h: "Ликвидации шортов 1ч, $", d_liq_long_24h: "Ликвидации лонгов 24ч, $",
-  d_liq_short_24h: "Ликвидации шортов 24ч, $", d_liq_long_ratio_1h_24h: "Ликв. лонгов 1ч / 24ч",
-  d_ls_long_pct: "Binance: аккаунтов в лонге, %", d_ls_long_pct_chg: "Binance: Δ доли лонгов (5ч), п.п.", d_funding_pct: "Funding, %",
+  d_ls_long_pct: "Binance: аккаунтов в лонге, %", d_ls_long_pct_chg: "Binance: Δ доли лонгов (5ч), п.п.",
   trend_4h_aligned: "Тренд 4h (EMA50/200) по ходу", trend_1d_aligned: "Тренд 1D (EMA50/200) по ходу", btc_trend_4h_aligned: "Тренд BTC 4h по ходу",
 };
+const UNCOLLECTED_METRIC_PREFIXES = [
+  "d_fut_taker_net_", "d_spot_taker_net_", "d_spot_cvd_chg", "d_liq_", "d_fut_vol",
+];
+const UNCOLLECTED_METRIC_KEYS = new Set(["d_funding_pct", "d_spot_vol24h", "d_fut_spot_ratio"]);
+export function isUncollectedMetric(key: string): boolean {
+  return UNCOLLECTED_METRIC_KEYS.has(key) || UNCOLLECTED_METRIC_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
 export function metricLabel(key: string): string {
   const btc = key.startsWith("btc_");
   const k = btc ? key.slice(4) : key;

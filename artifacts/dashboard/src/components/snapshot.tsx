@@ -1,4 +1,4 @@
-import { metricLabel, metricValue, type Snapshot } from "../lib/api";
+import { isUncollectedMetric, metricLabel, metricValue, type Snapshot } from "../lib/api";
 
 const GROUPS: Array<{ title: string; keys: (k: string) => boolean }> = [
   { title: "Сетап", keys: (k) => ["risk_pct", "rr1", "tp1_pct", "targets_source", "block_scope", "block_size_pct", "entry_from_block_pct", "block_age_h", "since_first_touch_h", "since_last_touch_h", "touch_span_h", "ltf_atr_pct", "htf_swing_aligned", "htf_internal_aligned"].includes(k) },
@@ -18,7 +18,7 @@ export function SnapshotPanel({ snapshot, close, reconstructed, status }: {
     <div className="space-y-3">
       {reconstructed && <p className="text-[11px] text-warn">Восстановлено по сохранённым свечам (сигнал был до записи метрик).</p>}
       {GROUPS.map((g) => {
-        const keys = Object.keys(snapshot).filter(g.keys).sort();
+        const keys = Object.keys(snapshot).filter((k) => !isUncollectedMetric(k) && g.keys(k)).sort();
         if (!keys.length) return null;
         return (
           <div key={g.title}>

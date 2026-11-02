@@ -3,8 +3,7 @@ import { compact, get, signed, tone, when } from "../lib/api";
 
 type Point = { label: string; at: string; price: number | null; pct_from_entry: number | null; metrics: Record<string, number | string | null>; reconstructed: boolean };
 const COLS: Array<[string, string, string?]> = [
-  ["d_oi_chg1h", "OI 1ч", "%"], ["d_fut_taker_net_1h", "F TKR 1ч", "%"], ["d_spot_cvd_chg1h", "CVD 1ч"],
-  ["d_funding_pct", "Funding", "%"], ["rsi_1h", "RSI 1ч"], ["btc_chg1h", "BTC 1ч", "%"],
+  ["d_oi_chg1h", "OI 1ч", "%"], ["rsi_1h", "RSI 1ч"], ["btc_chg1h", "BTC 1ч", "%"],
 ];
 
 /** The market at fixed points after entry and hourly after break-even. */
