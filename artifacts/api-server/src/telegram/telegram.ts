@@ -120,7 +120,7 @@ async function sendPending(): Promise<void> {
       const attempts = d.attempts + 1;
       const blocked = !d.channel && err instanceof TelegramError && err.code === 403;
       // The user blocked the bot: signals off until /start.
-      if (blocked) await pool.query("UPDATE nh_users SET notify = false WHERE chat_id = $1", [d.chat_id]);
+      if (blocked) await pool.query("UPDATE nh_users SET notify = false, bot_blocked_at = now() WHERE chat_id = $1", [d.chat_id]);
       const waitMs = Math.max(3000 * 2 ** Math.min(attempts, 8), err instanceof TelegramError ? err.retryAfter * 1000 : 0);
       await pool.query(
         "UPDATE nh_telegram_deliveries SET attempts = $2, status = $3, next_attempt_at = $4 WHERE id = $1",

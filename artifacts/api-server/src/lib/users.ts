@@ -1,7 +1,7 @@
 /**
  * Accounts and access (owner 2026-11-02: "точно как в CAB").
  * - Registration on the dashboard (name, email, Telegram Chat ID, password).
- * - The owner (NIHILIST_OWNER_EMAIL) is approved at once and never expires;
+ * - The owner (shak.darya23@gmail.com) is approved at once and never expires;
  *   everyone else waits for the owner's approval (Telegram buttons or the
  *   «Пользователи» page). Approval from Telegram opens one month.
  * - Dashboard and bot are open only to approved users whose subscription has
@@ -16,15 +16,18 @@ import { logger } from "./logger";
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
 
-export type UserStatus = "pending" | "approved" | "blocked";
+export type UserStatus = "pending" | "approved" | "blocked" | "inactive";
 export type AccessStatus = UserStatus | "expired";
 export type UserRow = {
   id: number; email: string; password_hash: string; name: string; chat_id: string | null;
   telegram_username: string | null; status: UserStatus; subscribed_until: Date | null;
   notify: boolean; notify_since: Date | null; created_at: Date; approved_at: Date | null; last_login_at: Date | null;
+  last_activity_at: Date | null; bot_blocked_at: Date | null;
 };
 
-export const ownerEmail = (): string => (process.env.NIHILIST_OWNER_EMAIL ?? "").toLowerCase().trim();
+/** Owner (owner 2026-11-02): shak.darya23@gmail.com; NIHILIST_OWNER_EMAIL overrides. */
+export const DEFAULT_OWNER_EMAIL = "shak.darya23@gmail.com";
+export const ownerEmail = (): string => (process.env.NIHILIST_OWNER_EMAIL?.trim() || DEFAULT_OWNER_EMAIL).toLowerCase();
 export const isOwnerEmail = (email: string | null | undefined): boolean =>
   ownerEmail() !== "" && (email ?? "").toLowerCase().trim() === ownerEmail();
 
@@ -49,6 +52,8 @@ export function ensureUserTables(): Promise<void> {
         created_at timestamptz NOT NULL DEFAULT now(),
         approved_at timestamptz,
         last_login_at timestamptz,
+        last_activity_at timestamptz,
+        bot_blocked_at timestamptz,
         CONSTRAINT nh_users_email_unique UNIQUE (email),
         CONSTRAINT nh_users_chat_id_unique UNIQUE (chat_id)
       )`);
@@ -118,7 +123,7 @@ export function verifyToken(token: string, now = Date.now()): TokenPayload | nul
 export function accessStatus(u: { email: string; status: string; subscribed_until: Date | null }, now = new Date()): AccessStatus {
   if (isOwnerEmail(u.email)) return u.status === "blocked" ? "blocked" : "approved";
   if (u.status === "approved" && u.subscribed_until && u.subscribed_until.getTime() <= now.getTime()) return "expired";
-  return u.status === "approved" || u.status === "blocked" ? u.status : "pending";
+  return u.status === "approved" || u.status === "blocked" || u.status === "inactive" ? u.status : "pending";
 }
 
 export const EXPIRED_TEXT = "Подписка истекла. Свяжитесь с администратором для продления.";
@@ -128,6 +133,7 @@ export function accessError(s: AccessStatus): { status: number; error: string; c
   if (s === "approved") return null;
   if (s === "blocked") return { status: 403, error: "Доступ заблокирован", code: "blocked" };
   if (s === "pending") return { status: 403, error: "Запрос ожидает одобрения", code: "pending" };
+  if (s === "inactive") return { status: 403, error: EXPIRED_TEXT, code: "inactive" };
   return { status: 403, error: EXPIRED_TEXT, code: "subscription_expired" };
 }
 

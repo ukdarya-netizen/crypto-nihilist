@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactElement } from "react";
 import { Layout, PUBLIC_ROUTES, useRoute, type Route } from "./components/layout";
 import { AuthError, currentSession, get, onAuthError, saveSession } from "./lib/api";
 import { Login, Register, ResetPassword } from "./pages/auth";
-import Users from "./pages/users";
+import Members from "./pages/members";
 import Overview from "./pages/overview";
 import Tracker from "./pages/tracker";
 import Scanner from "./pages/scanner";
@@ -41,7 +41,7 @@ export default function App() {
   const owner = currentSession()?.role === "owner";
   const pages: Partial<Record<Route, ReactElement>> = {
     "/": <Overview />, "/tracker": <Tracker />, "/scanner": <Scanner />, "/history": <History />, "/metrics": <Metrics />,
-    "/health": <Health />, "/reference": <Reference />, ...(owner ? { "/users": <Users /> } : {}),
+    "/health": <Health />, "/reference": <Reference />, ...(owner ? { "/members": <Members /> } : {}),
   };
   return <Layout route={route}>{pages[route] ?? <Overview />}</Layout>;
 }

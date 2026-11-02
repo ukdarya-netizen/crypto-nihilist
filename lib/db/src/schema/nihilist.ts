@@ -138,7 +138,8 @@ export type NhSignal = typeof nhSignals.$inferSelect;
  * Accounts (owner 2026-11-02, as in AltBullet): registration on the dashboard
  * with the Telegram Chat ID; the owner approves or blocks from Telegram; the
  * bot and the dashboard are open only to approved users whose subscription
- * has not ended (subscribed_until NULL = no end date). The owner (by email)
+ * has not ended (subscribed_until NULL = no end date). Status: pending |
+ * approved | blocked | inactive (deactivated by the owner). The owner (by email)
  * is approved automatically and never expires.
  */
 export const nhUsers = pgTable("nh_users", {
@@ -157,6 +158,10 @@ export const nhUsers = pgTable("nh_users", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   approvedAt: timestamp("approved_at", { withTimezone: true }),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  /** Dashboard open in a visible tab (heartbeat every 30 s): online = within 90 s. */
+  lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
+  /** Telegram answered 403: the user blocked the bot (cleared by /start). */
+  botBlockedAt: timestamp("bot_blocked_at", { withTimezone: true }),
 });
 
 /** One-time password reset codes sent by the bot (/resetpassword), 15 minutes. */
