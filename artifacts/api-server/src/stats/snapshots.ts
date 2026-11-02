@@ -314,6 +314,7 @@ export function signalLikeFromRow(row: SignalRow): SignalLike {
     targetsSource: row.targets_source, signalAt: new Date(row.opened_at).getTime(),
     ob: d.ob && typeof d.ob === "object" ? d.ob as SignalLike["ob"] : null,
     confluenceSetups: Array.isArray(d.confluenceSetups) ? d.confluenceSetups as string[] : null,
+    chochBar: d.chochBar && typeof d.chochBar === "object" ? d.chochBar as SignalLike["chochBar"] : null,
   };
 }
 
