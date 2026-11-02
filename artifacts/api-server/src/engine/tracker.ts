@@ -12,6 +12,7 @@ import type { HtfInterval } from "./setups";
 import { applyCandles, tradeResult, type TradeEvent, type TradeState } from "./trade";
 import { getCandles } from "../market/coinglass";
 import { logger } from "../lib/logger";
+import { closeReason, enqueueCommand } from "../lib/trading-relay";
 
 const SPAN = INTERVAL_MS[TRACK_INTERVAL];
 
@@ -20,7 +21,7 @@ export type OpenRow = {
   entry: number; stop: number; tp1: number; current_stop: number | null;
   opened_at: Date; expires_at: Date; tp1_hit: boolean; tp1_at: Date | null;
   breakeven_moved: boolean; trailing_active: boolean; peak_pct: number; last_milestone: number;
-  mfe_pct: number; mae_pct: number; last_candle_time: string | null; targets_source?: string | null;
+  mfe_pct: number; mae_pct: number; last_candle_time: string | null; targets_source?: string | null; live?: boolean;
 };
 
 export function stateFromRow(row: OpenRow): TradeState {
@@ -84,6 +85,16 @@ async function trackRow(row: OpenRow, now: number): Promise<void> {
       mark ?? null,
     ],
   );
+  // Trading bot commands (owner 2026-11-02): every stop change and the close of a live trade.
+  if (row.live) {
+    const at = (after.lastCandleTime ?? now) + SPAN;
+    const cmd = after.closed
+      ? { type: "close" as const, reason: closeReason(after.closeReason), exitPrice: after.exitPrice, at }
+      : after.currentStop !== before.currentStop
+        ? { type: "move_stop" as const, reason: after.trailingActive ? "trailing" as const : "breakeven" as const, stopPrice: after.currentStop, at }
+        : null;
+    if (cmd) await enqueueCommand(row.id, row.symbol, cmd).catch((err) => logger.warn({ err, id: row.id }, "nihilist: trading command not queued"));
+  }
   const trailingActivationAt = events.find((event) => event.kind === "trailing_on")?.at;
   for (const e of events) {
     const detail: Record<string, unknown> = { ...e, currentStop: after.currentStop, peakPct: after.peakPct };
