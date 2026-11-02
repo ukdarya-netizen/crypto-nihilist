@@ -37,8 +37,8 @@ export const BREAKEVEN_AT_PCT: number | null = 5;
  * Shorts (53 closed): no OI condition — before short profits OI barely moved
  * (median -0.4% in 4h), a deep OI drop came before B.U. closes instead.
  * Stop + block age: 20 passed, avg +0.86%, stops 2; all shorts avg -1.16%.
- * Signals that fail are still opened and tracked as shadow (live = false)
- * with the reason.
+ * Signals that fail are not opened (owner: no shadow trades); the rejection
+ * and its reason are written to nh_decisions.
  */
 export const ENTRY_FILTER_MIN_RISK_PCT = 7;
 export const ENTRY_FILTER_MAX_BLOCK_AGE_H = 300;
