@@ -26,29 +26,6 @@ export const LIVE_SETUPS: ReadonlySet<string> = new Set<string>(
  */
 export const BREAKEVEN_AT_PCT: number | null = 5;
 
-/**
- * Entry filter (owner 2026-11-02, 255 closed trades 25.10-02.11): a trade is
- * published (live) only when its stop is at least 7% from the entry AND the
- * order block is at most 300 hours old at the signal. Passing: 56 trades,
- * avg +1.35% (+0.12R), stops 21%; rejected: 199, avg -3.59% (-0.63R), stops
- * 69%. Rejected trades are still opened and tracked as shadow (live = false)
- * so both groups keep being measured on new data.
- */
-export const ENTRY_FILTER_MIN_RISK_PCT = 7;
-export const ENTRY_FILTER_MAX_BLOCK_AGE_H = 300;
-
-export function entryFilter(input: { riskPct: number; signalAt: number; blockCreatedAt?: number | null; blockTime?: number | null }): {
-  pass: boolean; reason: string | null; riskPct: number; blockAgeH: number | null;
-} {
-  const origin = input.blockCreatedAt ?? input.blockTime ?? null;
-  const blockAgeH = origin !== null ? (input.signalAt - origin) / 3_600_000 : null;
-  const reasons: string[] = [];
-  if (!(input.riskPct >= ENTRY_FILTER_MIN_RISK_PCT)) reasons.push("risk_below_7pct");
-  if (blockAgeH === null) reasons.push("block_age_unknown");
-  else if (blockAgeH > ENTRY_FILTER_MAX_BLOCK_AGE_H) reasons.push("block_older_300h");
-  return { pass: reasons.length === 0, reason: reasons.length ? reasons.join(",") : null, riskPct: input.riskPct, blockAgeH };
-}
-
 /** Open trades are followed on 5-minute candles. */
 export const TRACK_INTERVAL = "5m" as const;
 

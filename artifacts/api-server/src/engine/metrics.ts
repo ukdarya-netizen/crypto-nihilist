@@ -21,8 +21,6 @@ export type SignalLike = {
   targetsSource?: string | null;
   confluenceSetups?: string[] | null;
   ob?: { displacementAtr: number | null; breakBars: number | null; heightAtr: number | null; penetrationPct: number | null } | null;
-  /** Structure-break bar in LTF ATR (recorded from 2026-11-02). */
-  chochBar?: Record<string, number | null> | null;
   signalAt: number;
 };
 
@@ -149,11 +147,6 @@ export function signalSnapshot(sig: SignalLike, coin: BookLike, btc: BookLike | 
     ob_break_bars: sig.ob?.breakBars ?? null,
     ob_height_atr: sig.ob?.heightAtr ?? null,
     ob_penetration_pct: sig.ob?.penetrationPct ?? null,
-    choch_range_atr: sig.chochBar?.rangeAtr ?? null,
-    choch_body_atr: sig.chochBar?.bodyAtr ?? null,
-    choch_range_pct: sig.chochBar?.rangePct ?? null,
-    choch_body_pct: sig.chochBar?.bodyPct ?? null,
-    choch_close_pos: sig.chochBar?.closePos ?? null,
     hour_utc: new Date(sig.signalAt).getUTCHours(),
     weekday_utc: new Date(sig.signalAt).getUTCDay(),
     ...marketMetrics(coin, sig.signalAt),
