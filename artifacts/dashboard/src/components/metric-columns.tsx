@@ -1,4 +1,4 @@
-import { compact, metricLabel, type Snapshot } from "../lib/api";
+import { isOwner, compact, metricLabel, type Snapshot } from "../lib/api";
 
 /** Metric columns of the signal lists (as AltBullet's tracker/history). */
 export const METRIC_COLUMNS: Array<{ key: string; head: string; suffix?: string; signed?: boolean }> = [
@@ -21,3 +21,6 @@ export function MetricCell({ snapshot, col }: { snapshot?: Snapshot | null; col:
     </td>
   );
 }
+
+/** Entry-metric columns: owner only (users do not see the research metrics). */
+export const metricCols = () => (isOwner() ? METRIC_COLUMNS : []);

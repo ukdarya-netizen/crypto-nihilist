@@ -3,7 +3,7 @@ import { Activity, AlertTriangle, BarChart3, Clock3, Shield, TrendingDown, Trend
 import { Empty, Panel, Segmented } from "../components/ui";
 import { SignalHistory, type TradeStatus } from "../components/signal-history";
 import { DailyArchive } from "../components/daily-archive";
-import { SETUPS, coin, dur, fmtHours, setupLabel, signed, tone, usePoll, type Status } from "../lib/api";
+import { SETUPS, coin, dur, isOwner, fmtHours, setupLabel, signed, tone, usePoll, type Status } from "../lib/api";
 
 type Summary = {
   total: number; open: number; closed: number; profit: number; beStop: number; stopLoss: number; expired: number;
@@ -105,15 +105,15 @@ export default function Overview() {
         <StatCard title="ВСЕГО СИГНАЛОВ" value={data?.counters.total ?? "—"} icon={BarChart3} />
         <StatCard title="МОНЕТ СКАНИРУЕТСЯ" value={st ? st.engine.ready : "—"} sub={st ? `из ${st.engine.universe} пар BingX` : undefined} icon={Activity} color="text-up" />
         <StatCard title="АКТИВНЫХ" value={s?.open ?? "—"} sub="сделок в работе" icon={AlertTriangle} color="text-warn" onClick={() => focus("open")} active={status === "open"} />
-        <StatCard title="СКАН" value={st?.engine.cycle ? `${st.engine.cycle.done}/${st.engine.cycle.total}` : st?.engine.lastCycleMs != null ? dur(st.engine.lastCycleMs) : "—"}
-          sub={st?.engine.cycle ? `идёт ${dur(Date.now() - st.engine.cycle.startedAt)}` : "длительность прошлого скана"} icon={Activity} />
+        {isOwner() && <StatCard title="СКАН" value={st?.engine.cycle ? `${st.engine.cycle.done}/${st.engine.cycle.total}` : st?.engine.lastCycleMs != null ? dur(st.engine.lastCycleMs) : "—"}
+          sub={st?.engine.cycle ? `идёт ${dur(Date.now() - st.engine.cycle.startedAt)}` : "длительность прошлого скана"} icon={Activity} />}
         <StatCard title="СРЕДНЕЕ ВРЕМЯ СДЕЛКИ" value={fmtHours(data?.avgHoldHours)} sub="от сигнала до закрытия" icon={Clock3} />
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
         <p className="text-xs text-muted">Общая статистика · сигналы, открытые за {days >= 3650 ? "всё время" : `${days} дн`}</p>
         <div className="flex flex-wrap gap-2">
-          <Segmented value={live} onChange={(value) => setLive(value as boolean)} options={[{ id: false, label: "все сетапы" }, { id: true, label: "только канал" }]} />
+          {isOwner() && <Segmented value={live} onChange={(value) => setLive(value as boolean)} options={[{ id: false, label: "все сетапы" }, { id: true, label: "только канал" }]} />}
           <Segmented value={days} onChange={(value) => setDays(value as number)} options={[{ id: 7, label: "7 дн" }, { id: 14, label: "14 дн" }, { id: 30, label: "30 дн" }, { id: 90, label: "90 дн" }, { id: 3650, label: "всё" }]} />
         </div>
       </div>

@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
 import { engineStatus, scannerView } from "../engine/runtime";
 import { telegramEnabled } from "../telegram/transport";
-import { ensureUserTables, ownerEmail, recipientSql } from "../lib/users";
+import { ensureUserTables, isOwnerReq, ownerEmail, publicSignal, recipientSql } from "../lib/users";
 import { cgRequest, coinglassGovernorStats, EXCHANGE } from "../market/coinglass";
 import { apiHealth } from "../lib/apiHealth";
 import { buildJournal, tradeStatus, type JournalRow } from "../stats/journal";
@@ -18,7 +18,7 @@ const days = (value: unknown, fallback: number) => {
   return Number.isFinite(n) && n > 0 && n <= 3650 ? n : fallback;
 };
 
-router.get("/nh/status", async (_req, res) => {
+router.get("/nh/status", async (req, res) => {
   const { rows } = await pool.query<{ open: number; closed: number }>(
     `SELECT count(*) FILTER (WHERE status = 'open')::int AS open,
             count(*) FILTER (WHERE status = 'closed')::int AS closed FROM nh_signals`,
@@ -44,6 +44,12 @@ router.get("/nh/status", async (_req, res) => {
     channel: process.env.NIHILIST_TELEGRAM_CHANNEL?.trim() || null,
     deliveries: deliveryRows[0],
   };
+  if (!isOwnerReq(req)) {
+    // Users: open positions and the size of the scanned universe only.
+    const e = engineStatus();
+    res.json({ signals: rows[0], engine: { universe: e.universe, ready: e.ready } });
+    return;
+  }
   res.json({
     engine: engineStatus(),
     snapshotBackfill: snapshotBackfillDiagnostics(),
@@ -91,9 +97,9 @@ router.get("/nh/stats/daily", async (req, res) => {
             count(*) FILTER (WHERE pnl_pct > 0)::int AS wins,
             round(sum(r_multiple)::numeric, 3)::float AS sum_r,
             round(sum(pnl_pct)::numeric, 3)::float AS sum_pnl_pct
-     FROM nh_signals WHERE status = 'closed' AND closed_at > now() - make_interval(days => $1)
+     FROM nh_signals WHERE status = 'closed' AND closed_at > now() - make_interval(days => $1) AND (NOT $2 OR live)
      GROUP BY 1 ORDER BY 1`,
-    [d],
+    [d, !isOwnerReq(req)],
   );
   res.json({ days: d, daily: rows });
 });
@@ -106,11 +112,11 @@ router.get("/nh/signals", async (req, res) => {
   await ensureSnapshotTable();
   const { rows } = await pool.query(
     `SELECT s.*, n.metrics AS snapshot, n.close_context, n.reconstructed AS snapshot_reconstructed, n.status AS snapshot_status FROM nh_signals s LEFT JOIN nh_signal_snapshots n ON n.signal_id = s.id
-     WHERE s.status = $1 AND ($3::text IS NULL OR s.setup = $3)
+     WHERE s.status = $1 AND ($3::text IS NULL OR s.setup = $3) AND (NOT $4 OR s.live)
      ORDER BY ${status === "open" ? "s.opened_at" : "s.closed_at"} DESC LIMIT $2`,
-    [status, limit, setup],
+    [status, limit, setup, !isOwnerReq(req)],
   );
-  res.json({ signals: rows });
+  res.json({ signals: isOwnerReq(req) ? rows : rows.map(publicSignal) });
 });
 
 router.get("/nh/decisions", async (req, res) => {
@@ -137,7 +143,8 @@ const liveOnly = (value: unknown) => value === "1" || value === "true";
  */
 router.get("/nh/journal", async (req, res) => {
   const d = days(req.query.days, 30);
-  const live = liveOnly(req.query.live);
+  // Users see only signals published to Telegram.
+  const live = liveOnly(req.query.live) || !isOwnerReq(req);
   const { rows } = await pool.query<JournalRow>(
     `SELECT id, symbol, setup, side, status, live, close_reason, pnl_pct, r_multiple, peak_pct, mfe_pct, opened_at, closed_at
      FROM nh_signals WHERE opened_at > now() - make_interval(days => $1) AND (NOT $2 OR live)`,
@@ -217,17 +224,22 @@ router.get("/nh/history", async (req, res) => {
      WHERE s.opened_at > now() - make_interval(days => $1) AND ($2::text IS NULL OR s.setup = $2)
        AND ($3::text IS NULL OR s.symbol LIKE $3) AND (NOT $4 OR s.live) AND ($6::text IS NULL OR s.symbol = $6)
      ORDER BY s.opened_at DESC LIMIT $5`,
-    [d, setup, symbol, liveOnly(req.query.live), limit, exact],
+    [d, setup, symbol, liveOnly(req.query.live) || !isOwnerReq(req), limit, exact],
   );
   const status = typeof req.query.status === "string" ? req.query.status : "";
   const filtered = status ? rows.filter((r) => tradeStatus(r as JournalRow) === status) : rows;
-  res.json({ signals: filtered.map((r) => ({ ...r, trade_status: tradeStatus(r as JournalRow) })) });
+  const out = filtered.map((r) => ({ ...r, trade_status: tradeStatus(r as JournalRow) }));
+  res.json({ signals: isOwnerReq(req) ? out : out.map(publicSignal) });
 });
 
 /** Lifecycle of one trade (what went to Telegram, step by step). */
 router.get("/nh/signals/:id/events", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isSafeInteger(id)) { res.status(400).json({ error: "bad_id" }); return; }
+  if (!isOwnerReq(req)) {
+    const pub = await pool.query("SELECT 1 FROM nh_signals WHERE id = $1 AND live", [id]);
+    if (!pub.rowCount) { res.json({ events: [] }); return; }
+  }
   const { rows } = await pool.query(
     `SELECT e.id, e.kind, e.price, e.detail, e.created_at, e.telegram_sent_at,
             COALESCE((

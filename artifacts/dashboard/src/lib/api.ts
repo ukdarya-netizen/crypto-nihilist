@@ -18,6 +18,8 @@ export function saveSession(s: Session | null): void {
   try { if (s) localStorage.setItem(TOKEN_KEY, JSON.stringify(s)); else localStorage.removeItem(TOKEN_KEY); } catch { /* private mode: this tab only */ }
 }
 export const currentSession = () => session;
+/** Owner sees everything; users see positions, overview, history and the rules (2026-11-02). */
+export const isOwner = () => session?.role === "owner";
 
 const authListeners = new Set<(e: AuthError) => void>();
 export function onAuthError(fn: (e: AuthError) => void): () => void { authListeners.add(fn); return () => authListeners.delete(fn); }

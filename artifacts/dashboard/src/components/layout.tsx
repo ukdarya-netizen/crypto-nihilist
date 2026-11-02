@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Activity, BookOpen, FlaskConical, HeartPulse, History, LogOut, MoreHorizontal, ScanSearch, Target, Users, X } from "lucide-react";
 import { BrandLockup, BrandMark, SLOGAN, Wordmark } from "./brand";
-import { STAGE_LABEL, currentSession, dur, get, post, saveSession, usePoll, type Status } from "../lib/api";
+import { STAGE_LABEL, currentSession, dur, get, isOwner, post, saveSession, usePoll, type Status } from "../lib/api";
 
 export type Route = "/" | "/tracker" | "/scanner" | "/history" | "/metrics" | "/health" | "/reference" | "/members"
   | "/login" | "/register" | "/reset-password";
@@ -47,8 +47,11 @@ function useHeartbeat(): void {
 const PendingBadge = ({ href, n }: { href: Route; n: number }) =>
   href === "/members" && n > 0 ? <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">+{n}</span> : null;
 
+/** Owner-only pages (users do not see the scanner, research and engine health). */
+export const OWNER_ROUTES: Route[] = ["/scanner", "/metrics", "/health", "/members"];
+
 function navFor(): typeof NAV {
-  return currentSession()?.role === "owner" ? [...NAV, ...OWNER_NAV] : NAV;
+  return isOwner() ? [...NAV, ...OWNER_NAV] : NAV.filter((n) => !OWNER_ROUTES.includes(n.href));
 }
 
 export function logout(): void {
@@ -208,7 +211,7 @@ export function Layout({ route, children }: { route: Route; children: ReactNode 
           <LogOut className="size-3.5" /><span className="truncate">Выйти · {currentSession()?.name ?? ""}</span>
         </button>
         <p className="px-5 pb-3 font-type text-[10px] leading-relaxed tracking-[0.18em] text-primary/80">{SLOGAN}</p>
-        <ApiDots />
+        {isOwner() && <ApiDots />}
       </aside>
 
       <main className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
@@ -220,9 +223,9 @@ export function Layout({ route, children }: { route: Route; children: ReactNode 
               <h1 className="truncate text-base font-semibold md:text-xl"><span className="slash relative z-0">{current.label}</span></h1>
             </div>
           </div>
-          <div className="hidden items-center gap-5 font-mono text-xs text-muted md:flex"><ScanStrip /><Clock /></div>
+          <div className="hidden items-center gap-5 font-mono text-xs text-muted md:flex">{isOwner() && <ScanStrip />}<Clock /></div>
         </header>
-        <div className="border-b border-border px-4 py-1.5 md:hidden"><ScanStrip compact /></div>
+        {isOwner() && <div className="border-b border-border px-4 py-1.5 md:hidden"><ScanStrip compact /></div>}
         <div className="flex-1 overflow-auto p-4 pb-24 md:p-8">{children}</div>
       </main>
       <MobileNav route={route} pending={pending} />
