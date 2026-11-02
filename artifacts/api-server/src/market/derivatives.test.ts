@@ -8,7 +8,7 @@ const asOf = Date.UTC(2026, 9, 26, 12, 0);
 const bars = (n: number, f: (i: number) => Record<string, number>) =>
   Array.from({ length: n }, (_, i) => ({ time: asOf - (n - i) * H, ...f(i) }));
 
-test("CoinGlass metrics at a moment: OI and long/short only", async () => {
+test("CoinGlass flow metrics at a moment: OI, taker, CVD, liquidations, long/short, funding", async () => {
   process.env.NIHILIST_COINGLASS_API_KEY = "test";
   const seen: string[] = [];
   const original = globalThis.fetch;
@@ -30,13 +30,13 @@ test("CoinGlass metrics at a moment: OI and long/short only", async () => {
     assert.ok(seen.every((s) => s.includes(`end_time=${asOf}`) && s.includes("symbol=JCT")), seen.join("\n"));
     assert.equal(m.d_oi_usd, 1290);
     assert.equal(m.d_oi_chg1h, Math.round((10 / 1280) * 10000) / 100);
-    assert.equal(m.d_fut_taker_net_4h, undefined);
-    assert.equal(m.d_spot_cvd_chg4h, undefined);
-    assert.equal(m.d_liq_long_24h, undefined);
-    assert.equal(m.d_funding_pct, undefined);
-    assert.equal(seen.length, 2, seen.join("\n"));
+    assert.equal(m.d_fut_taker_net_4h, 20);
+    assert.equal(m.d_spot_cvd_chg4h, 8);
+    assert.equal(m.d_spot_taker_net_1h, 0);
+    assert.equal(m.d_liq_long_24h, 240);
     assert.equal(m.d_ls_long_pct, 65);
     assert.equal(m.d_ls_long_pct_chg, 5);
+    assert.equal(m.d_funding_pct, 0.01);
   } finally {
     globalThis.fetch = original;
   }
@@ -58,7 +58,7 @@ test("derivative history requests wait until the CoinGlass candle scan is idle",
     assert.equal(requests, 0, "derivative history must not compete with the active candle scan");
     setScanBusy(false);
     await lookup;
-    assert.equal(requests, 2, "both history endpoints should run after the scan finishes");
+    assert.equal(requests, 6, "all six history endpoints should run after the scan finishes");
   } finally {
     setScanBusy(false);
     await lookup.catch(() => {});

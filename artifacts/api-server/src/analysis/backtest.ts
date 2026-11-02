@@ -5,7 +5,6 @@
  *   node --import tsx src/analysis/backtest.ts --symbols JCT-USDT,BTC-USDT --days 90
  *   node --import tsx src/analysis/backtest.ts --universe 150 --days 60
  *   node --import tsx src/analysis/backtest.ts --universe 0 --days 60    # every BingX pair
- *   ... --csv /tmp/nh_bt.csv    # per-trade CSV (B.U. +5% variant) for the entry-filter check
  *
  * Three variants are printed from the same candles: the live rule, (A) a
  * block allowed to give another signal after a fresh touch, (B) AltBullet's
@@ -24,7 +23,6 @@ import { BREAKEVEN_AT_PCT, COMBOS, MAX_HOLD_MS } from "../engine/config";
 import { evaluateSetups, type SetupOptions, type SetupSignal } from "../engine/setups";
 import { applyCandles, openTrade, tradeResult } from "../engine/trade";
 import { getCandleHistory, getUniverse } from "../market/coinglass";
-import { writeFileSync } from "node:fs";
 
 type Row = SetupSignal & { symbol: string; closeReason: string | null; tp1Hit: boolean; peakPct: number; pnlPct: number; r: number; open: boolean };
 
@@ -131,50 +129,6 @@ function strengthBreakdown(rows: Row[]): void {
   }
 }
 
-/**
- * Owner 2026-11-02: the live entry filter checked on history, long and short
- * separately. Only the price parts can be checked here (stop distance, block
- * age); the OI condition of longs has no history in this backtest.
- */
-function filterCheck(rows: Row[]): void {
-  const age = (r: Row) => (r.signalAt - (r.block.createdAt ?? r.block.time)) / 3_600_000;
-  const variants: Array<[string, (r: Row) => boolean]> = [
-    ["all", () => true],
-    ["stop>=7%", (r) => r.riskPct >= 7],
-    ["block<=300h", (r) => age(r) <= 300],
-    ["stop>=7% & block<=300h", (r) => r.riskPct >= 7 && age(r) <= 300],
-  ];
-  const closed = rows.filter((r) => !r.open);
-  const from = Math.min(...closed.map((r) => r.signalAt)), mid = from + (Math.max(...closed.map((r) => r.signalAt)) - from) / 2;
-  console.log("\n== entry filter on history (B.U. at +5%), closed trades");
-  console.log("side  | filter                  | n    | profit(trail) | BU peak<10 | BU peak>=10 | stop  | avg pnl% | sum pnl% | avgR  | 1st half avg% | 2nd half avg% | by month avg% (n)");
-  for (const side of ["long", "short"] as const) {
-    for (const [name, f] of variants) {
-      const xs = closed.filter((r) => r.side === side && f(r));
-      if (!xs.length) continue;
-      const n = xs.length;
-      const trail = xs.filter((r) => r.closeReason === "trailing").length;
-      const be = xs.filter((r) => r.closeReason === "breakeven");
-      const stops = xs.filter((r) => r.closeReason === "stop").length;
-      const sum = xs.reduce((a, r) => a + r.pnlPct, 0);
-      const h = (lo: boolean) => { const p = xs.filter((r) => (r.signalAt < mid) === lo); return p.length ? `${fmt(p.reduce((a, r) => a + r.pnlPct, 0) / p.length)} (${p.length})` : "—"; };
-      const months = new Map<string, Row[]>();
-      for (const r of xs) { const m = new Date(r.signalAt).toISOString().slice(0, 7); months.set(m, [...(months.get(m) ?? []), r]); }
-      const byMonth = [...months.entries()].sort().map(([m, v]) => `${m.slice(5)} ${fmt(v.reduce((a, r) => a + r.pnlPct, 0) / v.length)} (${v.length})`).join(" ");
-      console.log(`${side.padEnd(5)} | ${name.padEnd(23)} | ${String(n).padEnd(4)} | ${String(trail).padEnd(4)} (${fmt(100 * trail / n, 0)}%)    | ${String(be.filter((r) => r.peakPct < 10).length).padEnd(10)} | ${String(be.filter((r) => r.peakPct >= 10).length).padEnd(11)} | ${fmt(100 * stops / n, 0).padEnd(4)}% | ${fmt(sum / n).padEnd(8)} | ${fmt(sum, 0).padEnd(8)} | ${fmt(xs.reduce((a, r) => a + r.r, 0) / n).padEnd(5)} | ${h(true).padEnd(13)} | ${h(false).padEnd(13)} | ${byMonth}`);
-    }
-  }
-}
-
-function writeCsv(path: string, rows: Row[]): void {
-  const head = "symbol,setup,side,signal_at,risk_pct,block_age_h,ob_displacement_atr,ob_height_atr,ob_penetration_pct,close_reason,tp1_hit,peak_pct,pnl_pct,r,open";
-  const lines = rows.map((r) => [r.symbol, r.setup, r.side, new Date(r.signalAt).toISOString(), fmt(r.riskPct, 3),
-    fmt((r.signalAt - (r.block.createdAt ?? r.block.time)) / 3_600_000, 1), r.ob?.displacementAtr ?? "", r.ob?.heightAtr ?? "", r.ob?.penetrationPct ?? "",
-    r.closeReason ?? "", r.tp1Hit ? 1 : 0, fmt(r.peakPct, 3), fmt(r.pnlPct, 3), fmt(r.r, 3), r.open ? 1 : 0].join(","));
-  writeFileSync(path, [head, ...lines].join("\n"));
-  console.log(`\nper-trade CSV: ${path} (${rows.length} rows)`);
-}
-
 async function main(): Promise<void> {
   let symbols = (arg("symbols") ?? "JCT-USDT").split(",").map((s) => s.trim()).filter(Boolean);
   const universeCount = arg("universe");
@@ -216,9 +170,6 @@ async function main(): Promise<void> {
   summary("comparison A: a block may trade again after a fresh touch", allReuse);
   summary("comparison B: AltBullet break-even at +5% before TP1", allBe5);
   strengthBreakdown(all);
-  filterCheck(allBe5);
-  const csv = arg("csv");
-  if (csv) writeCsv(csv, allBe5);
   console.log(`\nsymbols with data: ${symbols.length - skipped}, skipped: ${skipped}`);
 }
 

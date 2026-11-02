@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Empty, Kpi, Panel, Segmented } from "../components/ui";
-import { SETUPS, metricLabel, setupLabel, signed, tone, usePoll } from "../lib/api";
+import { SETUPS, isUncollectedMetric, metricLabel, setupLabel, signed, tone, usePoll } from "../lib/api";
 
 type Bucket = { label: string; n: number; winRate: number | null; avgR: number | null; avgPnl: number | null; sumR: number };
 type Metric = { key: string; kind: "number" | "label"; n: number; buckets: Bucket[]; spreadR: number | null };
@@ -48,7 +48,7 @@ export default function Metrics() {
   if (setup) params.set("setup", setup);
   if (side) params.set("side", side);
   const { data } = usePoll<Data>(`/nh/metrics?${params}`, 60_000);
-  const shown = (data?.metrics ?? []).filter((m) => !q || metricLabel(m.key).toLowerCase().includes(q.toLowerCase()));
+  const shown = (data?.metrics ?? []).filter((m) => !isUncollectedMetric(m.key) && (!q || metricLabel(m.key).toLowerCase().includes(q.toLowerCase())));
   const c = data?.coverage;
   return (
     <div className="space-y-4 md:space-y-6">
