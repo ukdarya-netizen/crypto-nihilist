@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Activity, BookOpen, FlaskConical, HeartPulse, History, LogOut, MoreHorizontal, ScanSearch, Target, Users, X } from "lucide-react";
 import { BrandLockup, BrandMark, SLOGAN, Wordmark } from "./brand";
-import { STAGE_LABEL, currentSession, dur, saveSession, usePoll, type Status } from "../lib/api";
+import { STAGE_LABEL, currentSession, dur, get, post, saveSession, usePoll, type Status } from "../lib/api";
 
-export type Route = "/" | "/tracker" | "/scanner" | "/history" | "/metrics" | "/health" | "/reference" | "/users"
+export type Route = "/" | "/tracker" | "/scanner" | "/history" | "/metrics" | "/health" | "/reference" | "/members"
   | "/login" | "/register" | "/reset-password";
 export const PUBLIC_ROUTES: Route[] = ["/login", "/register", "/reset-password"];
 
@@ -16,8 +16,36 @@ export const NAV: Array<{ href: Route; label: string; sub: string; icon: typeof 
   { href: "/health", label: "Bot Health", sub: "движок · CoinGlass", icon: HeartPulse },
   { href: "/reference", label: "Справочник", sub: "сетапы · правила", icon: BookOpen },
 ];
-/** Owner only (accounts as in CAB). */
-export const OWNER_NAV: typeof NAV = [{ href: "/users", label: "Пользователи", sub: "доступ · подписки", icon: Users }];
+/** Owner only (as CAB «Подписчики»). */
+export const OWNER_NAV: typeof NAV = [{ href: "/members", label: "Подписчики", sub: "дашборд + Telegram-бот", icon: Users }];
+
+/** Owner: pending access requests for the «+N» badge (as CAB), every 60 s. */
+function usePendingCount(): number {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (currentSession()?.role !== "owner") return;
+    const load = () => void get<{ count: number }>("/admin/users/pending-count").then((d) => setN(d.count)).catch(() => undefined);
+    load();
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, []);
+  return n;
+}
+
+/** Presence (as CAB): heartbeat every 30 s while the tab is visible. */
+function useHeartbeat(): void {
+  useEffect(() => {
+    const beat = () => { if (document.visibilityState === "visible" && currentSession()) void post("/auth/heartbeat", {}).catch(() => undefined); };
+    beat();
+    const t = setInterval(beat, 30_000);
+    document.addEventListener("visibilitychange", beat);
+    window.addEventListener("focus", beat);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", beat); window.removeEventListener("focus", beat); };
+  }, []);
+}
+
+const PendingBadge = ({ href, n }: { href: Route; n: number }) =>
+  href === "/members" && n > 0 ? <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">+{n}</span> : null;
 
 function navFor(): typeof NAV {
   return currentSession()?.role === "owner" ? [...NAV, ...OWNER_NAV] : NAV;
@@ -30,7 +58,8 @@ export function logout(): void {
 
 export function useRoute(): Route {
   const read = (): Route => {
-    const hash = window.location.hash.replace(/^#/, "") || "/";
+    let hash = window.location.hash.replace(/^#/, "") || "/";
+    if (hash === "/users") hash = "/members";
     return ([...NAV, ...OWNER_NAV].some((n) => n.href === hash) || PUBLIC_ROUTES.includes(hash as Route) ? hash : "/") as Route;
   };
   const [route, setRoute] = useState<Route>(read);
@@ -105,7 +134,7 @@ function ScanStrip({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function MobileNav({ route }: { route: Route }) {
+function MobileNav({ route, pending }: { route: Route; pending: number }) {
   const [open, setOpen] = useState(false);
   const primary = NAV.filter((n) => n.href === "/tracker" || n.href === "/");
   return (
@@ -118,7 +147,7 @@ function MobileNav({ route }: { route: Route }) {
               return (
                 <a key={n.href} href={`#${n.href}`} onClick={() => setOpen(false)}
                   className={`flex items-center gap-3 border border-transparent px-3 py-3 text-sm ${route === n.href ? "nav-active" : "text-muted"}`}>
-                  <Icon className="size-4" />{n.label}
+                  <Icon className="size-4" /><span className="flex-1">{n.label}</span><PendingBadge href={n.href} n={pending} />
                 </a>
               );
             })}
@@ -139,7 +168,8 @@ function MobileNav({ route }: { route: Route }) {
           );
         })}
         <button type="button" onClick={() => setOpen((v) => !v)} className={`flex flex-col items-center justify-center gap-1 text-[11px] ${open ? "text-primary" : "text-muted"}`}>
-          {open ? <X className="size-5" /> : <MoreHorizontal className="size-5" />}Ещё
+          <span className="relative">{open ? <X className="size-5" /> : <MoreHorizontal className="size-5" />}
+            {pending > 0 && <span className="absolute -right-2 -top-1 size-2 rounded-full bg-primary" />}</span>Ещё
         </button>
       </nav>
     </>
@@ -148,6 +178,8 @@ function MobileNav({ route }: { route: Route }) {
 
 export function Layout({ route, children }: { route: Route; children: ReactNode }) {
   const nav = navFor();
+  const pending = usePendingCount();
+  useHeartbeat();
   const current = nav.find((n) => n.href === route) ?? NAV[1];
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden">
@@ -163,8 +195,8 @@ export function Layout({ route, children }: { route: Route; children: ReactNode 
               <a key={n.href} href={`#${n.href}`}
                 className={`flex items-start border border-transparent px-3 py-2.5 text-sm font-medium transition-colors ${active ? "nav-active" : "text-muted hover:bg-white/[0.03] hover:text-foreground"}`}>
                 <Icon className={`mr-3 mt-0.5 size-4 shrink-0 ${active ? "text-primary" : ""}`} />
-                <span className="flex flex-col">
-                  <span>{n.label}</span>
+                <span className="flex flex-1 flex-col">
+                  <span className="flex items-center justify-between gap-2"><span>{n.label}</span><PendingBadge href={n.href} n={pending} /></span>
                   <span className={`text-xs font-normal ${active ? "text-foreground/50" : "text-muted/60"}`}>{n.sub}</span>
                 </span>
               </a>
@@ -193,7 +225,7 @@ export function Layout({ route, children }: { route: Route; children: ReactNode 
         <div className="border-b border-border px-4 py-1.5 md:hidden"><ScanStrip compact /></div>
         <div className="flex-1 overflow-auto p-4 pb-24 md:p-8">{children}</div>
       </main>
-      <MobileNav route={route} />
+      <MobileNav route={route} pending={pending} />
     </div>
   );
 }

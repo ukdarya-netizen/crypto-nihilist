@@ -141,6 +141,8 @@ export function subscriptionRenewedText(until: Date | null): string {
   return ["🔄 Ваша подписка продлена!", "", ...(until ? [`📅 Действует до: ${longDate(until)}`, ""] : []), "Удачной торговли! 🚀"].join("\n");
 }
 
+export const DEACTIVATED_TEXT = "📴 Подписка деактивирована\n\nВаш доступ к NIHILYST был деактивирован администратором.\n\nПо вопросам обращайтесь напрямую.";
+export const PASSWORD_CHANGED_TEXT = "🔑 Пароль изменён\n\nВаш пароль был сброшен администратором. Если это были не вы — обратитесь к администратору.";
 export const BLOCKED_TEXT = "🚫 Доступ приостановлен\n\nВаш доступ к NIHILYST был заблокирован администратором. По вопросам обращайтесь напрямую.";
 
 const subDate = (d: Date) => `${d.toLocaleString("ru-RU", {
@@ -254,8 +256,10 @@ async function handleMessage(m: TelegramMessage): Promise<void> {
       const user = isPrivate ? await userByChatId(chatId) : null;
       let extra = "";
       if (user && accessStatus(user) === "approved" && !user.notify) {
-        await pool.query("UPDATE nh_users SET notify = true, notify_since = now() WHERE id = $1", [user.id]);
+        await pool.query("UPDATE nh_users SET notify = true, notify_since = now(), bot_blocked_at = NULL WHERE id = $1", [user.id]);
         extra = "\n\n✅ Сигналы снова включены.";
+      } else if (user?.bot_blocked_at) {
+        await pool.query("UPDATE nh_users SET bot_blocked_at = NULL WHERE id = $1", [user.id]);
       }
       await sendMessageKb(chatId, welcomeText() + extra, welcomeKeyboard());
       return;

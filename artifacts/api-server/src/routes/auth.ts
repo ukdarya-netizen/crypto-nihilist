@@ -10,7 +10,7 @@ import {
   userByChatId, userByEmail, userById, verifyPassword, type AuthedRequest, type UserRow,
 } from "../lib/users";
 import {
-  BLOCKED_TEXT, getBotUsername, notifyOwnerRegistration, sendQuiet, subscriptionRenewedText, subscriptionStartedText,
+  BLOCKED_TEXT, DEACTIVATED_TEXT, PASSWORD_CHANGED_TEXT, getBotUsername, notifyOwnerRegistration, sendQuiet, subscriptionRenewedText, subscriptionStartedText,
 } from "../telegram/bot";
 
 const router: IRouter = Router();
@@ -53,8 +53,8 @@ router.post("/auth/register", async (req, res) => {
     const owner = isOwnerEmail(email);
     const existing = await userByEmail(email);
     const prev = existing ? accessStatus(existing) : null;
-    // Blocked or expired accounts may ask again (as CAB); others are taken.
-    if (existing && prev !== "blocked" && prev !== "expired") {
+    // Blocked, expired or deactivated accounts may ask again (as CAB); others are taken.
+    if (existing && prev !== "blocked" && prev !== "expired" && prev !== "inactive") {
       res.status(409).json({ error: "Этот email уже зарегистрирован" }); return;
     }
     const byChat = await userByChatId(chatId);
@@ -116,6 +116,12 @@ router.get("/auth/me", requireUser, (req: AuthedRequest, res) => {
   res.json({ id: u.id, email: u.email, name: u.name, role: req.role, subscribedUntil: isOwnerEmail(u.email) ? null : u.subscribed_until });
 });
 
+// Presence (as CAB): the dashboard pings every 30 s while the tab is visible.
+router.post("/auth/heartbeat", requireUser, async (req: AuthedRequest, res) => {
+  await pool.query("UPDATE nh_users SET last_activity_at = now() WHERE id = $1", [req.user!.id]);
+  res.status(204).end();
+});
+
 router.post("/auth/reset-confirm", async (req, res) => {
   try {
     if (limited(`reset:${req.ip ?? "?"}`, 20, 15 * 60_000)) { res.status(429).json({ error: "Слишком много попыток. Попробуйте через 15 минут." }); return; }
@@ -141,10 +147,13 @@ router.post("/auth/reset-confirm", async (req, res) => {
 });
 
 // ---------------- owner: users ----------------
+const ONLINE_MS = 90_000;
 const publicUser = (u: UserRow) => ({
   id: u.id, email: u.email, name: u.name, chatId: u.chat_id, telegramUsername: u.telegram_username,
-  subscribedUntil: u.subscribed_until, status: accessStatus(u), notify: u.notify, owner: isOwnerEmail(u.email),
-  createdAt: u.created_at, approvedAt: u.approved_at, lastLoginAt: u.last_login_at,
+  subscribedUntil: isOwnerEmail(u.email) ? null : u.subscribed_until, status: accessStatus(u), notify: u.notify,
+  owner: isOwnerEmail(u.email), createdAt: u.created_at, approvedAt: u.approved_at, lastLoginAt: u.last_login_at,
+  lastActivityAt: u.last_activity_at, online: Boolean(u.last_activity_at && Date.now() - u.last_activity_at.getTime() < ONLINE_MS),
+  botBlockedAt: u.bot_blocked_at,
 });
 
 router.get("/admin/users/pending-count", requireOwner, async (_req, res) => {
@@ -157,14 +166,32 @@ router.get("/admin/users", requireOwner, async (_req, res) => {
   res.json(rows.map(publicUser));
 });
 
+/** «Подписчики» (as CAB members): everyone + signal recipients now and new today (Dubai day). */
+router.get("/admin/members", requireOwner, async (_req, res) => {
+  const { rows } = await pool.query<UserRow>("SELECT * FROM nh_users ORDER BY created_at");
+  const members = rows.map(publicUser);
+  const dayStart = Math.floor((Date.now() + 4 * 3_600_000) / 86_400_000) * 86_400_000 - 4 * 3_600_000;
+  const recipients = rows.filter((u) => accessStatus(u) === "approved" && u.notify && u.chat_id);
+  res.json({
+    members,
+    subscribers: {
+      active: recipients.length,
+      newToday: recipients.filter((u) => (u.approved_at?.getTime() ?? 0) >= dayStart).length,
+    },
+  });
+});
+
 router.patch("/admin/users/:id", requireOwner, async (req, res) => {
   try {
     const id = Number(req.params.id);
     const before = Number.isSafeInteger(id) ? await userById(id) : null;
     if (!before) { res.status(404).json({ error: "Пользователь не найден" }); return; }
-    const body = (req.body ?? {}) as { status?: string; subscribedUntil?: string | null; chatId?: string | null };
-    if (body.status !== undefined && !["approved", "blocked", "pending"].includes(body.status)) {
+    const body = (req.body ?? {}) as { status?: string; subscribedUntil?: string | null; chatId?: string | null; newPassword?: string };
+    if (body.status !== undefined && !["approved", "blocked", "pending", "inactive"].includes(body.status)) {
       res.status(400).json({ error: "Неверный статус" }); return;
+    }
+    if (body.newPassword !== undefined && (typeof body.newPassword !== "string" || body.newPassword.length < 6)) {
+      res.status(400).json({ error: "Пароль: минимум 6 символов" }); return;
     }
     let until: Date | null | undefined;
     if (body.subscribedUntil !== undefined) {
@@ -180,11 +207,16 @@ router.patch("/admin/users/:id", requireOwner, async (req, res) => {
         if (other && other.id !== id) { res.status(409).json({ error: "Этот Telegram Chat ID уже связан с другим пользователем" }); return; }
       }
     }
-    if (body.status === undefined && until === undefined && chatId === undefined) {
+    if (body.status === undefined && until === undefined && chatId === undefined && body.newPassword === undefined) {
       res.status(400).json({ error: "Нет данных для обновления" }); return;
     }
     if (isOwnerEmail(before.email) && body.status && body.status !== "approved") {
       res.status(400).json({ error: "Владельца нельзя заблокировать" }); return;
+    }
+    if (body.newPassword !== undefined) {
+      await pool.query("UPDATE nh_users SET password_hash = $2 WHERE id = $1", [id, await hashPassword(body.newPassword)]);
+      sendQuiet(before.chat_id, PASSWORD_CHANGED_TEXT);
+      if (body.status === undefined && until === undefined && chatId === undefined) { res.json({ ok: true }); return; }
     }
 
     const next: UserRow = {
@@ -213,6 +245,7 @@ router.patch("/admin/users/:id", requireOwner, async (req, res) => {
       sendQuiet(chat, subscriptionRenewedText(until));
     }
     if (before.status !== "blocked" && next.status === "blocked") sendQuiet(chat, BLOCKED_TEXT);
+    if (before.status !== "inactive" && next.status === "inactive") sendQuiet(chat, DEACTIVATED_TEXT);
     res.json({ ok: true });
   } catch (err) {
     if ((err as { code?: string }).code === "23505") { res.status(409).json({ error: "Этот Telegram Chat ID уже связан с другим пользователем" }); return; }
