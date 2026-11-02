@@ -5,6 +5,7 @@
 import { pool } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { signalChannel } from "./transport";
+import { ensureUserTables, ownerEmail, recipientSql } from "../lib/users";
 import { formatDailyReport, formatPeriodReport, latestSchedule, reportEventId, type ReportRow, type Schedule } from "./report-format";
 
 export * from "./report-format";
@@ -44,7 +45,8 @@ async function claim(s: Schedule): Promise<boolean> {
 
 async function enqueueReport(s: Schedule, text: string): Promise<number> {
   const channel = signalChannel();
-  const subs = await pool.query<{ chat_id: string }>("SELECT chat_id FROM nh_telegram_subscribers WHERE active");
+  await ensureUserTables();
+  const subs = await pool.query<{ chat_id: string }>(`SELECT u.chat_id FROM nh_users u WHERE ${recipientSql("$1")}`, [ownerEmail()]);
   const recipients = [
     ...(channel ? [{ chat: channel, isChannel: true }] : []),
     ...subs.rows.map((r) => ({ chat: r.chat_id, isChannel: false })),

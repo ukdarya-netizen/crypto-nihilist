@@ -26,6 +26,44 @@ export const LIVE_SETUPS: ReadonlySet<string> = new Set<string>(
  */
 export const BREAKEVEN_AT_PCT: number | null = 5;
 
+/**
+ * Entry filter for LONGS (owner 2026-11-02). A long is opened only when:
+ *   - the stop is at least 7% from the entry (TA stop + 3%);
+ *   - the order block is at most 300 hours old at the signal;
+ *   - the order block is at least 4% of the price high.
+ * Live, 202 closed longs 25.10-02.11: 26 passed, 10 of 14 trailing profits,
+ * stops 31% (all longs 64%), avg +2.92% (all -2.86%). 60-day backtest
+ * (stop + block age, 495 coins): 564 longs, avg +1.78%, stops 30%, both
+ * halves and both months positive (all longs +0.04%, October -2.07%).
+ * Shorts are not filtered: neither condition helped shorts live or on the
+ * backtest. A long that fails is not opened; the rejection and its reason go
+ * to nh_decisions.
+ */
+export const ENTRY_FILTER_MIN_RISK_PCT = 7;
+export const ENTRY_FILTER_MAX_BLOCK_AGE_H = 300;
+export const ENTRY_FILTER_MIN_BLOCK_SIZE_PCT = 4;
+
+export type EntryFilterResult = {
+  pass: boolean; reason: string | null; riskPct: number; blockAgeH: number | null; blockSizePct: number;
+};
+
+export function entryFilter(input: {
+  side: "long" | "short"; riskPct: number; entry: number; blockTop: number; blockBottom: number;
+  signalAt: number; blockCreatedAt?: number | null; blockTime?: number | null;
+}): EntryFilterResult {
+  const origin = input.blockCreatedAt ?? input.blockTime ?? null;
+  const blockAgeH = origin !== null ? (input.signalAt - origin) / 3_600_000 : null;
+  const blockSizePct = ((input.blockTop - input.blockBottom) / input.entry) * 100;
+  const reasons: string[] = [];
+  if (input.side === "long") {
+    if (!(input.riskPct >= ENTRY_FILTER_MIN_RISK_PCT)) reasons.push("risk_below_7pct");
+    if (blockAgeH === null) reasons.push("block_age_unknown");
+    else if (blockAgeH > ENTRY_FILTER_MAX_BLOCK_AGE_H) reasons.push("block_older_300h");
+    if (!(blockSizePct >= ENTRY_FILTER_MIN_BLOCK_SIZE_PCT)) reasons.push("block_below_4pct");
+  }
+  return { pass: reasons.length === 0, reason: reasons.length ? reasons.join(",") : null, riskPct: input.riskPct, blockAgeH, blockSizePct };
+}
+
 /** Open trades are followed on 5-minute candles. */
 export const TRACK_INTERVAL = "5m" as const;
 

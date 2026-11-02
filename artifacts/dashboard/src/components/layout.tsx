@@ -1,9 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Activity, BookOpen, FlaskConical, HeartPulse, History, MoreHorizontal, ScanSearch, Target, X } from "lucide-react";
+import { Activity, BookOpen, FlaskConical, HeartPulse, History, LogOut, MoreHorizontal, ScanSearch, Target, Users, X } from "lucide-react";
 import { BrandLockup, BrandMark, SLOGAN, Wordmark } from "./brand";
-import { STAGE_LABEL, dur, usePoll, type Status } from "../lib/api";
+import { STAGE_LABEL, currentSession, dur, saveSession, usePoll, type Status } from "../lib/api";
 
-export type Route = "/" | "/tracker" | "/scanner" | "/history" | "/metrics" | "/health" | "/reference";
+export type Route = "/" | "/tracker" | "/scanner" | "/history" | "/metrics" | "/health" | "/reference" | "/users"
+  | "/login" | "/register" | "/reset-password";
+export const PUBLIC_ROUTES: Route[] = ["/login", "/register", "/reset-password"];
 
 export const NAV: Array<{ href: Route; label: string; sub: string; icon: typeof Target }> = [
   { href: "/tracker", label: "Открытые позиции", sub: "мониторинг ТП / стопов", icon: Target },
@@ -14,11 +16,22 @@ export const NAV: Array<{ href: Route; label: string; sub: string; icon: typeof 
   { href: "/health", label: "Bot Health", sub: "движок · CoinGlass", icon: HeartPulse },
   { href: "/reference", label: "Справочник", sub: "сетапы · правила", icon: BookOpen },
 ];
+/** Owner only (accounts as in CAB). */
+export const OWNER_NAV: typeof NAV = [{ href: "/users", label: "Пользователи", sub: "доступ · подписки", icon: Users }];
+
+function navFor(): typeof NAV {
+  return currentSession()?.role === "owner" ? [...NAV, ...OWNER_NAV] : NAV;
+}
+
+export function logout(): void {
+  saveSession(null);
+  window.location.hash = "/login";
+}
 
 export function useRoute(): Route {
   const read = (): Route => {
     const hash = window.location.hash.replace(/^#/, "") || "/";
-    return (NAV.some((n) => n.href === hash) ? hash : "/") as Route;
+    return ([...NAV, ...OWNER_NAV].some((n) => n.href === hash) || PUBLIC_ROUTES.includes(hash as Route) ? hash : "/") as Route;
   };
   const [route, setRoute] = useState<Route>(read);
   useEffect(() => {
@@ -44,10 +57,10 @@ function ApiDots() {
   // Healthy: a scan finished in the last 35 min, one is running now, or it is
   // still the first 40 minutes after a start (the first scan waits for a bar close).
   const engineOk = e ? e.leaseAcquired && (Boolean(e.cycle) || (ago !== null ? ago <= 35 : (sinceStart ?? 99) <= 40)) : null;
+  // Private bot (no channel): signals go to registered users with access.
   const telegramLabel = !data ? "…" : !data.telegram?.configured ? "нет токена"
-    : !data.telegram.channel ? "нет канала"
-      : data.telegram.enabled === false ? "отправка выкл" : "канал задан";
-  const telegramOk = data ? Boolean(data.telegram?.configured && data.telegram.enabled !== false && data.telegram.channel) : null;
+    : data.telegram.enabled === false ? "отправка выкл" : `получателей ${data.telegram.recipients ?? 0}`;
+  const telegramOk = data ? Boolean(data.telegram?.configured && data.telegram.enabled !== false) : null;
   const items: Array<{ label: string; ok: boolean | null }> = [
     { label: "Движок", ok: engineOk },
     { label: "CoinGlass", ok: data ? !cg || cg.consecutiveFailures < 5 : null },
@@ -100,7 +113,7 @@ function MobileNav({ route }: { route: Route }) {
       {open && (
         <div className="fixed inset-0 z-40 bg-black/70 md:hidden" onClick={() => setOpen(false)}>
           <div className="panel absolute inset-x-3 bottom-20 p-2" onClick={(e) => e.stopPropagation()}>
-            {NAV.map((n) => {
+            {navFor().map((n) => {
               const Icon = n.icon;
               return (
                 <a key={n.href} href={`#${n.href}`} onClick={() => setOpen(false)}
@@ -109,6 +122,10 @@ function MobileNav({ route }: { route: Route }) {
                 </a>
               );
             })}
+            <button type="button" onClick={() => { setOpen(false); logout(); }}
+              className="flex w-full items-center gap-3 border border-transparent px-3 py-3 text-sm text-muted">
+              <LogOut className="size-4" />Выйти{currentSession() ? ` (${currentSession()!.email})` : ""}
+            </button>
           </div>
         </div>
       )}
@@ -130,7 +147,8 @@ function MobileNav({ route }: { route: Route }) {
 }
 
 export function Layout({ route, children }: { route: Route; children: ReactNode }) {
-  const current = NAV.find((n) => n.href === route) ?? NAV[1];
+  const nav = navFor();
+  const current = nav.find((n) => n.href === route) ?? NAV[1];
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden">
       <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-card/80 md:flex">
@@ -138,7 +156,7 @@ export function Layout({ route, children }: { route: Route; children: ReactNode 
           <BrandLockup />
         </div>
         <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4">
-          {NAV.map((n) => {
+          {nav.map((n) => {
             const Icon = n.icon;
             const active = route === n.href;
             return (
@@ -153,6 +171,10 @@ export function Layout({ route, children }: { route: Route; children: ReactNode 
             );
           })}
         </nav>
+        <button type="button" onClick={logout} title={currentSession()?.email}
+          className="mx-3 mb-3 flex items-center gap-2 px-3 py-2 text-left text-xs text-muted hover:text-foreground">
+          <LogOut className="size-3.5" /><span className="truncate">Выйти · {currentSession()?.name ?? ""}</span>
+        </button>
         <p className="px-5 pb-3 font-type text-[10px] leading-relaxed tracking-[0.18em] text-primary/80">{SLOGAN}</p>
         <ApiDots />
       </aside>

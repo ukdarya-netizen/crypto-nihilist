@@ -1,7 +1,8 @@
 /**
  * Telegram delivery (as in BTC Bullet): every event of a LIVE trade is sent
- * to the channel (NIHILIST_TELEGRAM_CHANNEL) and to every private chat that
- * subscribed with /start before the event. One delivery row per recipient:
+ * to the channel (NIHILIST_TELEGRAM_CHANNEL, if set) and to every registered
+ * user with access (approved, subscription active, signals on — see
+ * lib/users.ts) whose signals were on before the event. One delivery row per recipient:
  * a success is never repeated when others fail; up to 8 attempts each.
  * Shadow trades (setup not in LIVE_SETUPS) never leave the dashboard.
  * Only signals and the daily/weekly/monthly reports go out: no service,
@@ -12,7 +13,9 @@ import { logger } from "../lib/logger";
 import { formatEvent, type EventForText, type SignalForText } from "./format";
 import { notificationPhotoKind, shouldSuppressTelegramEvent } from "./notification-media";
 import { startReports } from "./reports";
-import { sendMessage, sendPhoto, signalChannel, subscriptionCommand, telegramCall, telegramEnabled, TelegramError, type TelegramUpdate } from "./transport";
+import { sendMessage, sendPhoto, signalChannel, telegramCall, telegramEnabled, TelegramError, type TelegramUpdate } from "./transport";
+import { ensureUserTables, ownerEmail, recipientSql } from "../lib/users";
+import { handleUpdate, setBotMenu } from "./bot";
 import { MAX_AUTO_DELIVERY_AGE_MS, planEventDelivery, type DeliveryRecipient } from "./delivery-policy";
 
 const MAX_ATTEMPTS = 8;
@@ -52,11 +55,11 @@ async function enqueue(): Promise<QueueRow[]> {
      WHERE e.telegram_sent_at IS NULL AND e.telegram_attempts < $1
         AND (NOT s.live OR e.created_at >= $2)
         AND (NOT s.live OR $3::text IS NOT NULL OR EXISTS (
-          SELECT 1 FROM nh_telegram_subscribers sub
-          WHERE sub.active AND sub.subscribed_at <= e.created_at
+          SELECT 1 FROM nh_users u
+          WHERE ${recipientSql("$4")} AND u.notify_since <= e.created_at
         ))
      ORDER BY e.id LIMIT 20`,
-    [MAX_ATTEMPTS, new Date(now - MAX_AUTO_DELIVERY_AGE_MS), channel],
+    [MAX_ATTEMPTS, new Date(now - MAX_AUTO_DELIVERY_AGE_MS), channel, ownerEmail()],
   );
   for (const row of rows) {
     if (!row.signal_live || row.silent) {
@@ -64,7 +67,7 @@ async function enqueue(): Promise<QueueRow[]> {
       continue;
     }
     const subs = await pool.query<{ chat_id: string }>(
-      "SELECT chat_id FROM nh_telegram_subscribers WHERE active AND subscribed_at <= $1", [row.created_at],
+      `SELECT u.chat_id FROM nh_users u WHERE ${recipientSql("$2")} AND u.notify_since <= $1`, [row.created_at, ownerEmail()],
     );
     const recipients: DeliveryRecipient[] = [
       ...(channel ? [{ chat: channel, isChannel: true }] : []),
@@ -102,7 +105,7 @@ async function sendPending(): Promise<void> {
       continue;
     }
     if (!d.channel) {
-      const sub = await pool.query("SELECT 1 FROM nh_telegram_subscribers WHERE chat_id = $1 AND active", [d.chat_id]);
+      const sub = await pool.query(`SELECT 1 FROM nh_users u WHERE u.chat_id = $1 AND ${recipientSql("$2")}`, [d.chat_id, ownerEmail()]);
       if (!sub.rowCount) {
         await pool.query("UPDATE nh_telegram_deliveries SET status = 'skipped' WHERE id = $1", [d.id]);
         continue;
@@ -116,7 +119,8 @@ async function sendPending(): Promise<void> {
     } catch (err) {
       const attempts = d.attempts + 1;
       const blocked = !d.channel && err instanceof TelegramError && err.code === 403;
-      if (blocked) await pool.query("UPDATE nh_telegram_subscribers SET active = false, updated_at = now() WHERE chat_id = $1", [d.chat_id]);
+      // The user blocked the bot: signals off until /start.
+      if (blocked) await pool.query("UPDATE nh_users SET notify = false WHERE chat_id = $1", [d.chat_id]);
       const waitMs = Math.max(3000 * 2 ** Math.min(attempts, 8), err instanceof TelegramError ? err.retryAfter * 1000 : 0);
       await pool.query(
         "UPDATE nh_telegram_deliveries SET attempts = $2, status = $3, next_attempt_at = $4 WHERE id = $1",
@@ -144,6 +148,7 @@ export async function deliverNext(): Promise<void> {
   if (delivering) return;
   delivering = true;
   try {
+    await ensureUserTables();
     const events = await enqueue();
     await sendPending();
     await settle(events);
@@ -152,40 +157,29 @@ export async function deliverNext(): Promise<void> {
   }
 }
 
-// ---------------- /start and /stop ----------------
+// ---------------- bot updates (commands and buttons, see bot.ts) ----------------
 
 let polling = false;
 
 async function poll(): Promise<void> {
+  await ensureUserTables();
+  await setBotMenu();
   const state = await pool.query<{ next_update_id: string }>("SELECT next_update_id FROM nh_telegram_state WHERE key = 'updates'");
   let offset = Number(state.rows[0]?.next_update_id ?? 0);
   while (polling) {
     try {
-      const updates = await telegramCall<TelegramUpdate[]>("getUpdates", { offset, timeout: 25, allowed_updates: ["message"] });
+      const updates = await telegramCall<TelegramUpdate[]>("getUpdates", {
+        offset, timeout: 25, allowed_updates: ["message", "callback_query"],
+      });
       for (const update of updates) {
         if (update.update_id < offset) continue;
-        const command = subscriptionCommand(update);
-        if (command && update.message) {
-          await pool.query(
-            `INSERT INTO nh_telegram_subscribers (chat_id, active, subscribed_at, updated_at) VALUES ($1, $2, now(), now())
-             ON CONFLICT (chat_id) DO UPDATE SET active = EXCLUDED.active, subscribed_at = now(), updated_at = now()`,
-            [String(update.message.chat.id), command === "start"],
-          );
-        }
         offset = update.update_id + 1;
         await pool.query(
           `INSERT INTO nh_telegram_state (key, next_update_id) VALUES ('updates', $1)
            ON CONFLICT (key) DO UPDATE SET next_update_id = EXCLUDED.next_update_id`,
           [offset],
         );
-        if (command && update.message) {
-          const channel = signalChannel();
-          await sendMessage(String(update.message.chat.id), command === "start"
-            ? `Вы подписаны на сигналы NIHILYST.${channel ? ` Они приходят сюда и в канал ${channel}.` : ""} Отписаться: /stop.`
-            : "Подписка на сигналы NIHILYST отключена. Подписаться снова: /start.").catch(() => {
-            logger.warn("nihilist: subscription saved, confirmation not delivered");
-          });
-        }
+        await handleUpdate(update);
       }
     } catch (err) {
       if (err instanceof TelegramError && err.code === 409) {

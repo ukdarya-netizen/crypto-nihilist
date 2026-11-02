@@ -104,13 +104,30 @@ export async function sendPhoto(chatId: string, caption: string, kind: TelegramP
   if (photo?.file_id) asset.fileId = photo.file_id;
 }
 
+export type TelegramUser = { id: number; username?: string; first_name?: string };
+export type TelegramMessage = {
+  message_id: number; chat: { id: number; type: string }; from?: TelegramUser; text?: string;
+};
 export type TelegramUpdate = {
   update_id: number;
-  message?: { chat: { id: number; type: string }; text?: string };
+  message?: TelegramMessage;
+  callback_query?: { id: string; from: TelegramUser; data?: string; message?: TelegramMessage };
 };
 
-export function subscriptionCommand(update: TelegramUpdate): "start" | "stop" | null {
-  if (update.message?.chat.type !== "private") return null;
-  const command = update.message.text?.trim().split(/\s+/)[0]?.split("@")[0]?.toLowerCase();
-  return command === "/start" ? "start" : command === "/stop" ? "stop" : null;
+export type InlineButton = { text: string; callback_data: string } | { text: string; url: string } | { text: string; web_app: { url: string } };
+export type InlineKeyboard = InlineButton[][];
+
+/** Plain text with inline buttons (no HTML anywhere). */
+export async function sendMessageKb(chatId: string, text: string, keyboard?: InlineKeyboard): Promise<void> {
+  await telegramCall("sendMessage", {
+    chat_id: chatId, text, disable_web_page_preview: true,
+    ...(keyboard?.length ? { reply_markup: { inline_keyboard: keyboard } } : {}),
+  });
+}
+
+export async function editMessage(chatId: string, messageId: number, text: string, keyboard?: InlineKeyboard): Promise<void> {
+  await telegramCall("editMessageText", {
+    chat_id: chatId, message_id: messageId, text, disable_web_page_preview: true,
+    reply_markup: { inline_keyboard: keyboard ?? [] },
+  });
 }
