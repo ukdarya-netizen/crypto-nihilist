@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
 import { engineStatus, scannerView } from "../engine/runtime";
 import { telegramEnabled } from "../telegram/transport";
+import { ensureRejectionTable } from "../engine/rejections";
 import { ensureUserTables, isOwnerReq, ownerEmail, publicSignal, recipientSql } from "../lib/users";
 import { cgRequest, coinglassGovernorStats, EXCHANGE } from "../market/coinglass";
 import { apiHealth } from "../lib/apiHealth";
@@ -263,6 +264,39 @@ router.get("/nh/signals/:id/trajectory", async (req, res) => {
      WHERE signal_id = $1 ORDER BY elapsed_ms`, [id],
   );
   res.json({ points: rows });
+});
+
+/**
+ * Rejections and what happened next (owner only, 2026-11-02): per reason and
+ * side — reached +10% before the stop, stop first, neither, still in the
+ * window — plus peak buckets and the latest rows.
+ */
+router.get("/nh/rejections", async (req, res) => {
+  await ensureRejectionTable();
+  const d = days(req.query.days, 30);
+  const { rows: summary } = await pool.query(
+    `SELECT reason, side, count(*)::int AS n,
+            count(*) FILTER (WHERE status = 'no_data')::int AS no_data,
+            count(*) FILTER (WHERE first_event = 'plus10')::int AS plus10,
+            count(*) FILTER (WHERE first_event = 'stop')::int AS stop,
+            count(*) FILTER (WHERE first_event = 'stop' AND same_candle)::int AS stop_same_candle,
+            count(*) FILTER (WHERE first_event = 'none')::int AS neither,
+            count(*) FILTER (WHERE status = 'tracking' AND first_event IS NULL)::int AS waiting,
+            count(*) FILTER (WHERE status <> 'no_data' AND peak_pct < 5)::int AS peak_lt5,
+            count(*) FILTER (WHERE peak_pct >= 5 AND peak_pct < 10)::int AS peak_5_10,
+            count(*) FILTER (WHERE peak_pct >= 10 AND peak_pct < 15)::int AS peak_10_15,
+            count(*) FILTER (WHERE peak_pct >= 15 AND peak_pct < 20)::int AS peak_15_20,
+            count(*) FILTER (WHERE peak_pct >= 20)::int AS peak_20
+     FROM nh_rejection_outcomes WHERE signal_at > now() - make_interval(days => $1)
+     GROUP BY reason, side ORDER BY n DESC`,
+    [d],
+  );
+  const { rows } = await pool.query(
+    `SELECT decision_id, symbol, setup, side, reason, signal_at, entry, stop, status, first_event, first_at, same_candle, peak_pct, low_pct
+     FROM nh_rejection_outcomes WHERE signal_at > now() - make_interval(days => $1) ORDER BY signal_at DESC LIMIT 300`,
+    [d],
+  );
+  res.json({ days: d, targetPct: 10, summary, rows });
 });
 
 /** Raw CoinGlass answer for one symbol (to verify candles against the chart). */

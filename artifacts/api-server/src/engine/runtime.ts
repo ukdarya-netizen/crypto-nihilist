@@ -19,6 +19,7 @@ import {
 } from "../stats/snapshots";
 import { removeDuplicateSignals } from "../stats/dedupe";
 import { evaluateSetups, type HtfInterval, type SetupCandidate, type SetupSignal } from "./setups";
+import { trackRejections } from "./rejections";
 import { COMBOS, MAX_HOLD_MS, NO_TP_TARGETS_SOURCE, TAKE_PROFIT_ENABLED } from "./config";
 import { openTrade } from "./trade";
 import { BREAKEVEN_AT_PCT, LIVE_SETUPS, OB_MIN_DISPLACEMENT_ATR, entryFilter } from "./config";
@@ -354,6 +355,8 @@ async function runCycle(bar: number): Promise<void> {
     if (cycleLog.length > CYCLE_LOG_SIZE) cycleLog = cycleLog.slice(-CYCLE_LOG_SIZE);
     await saveState("cycles", cycleLog).catch(() => undefined);
   }
+  // Rejections: did they reach +10% before the stop (owner 2026-11-02). Never blocks the scan.
+  void trackRejections().catch(() => undefined);
   status.lastCycleAt = Date.now();
   status.lastCycleBar = bar;
   status.lastCycleMs = Date.now() - started;

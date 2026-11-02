@@ -148,6 +148,17 @@ export const REASON_LABEL: Record<string, string> = {
   skipped: "пропуск",
 };
 
+const FILTER_LABEL: Record<string, string> = {
+  risk_below_7pct: "стоп ближе 7%", block_older_300h: "блок старше 300 ч", block_age_unknown: "возраст блока неизвестен",
+  block_below_4pct: "блок ниже 4% цены",
+};
+/** Reason of a decision in Russian (entry filter reasons: «фильтр лонгов: …»). */
+export function reasonLabel(reason: string | null | undefined): string {
+  if (!reason) return "—";
+  if (reason.startsWith("entry_filter:")) return `фильтр лонгов: ${FILTER_LABEL[reason.slice(13)] ?? reason.slice(13)}`;
+  return REASON_LABEL[reason] ?? reason;
+}
+
 export const num = (v: number | null | undefined, d = 2) =>
   (v === null || v === undefined || !Number.isFinite(Number(v)) ? "—" : Number(v).toFixed(d));
 export const signed = (v: number | null | undefined, d = 2, suffix = "") =>
