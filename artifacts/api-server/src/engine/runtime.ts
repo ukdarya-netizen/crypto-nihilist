@@ -21,7 +21,9 @@ import { removeDuplicateSignals } from "../stats/dedupe";
 import { evaluateSetups, type HtfInterval, type SetupCandidate, type SetupSignal } from "./setups";
 import { COMBOS, MAX_HOLD_MS } from "./config";
 import { openTrade } from "./trade";
-import { BREAKEVEN_AT_PCT, LIVE_SETUPS, OB_MIN_DISPLACEMENT_ATR } from "./config";
+import { BREAKEVEN_AT_PCT, LIVE_SETUPS, OB_MIN_DISPLACEMENT_ATR, entryFilterGeometry, entryFilterWithOi } from "./config";
+import { chochBarMetrics } from "./choch-bar";
+import { oiChange4h } from "../market/derivatives";
 import { insertEvent, startTracker } from "./tracker";
 import { startTelegram } from "../telegram/telegram";
 import { backfill, book, loadFromDb, needsBackfill, pruneDb, refresh } from "../market/candleStore";
@@ -156,7 +158,7 @@ async function recordDecision(
 export const SETUP_PRIORITY = ["1d_1h", "1d_30m", "4h_1h", "4h_30m"];
 const priorityOf = (setup: string) => SETUP_PRIORITY.indexOf(setup.replace(/_(long|short)$/, ""));
 
-async function openSignal(symbol: string, s: SetupSignal, confluence: string[] = [s.setup]): Promise<boolean> {
+async function openSignal(symbol: string, s: SetupSignal, confluence: string[] = [s.setup], chochBar: Record<string, number | null> | null = null): Promise<boolean> {
   const busy = await pool.query<{ id: number; setup: string }>(
     "SELECT id, setup FROM nh_signals WHERE status = 'open' AND symbol = $1 AND side = $2 LIMIT 1", [symbol, s.side],
   );
@@ -169,7 +171,10 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
     side: s.side, entry: s.entry, stop: s.stop, tp1: s.tp1,
     openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf], breakevenAtPct: BREAKEVEN_AT_PCT,
   });
-  const live = LIVE_SETUPS.has(s.setup);
+  // Entry filter (owner 2026-11-02): geometry first; OI only when geometry passes.
+  const geo = entryFilterGeometry({ riskPct: s.riskPct, signalAt: s.signalAt, blockCreatedAt: s.block.createdAt, blockTime: s.block.time });
+  const filter = geo.pass ? entryFilterWithOi(geo, s.side, await oiChange4h(symbol, s.signalAt)) : geo;
+  const live = LIVE_SETUPS.has(s.setup) && filter.pass;
   const inserted = await pool.query<{ id: number }>(
     `INSERT INTO nh_signals (symbol, setup, htf, ltf, side, block_id, block_top, block_bottom, block_scope,
        bar_time, entry, stop, tp1, tp2, risk_pct, rr1, targets_source, opened_at, expires_at, details,
@@ -179,11 +184,11 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
     [
       symbol, s.setup, s.htf, s.ltf, s.side, s.block.id, s.block.top, s.block.bottom, s.block.scope,
       s.barTime, s.entry, s.stop, s.tp1, s.tp2, s.riskPct, s.rr1, s.targetsSource,
-      new Date(trade.openedAt), new Date(trade.expiresAt), JSON.stringify({ ...signalDetails(s), confluenceSetups: confluence }),
+      new Date(trade.openedAt), new Date(trade.expiresAt), JSON.stringify({ ...signalDetails(s), confluenceSetups: confluence, entryFilter: filter, chochBar }),
       live, s.stop,
     ],
   );
-  await recordDecision(symbol, s.setup, s.barTime, "accepted", null, s.block.id, signalDetails(s));
+  await recordDecision(symbol, s.setup, s.barTime, "accepted", filter.pass ? null : `shadow:${filter.reason}`, s.block.id, { ...signalDetails(s), entryFilter: filter, chochBar });
   const id = inserted.rows[0]?.id;
   if (id === undefined) return false;
   await captureSnapshot(id, {
@@ -191,7 +196,7 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
     riskPct: s.riskPct, rr1: s.rr1, blockTop: s.block.top, blockBottom: s.block.bottom, blockScope: s.block.scope,
     blockTime: s.block.time, blockCreatedAt: s.block.createdAt, firstTouchAt: s.firstTouchAt, lastTouchAt: s.lastTouchAt,
     htfSwingTrend: s.htfSwingTrend, htfInternalTrend: s.htfInternalTrend, ltfAtr: s.ltfAtr,
-    ob: s.ob, confluenceSetups: confluence, targetsSource: s.targetsSource, signalAt: s.signalAt,
+    ob: s.ob, confluenceSetups: confluence, targetsSource: s.targetsSource, signalAt: s.signalAt, chochBar,
   });
   await insertEvent(id, `${id}:opened`, "opened", s.entry, signalDetails(s), s.signalAt);
   return true;
@@ -253,7 +258,8 @@ export async function evaluateSymbol(symbol: string, now = Date.now()): Promise<
     const [main, ...rest] = group;
     const confluence = group.map((x) => x.setup);
     decisions += group.length;
-    if (await openSignal(symbol, main, confluence)) signals += 1;
+    const chochBar = chochBarMetrics(b[main.ltf].find((c) => c.t === main.barTime), main.ltfAtr, main.side);
+    if (await openSignal(symbol, main, confluence, chochBar)) signals += 1;
     for (const dup of rest) {
       await recordDecision(symbol, dup.setup, dup.barTime, "skipped", "duplicate_same_move", dup.block.id,
         { ...signalDetails(dup), mainSetup: main.setup });

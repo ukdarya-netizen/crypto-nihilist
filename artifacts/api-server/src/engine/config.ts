@@ -26,6 +26,44 @@ export const LIVE_SETUPS: ReadonlySet<string> = new Set<string>(
  */
 export const BREAKEVEN_AT_PCT: number | null = 5;
 
+/**
+ * Entry filter (owner 2026-11-02, 255 closed trades 25.10-02.11). A signal is
+ * published (live) only when all three hold:
+ *   - stop at least 7% from the entry;
+ *   - order block at most 300 hours old at the signal;
+ *   - aggregated OI over the last 4 hours moved at least 1% in the trade's
+ *     direction (long: OI up >= 1%, short: OI down >= 1%).
+ * On those trades: 42 passed, avg +2.41%, stops 14% (6), 10 of 21 trailing
+ * profits kept; all 255: avg -2.50%, stops 58%. Signals that fail are still
+ * opened and tracked as shadow (live = false) with the reason.
+ */
+export const ENTRY_FILTER_MIN_RISK_PCT = 7;
+export const ENTRY_FILTER_MAX_BLOCK_AGE_H = 300;
+export const ENTRY_FILTER_MIN_OI_4H_PCT = 1;
+
+export type EntryFilterResult = {
+  pass: boolean; reason: string | null; riskPct: number; blockAgeH: number | null; oi4hPct: number | null;
+};
+
+/** Stop distance and block age: checked first (no network). */
+export function entryFilterGeometry(input: { riskPct: number; signalAt: number; blockCreatedAt?: number | null; blockTime?: number | null }): EntryFilterResult {
+  const origin = input.blockCreatedAt ?? input.blockTime ?? null;
+  const blockAgeH = origin !== null ? (input.signalAt - origin) / 3_600_000 : null;
+  const reasons: string[] = [];
+  if (!(input.riskPct >= ENTRY_FILTER_MIN_RISK_PCT)) reasons.push("risk_below_7pct");
+  if (blockAgeH === null) reasons.push("block_age_unknown");
+  else if (blockAgeH > ENTRY_FILTER_MAX_BLOCK_AGE_H) reasons.push("block_older_300h");
+  return { pass: reasons.length === 0, reason: reasons.length ? reasons.join(",") : null, riskPct: input.riskPct, blockAgeH, oi4hPct: null };
+}
+
+/** Adds the OI condition to a geometry result (OI missing = not published). */
+export function entryFilterWithOi(geo: EntryFilterResult, side: "long" | "short", oi4hPct: number | null): EntryFilterResult {
+  const reasons = geo.reason ? geo.reason.split(",") : [];
+  if (oi4hPct === null) reasons.push("oi_unknown");
+  else if (!((side === "long" ? oi4hPct : -oi4hPct) >= ENTRY_FILTER_MIN_OI_4H_PCT)) reasons.push("oi_4h_not_with_trade");
+  return { ...geo, oi4hPct, pass: reasons.length === 0, reason: reasons.length ? reasons.join(",") : null };
+}
+
 /** Open trades are followed on 5-minute candles. */
 export const TRACK_INTERVAL = "5m" as const;
 

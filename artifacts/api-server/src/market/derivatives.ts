@@ -36,6 +36,18 @@ const lastN = <T>(rows: T[], n: number) => rows.slice(Math.max(0, rows.length - 
 const sumOf = (rows: Row[], key: string) => rows.reduce((a, r) => a + (num(r[key]) ?? 0), 0);
 const netPct = (buy: number, sell: number) => (buy + sell > 0 ? ((buy - sell) / (buy + sell)) * 100 : null);
 
+/**
+ * Aggregated open-interest change over the last 4 closed 1h bars at `asOf`,
+ * % (null when CoinGlass has no data). One request, no scan-idle wait: it is
+ * read inside the scan for the entry filter. Never throws.
+ */
+export async function oiChange4h(symbol: string, asOf: number): Promise<number | null> {
+  const oi = await history("/api/futures/open-interest/aggregated-history", { symbol: cgBase(symbol), interval: "1h", limit: 30 }, asOf).catch(() => null);
+  if (!oi?.length) return null;
+  const c = (i: number) => num(oi[oi.length - 1 - i]?.close);
+  return r2(pct(c(0), c(4)));
+}
+
 /** All metrics at `asOf` (ms). Keys are prefixed "d_". Never throws. */
 export async function derivativeMetrics(symbol: string, asOf: number): Promise<Record<string, number | null>> {
   await waitForScanIdle();
