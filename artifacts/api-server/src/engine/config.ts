@@ -31,11 +31,14 @@ export const BREAKEVEN_AT_PCT: number | null = 5;
  * published (live) only when all three hold:
  *   - stop at least 7% from the entry;
  *   - order block at most 300 hours old at the signal;
- *   - aggregated OI over the last 4 hours moved at least 1% in the trade's
- *     direction (long: OI up >= 1%, short: OI down >= 1%).
- * On those trades: 42 passed, avg +2.41%, stops 14% (6), 10 of 21 trailing
- * profits kept; all 255: avg -2.50%, stops 58%. Signals that fail are still
- * opened and tracked as shadow (live = false) with the reason.
+ *   - longs only: aggregated OI over the last 4 hours up at least 1%.
+ * Longs (202 closed): 25 passed, avg +3.33%, stops 20% (5), 8 of 14 trailing
+ * profits kept; all longs avg -2.86%, stops 64%.
+ * Shorts (53 closed): no OI condition — before short profits OI barely moved
+ * (median -0.4% in 4h), a deep OI drop came before B.U. closes instead.
+ * Stop + block age: 20 passed, avg +0.86%, stops 2; all shorts avg -1.16%.
+ * Signals that fail are still opened and tracked as shadow (live = false)
+ * with the reason.
  */
 export const ENTRY_FILTER_MIN_RISK_PCT = 7;
 export const ENTRY_FILTER_MAX_BLOCK_AGE_H = 300;
@@ -56,11 +59,13 @@ export function entryFilterGeometry(input: { riskPct: number; signalAt: number; 
   return { pass: reasons.length === 0, reason: reasons.length ? reasons.join(",") : null, riskPct: input.riskPct, blockAgeH, oi4hPct: null };
 }
 
-/** Adds the OI condition to a geometry result (OI missing = not published). */
+/** Adds the OI condition (longs only) to a geometry result; OI missing on a long = not published. */
 export function entryFilterWithOi(geo: EntryFilterResult, side: "long" | "short", oi4hPct: number | null): EntryFilterResult {
   const reasons = geo.reason ? geo.reason.split(",") : [];
-  if (oi4hPct === null) reasons.push("oi_unknown");
-  else if (!((side === "long" ? oi4hPct : -oi4hPct) >= ENTRY_FILTER_MIN_OI_4H_PCT)) reasons.push("oi_4h_not_with_trade");
+  if (side === "long") {
+    if (oi4hPct === null) reasons.push("oi_unknown");
+    else if (!(oi4hPct >= ENTRY_FILTER_MIN_OI_4H_PCT)) reasons.push("oi_4h_below_1pct");
+  }
   return { ...geo, oi4hPct, pass: reasons.length === 0, reason: reasons.length ? reasons.join(",") : null };
 }
 

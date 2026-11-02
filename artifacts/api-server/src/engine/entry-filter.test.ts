@@ -5,12 +5,12 @@ import { chochBarMetrics } from "./choch-bar";
 
 const H = 3_600_000;
 
-test("entry filter: stop >= 7%, block <= 300h and OI 4h with the trade -> live", () => {
+test("entry filter: stop >= 7%, block <= 300h and OI 4h up (longs) -> live", () => {
   const geo = entryFilterGeometry({ riskPct: 7.2, signalAt: 1000 * H, blockCreatedAt: 800 * H });
   assert.equal(geo.pass, true);
   assert.equal(geo.blockAgeH, 200);
   assert.equal(entryFilterWithOi(geo, "long", 1.4).pass, true);
-  assert.equal(entryFilterWithOi(geo, "short", -1.2).pass, true);
+  assert.equal(entryFilterWithOi(geo, "short", 2.5).pass, true); // shorts: no OI condition
 });
 
 test("entry filter: each failing condition gives its reason", () => {
@@ -19,8 +19,8 @@ test("entry filter: each failing condition gives its reason", () => {
   assert.equal(entryFilterGeometry({ riskPct: 9, signalAt: 1000 * H, blockTime: 650 * H }).reason, "block_older_300h");
   assert.equal(entryFilterGeometry({ riskPct: 9, signalAt: 1000 * H }).reason, "block_age_unknown");
   const geo = entryFilterGeometry({ riskPct: 9, signalAt: 1000 * H, blockCreatedAt: 900 * H });
-  assert.equal(entryFilterWithOi(geo, "long", 0.5).reason, "oi_4h_not_with_trade");
-  assert.equal(entryFilterWithOi(geo, "short", 1.5).reason, "oi_4h_not_with_trade");
+  assert.equal(entryFilterWithOi(geo, "long", 0.5).reason, "oi_4h_below_1pct");
+  assert.equal(entryFilterWithOi(geo, "short", null).pass, true);
   assert.equal(entryFilterWithOi(geo, "long", null).reason, "oi_unknown");
 });
 
