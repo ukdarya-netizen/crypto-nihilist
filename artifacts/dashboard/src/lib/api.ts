@@ -201,12 +201,19 @@ const BASE_LABEL: Record<string, string> = {
   ob_penetration_pct: "Глубина захода в ОБ, %",
   d_oi_usd: "OI, $", d_oi_chg1h: "OI Δ1ч, %", d_oi_chg4h: "OI Δ4ч, %", d_oi_chg24h: "OI Δ24ч, %",
   d_ls_long_pct: "Binance: аккаунтов в лонге, %", d_ls_long_pct_chg: "Binance: Δ доли лонгов (5ч), п.п.",
+  vsa_choch_vol_rel: "VSA: объём свечи слома / средний 20", vsa_ext_vol_rel: "VSA: объём свечи экстремума / средний 20",
+  vsa_ext_close_pos: "VSA: закрытие свечи экстремума (1 = против хода вниз, выкуп)", vsa_ext_spread_atr: "VSA: размах свечи экстремума, ATR",
+  vsa_max_vol_rel: "VSA: макс. объём от касания до слома / средний 20", vsa_test_low_vol: "VSA: тест экстремума на низком объёме",
+  vsa_vol_trend: "VSA: объём 5 свечей до слома / средний 20", vsa_no_supply_bars: "VSA: свечей «нет предложения»",
+  vsa_window_bars: "VSA: свечей от касания до слома",
+  choch_range_atr: "Свеча слома: размах, ATR", choch_body_atr: "Свеча слома: тело, ATR", choch_range_pct: "Свеча слома: размах, %",
+  choch_body_pct: "Свеча слома: тело, %", choch_close_pos: "Свеча слома: закрытие (0–1)",
   trend_4h_aligned: "Тренд 4h (EMA50/200) по ходу", trend_1d_aligned: "Тренд 1D (EMA50/200) по ходу", btc_trend_4h_aligned: "Тренд BTC 4h по ходу",
 };
 const UNCOLLECTED_METRIC_PREFIXES = [
   "d_fut_taker_net_", "d_spot_taker_net_", "d_spot_cvd_chg", "d_liq_", "d_fut_vol",
 ];
-const UNCOLLECTED_METRIC_KEYS = new Set(["d_funding_pct", "d_spot_vol24h", "d_fut_spot_ratio"]);
+const UNCOLLECTED_METRIC_KEYS = new Set(["d_funding_pct", "d_spot_vol24h", "d_fut_spot_ratio", "vsa_checked"]);
 export function isUncollectedMetric(key: string): boolean {
   return UNCOLLECTED_METRIC_KEYS.has(key) || UNCOLLECTED_METRIC_PREFIXES.some((prefix) => key.startsWith(prefix));
 }
@@ -221,6 +228,8 @@ export function metricLabel(key: string): string {
     else if (k.startsWith("ema50dist_")) label = `От EMA50 ${TF(k).slice(10)}, %`;
     else if (k.startsWith("ema200dist_")) label = `От EMA200 ${TF(k).slice(11)}, %`;
     else if (k.startsWith("trend_")) label = `Тренд ${TF(k).slice(6)} (EMA50/200)`;
+    else if (k.startsWith("adx_")) label = `ADX ${TF(k).slice(4)}`;
+    else if (k.startsWith("di_diff_")) label = `+DI − −DI ${TF(k).slice(8)} по ходу`;
     else label = key;
   }
   return btc ? `BTC · ${label}` : label;

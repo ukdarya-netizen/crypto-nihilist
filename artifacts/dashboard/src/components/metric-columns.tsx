@@ -4,6 +4,8 @@ import { isOwner, compact, metricLabel, type Snapshot } from "../lib/api";
 export const METRIC_COLUMNS: Array<{ key: string; head: string; suffix?: string; signed?: boolean }> = [
   { key: "ob_displacement_atr", head: "ОБ сила", suffix: "×" },
   { key: "ob_penetration_pct", head: "Глуб. ОБ", suffix: "%" },
+  { key: "vsa_ext_vol_rel", head: "Объём экстр.", suffix: "×" },
+  { key: "vsa_choch_vol_rel", head: "Объём слома", suffix: "×" },
   { key: "d_oi_chg1h", head: "OI 1ч", suffix: "%", signed: true },
   { key: "d_oi_chg24h", head: "OI 24ч", suffix: "%", signed: true },
   { key: "d_ls_long_pct", head: "L/S лонг", suffix: "%" },

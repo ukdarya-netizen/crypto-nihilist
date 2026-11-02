@@ -15,6 +15,7 @@ import {
   SNAPSHOT_VERSION, closeContext, closedAsOf, coversAsOf, marketMetrics, signalSnapshot, type Metrics, type SignalLike,
 } from "../engine/metrics";
 import { derivativeMetrics } from "../market/derivatives";
+import { vsaMetrics } from "../market/vsa";
 
 import { postBreakevenTrajectoryPoints, trajectoryPoints } from "../engine/trajectory";
 export { trajectoryPoints };
@@ -114,7 +115,7 @@ function serializeThrown(err: unknown, seen = new WeakSet<object>()): unknown {
   }
 }
 
-export type SnapshotBackfillStage = "entry" | "close" | "derivs" | "trajectory";
+export type SnapshotBackfillStage = "entry" | "close" | "derivs" | "vsa" | "trajectory";
 
 export const SNAPSHOT_BACKFILL_STALE_AFTER_MS = 30 * 60_000;
 
@@ -334,7 +335,20 @@ export async function captureSnapshot(signalId: number, sig: SignalLike): Promis
     await write(signalId, "ready", false, signalSnapshot(sig, book(sig.symbol), btc));
     // CoinGlass reads take a few seconds: never hold up the signal for them.
     void addDerivatives(signalId, sig.symbol, sig.signalAt, "entry").catch(() => undefined);
+    void addVsa(signalId, sig).catch(() => undefined);
   });
+}
+
+/**
+ * VSA (volume from BingX) merged into the entry snapshot; vsa_at marks it done
+ * (also when BingX had no bars, so it is not retried forever).
+ */
+async function addVsa(signalId: number, sig: SignalLike): Promise<void> {
+  const m = await vsaMetrics({ symbol: sig.symbol, side: sig.side, ltf: sig.ltf, signalAt: sig.signalAt, firstTouchAt: sig.firstTouchAt });
+  await pool.query(
+    `UPDATE nh_signal_snapshots SET metrics = coalesce(metrics, '{}'::jsonb) || $2::jsonb WHERE signal_id = $1`,
+    [signalId, JSON.stringify({ ...m, vsa_checked: true })],
+  );
 }
 
 /** Merges CoinGlass metrics at `at` into the entry snapshot or the close context. */
@@ -414,6 +428,20 @@ export async function backfillSnapshots(limit = 300): Promise<{ entries: number;
       if (row.entry_missing) await addDerivatives(row.signal_id, row.symbol, new Date(row.opened_at).getTime(), "entry");
       else if (row.closed_at) await addDerivatives(row.signal_id, row.symbol, new Date(row.closed_at).getTime(), "close");
       derivs += 1;
+    });
+  });
+
+  // VSA for signals recorded before it existed (BingX, 25 per pass).
+  await runSnapshotBackfillStage("vsa", async () => {
+    const { rows } = await pool.query<SignalRow>(
+      `SELECT s.id, s.symbol, s.side, s.htf, s.ltf, s.entry, s.stop, s.tp1, s.risk_pct, s.rr1, s.block_top, s.block_bottom,
+              s.block_scope, s.targets_source, s.opened_at, s.closed_at, s.details
+       FROM nh_signal_snapshots n JOIN nh_signals s ON s.id = n.signal_id
+       WHERE n.status = 'ready' AND NOT (n.metrics ? 'vsa_checked') ORDER BY s.id DESC LIMIT 25`,
+    );
+    await runSnapshotBackfillRows("vsa", rows, (row) => row.id, async (row) => {
+      await addVsa(row.id, signalLikeFromRow(row));
+      await new Promise((r) => setTimeout(r, 150));
     });
   });
 
