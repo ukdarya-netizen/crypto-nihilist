@@ -99,3 +99,4 @@ test("ordinary trajectory does not add a snapshot beyond an early close", () => 
   const sig = Date.UTC(2026, 9, 26, 12);
   assert.deepEqual(trajectoryPoints(sig, null, sig + 10 * 60_000), []);
 });
+
