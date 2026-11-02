@@ -172,3 +172,28 @@ export const nhPasswordResets = pgTable("nh_password_resets", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   used: boolean("used").notNull().default(false),
 }, (t) => [index("nh_password_resets_user").on(t.userId)]);
+
+/**
+ * Follow-up of rejected setups (owner 2026-11-02): from the would-be entry,
+ * on closed 30m candles within the block's holding window — did the price
+ * reach +10% before the stop. Research only (engine/rejections.ts).
+ */
+export const nhRejectionOutcomes = pgTable("nh_rejection_outcomes", {
+  decisionId: integer("decision_id").primaryKey(),
+  symbol: text("symbol").notNull(),
+  setup: text("setup").notNull(),
+  side: text("side").notNull(),
+  reason: text("reason").notNull(),
+  signalAt: timestamp("signal_at", { withTimezone: true }).notNull(),
+  windowEnd: timestamp("window_end", { withTimezone: true }).notNull(),
+  entry: doublePrecision("entry"),
+  stop: doublePrecision("stop"),
+  status: text("status").notNull().default("tracking"),
+  firstEvent: text("first_event"),
+  firstAt: timestamp("first_at", { withTimezone: true }),
+  sameCandle: boolean("same_candle").notNull().default(false),
+  peakPct: doublePrecision("peak_pct").notNull().default(0),
+  lowPct: doublePrecision("low_pct").notNull().default(0),
+  lastCandleT: bigint("last_candle_t", { mode: "number" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("nh_rejection_outcomes_status").on(t.status)]);

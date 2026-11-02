@@ -22,7 +22,7 @@ app.use("/api/nh", requireUser);
 // Owner only (2026-11-02): scanner, decisions, entry metrics, per-setup stats,
 // post-entry trajectories and diagnostics. Users see positions, overview,
 // history and the trading rules.
-app.use(["/api/nh/scanner", "/api/nh/decisions", "/api/nh/metrics", "/api/nh/diag"], ownerOnly);
+app.use(["/api/nh/scanner", "/api/nh/decisions", "/api/nh/rejections", "/api/nh/metrics", "/api/nh/diag"], ownerOnly);
 app.use([/^\/api\/nh\/stats\/?$/, /^\/api\/nh\/signals\/[^/]+\/trajectory/], ownerOnly);
 app.use("/api", nihilistRoutes);
 

@@ -1,3 +1,4 @@
 - [Telegram channel](telegram-channel.md) — the user selected @nihilystcryptotrading for signal delivery.
 - [Dashboard JSX dev transform](dashboard-jsx-dev-transform.md) — avoid explicit generic type arguments in JSX tags; the dev metadata plugin injects props into them and breaks parsing.
 - [Trade monitoring windows](trade-monitoring-windows.md) — preserve open-trade and 72-hour post-close observations; inspect current trajectory before adding tables.
+- [Database publish diff](database-publish-diff.md) — an empty diff means dev and prod match; it does not prove source-defined tables exist in either database.

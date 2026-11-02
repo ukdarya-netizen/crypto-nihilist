@@ -318,7 +318,7 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
       const risk = side === "long" ? entry - stop : stop - entry;
       if (!(risk > 0) || stop <= 0) { reject("stop_not_behind_entry", { entry, stop }); continue; }
       const riskPct = (risk / entry) * 100;
-      if (riskPct > options.maxRiskPct) { reject("risk_too_large", { riskPct: round(riskPct, 2) }); continue; }
+      if (riskPct > options.maxRiskPct) { reject("risk_too_large", { riskPct: round(riskPct, 2), entry, stop }); continue; }
 
       const levelsSource = side === "long" ? snap.pivotHighs : snap.pivotLows;
       const levels = unbrokenLevels(levelsSource, htfCandles, htfState.index, side)
@@ -341,7 +341,7 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
       const ob = obStrength(zone.block, extreme);
       if (options.minObDisplacementAtr !== null &&
           (ob.displacementAtr === null || ob.displacementAtr < options.minObDisplacementAtr)) {
-        reject("ob_too_weak", { obDisplacementAtr: ob.displacementAtr, min: options.minObDisplacementAtr });
+        reject("ob_too_weak", { obDisplacementAtr: ob.displacementAtr, min: options.minObDisplacementAtr, entry, stop });
         continue;
       }
 
