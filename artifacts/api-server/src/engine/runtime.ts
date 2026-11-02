@@ -20,6 +20,7 @@ import {
 import { removeDuplicateSignals } from "../stats/dedupe";
 import { evaluateSetups, type HtfInterval, type SetupCandidate, type SetupSignal } from "./setups";
 import { trackRejections } from "./rejections";
+import { enqueueSignal, startTradingRelay } from "../lib/trading-relay";
 import { COMBOS, MAX_HOLD_MS, NO_TP_TARGETS_SOURCE, TAKE_PROFIT_ENABLED } from "./config";
 import { openTrade } from "./trade";
 import { BREAKEVEN_AT_PCT, LIVE_SETUPS, OB_MIN_DISPLACEMENT_ATR, entryFilter } from "./config";
@@ -203,6 +204,11 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
   await recordDecision(symbol, s.setup, s.barTime, "accepted", null, s.block.id, { ...signalDetails(s), entryFilter: filter, chochBar });
   const id = inserted.rows[0]?.id;
   if (id === undefined) return "conflict";
+  // Trading bot (owner 2026-11-02): live signals only; never blocks the signal.
+  if (live) {
+    void enqueueSignal({ id, symbol, side: s.side, setup: s.setup, htf: s.htf, entry: s.entry, stop: s.stop, signalAt: s.signalAt })
+      .catch((err) => logger.warn({ err, id }, "nihilist: trading signal not queued"));
+  }
   await captureSnapshot(id, {
     symbol, side: s.side, htf: s.htf, ltf: s.ltf, entry: s.entry, stop: s.stop, tp1: s.tp1,
     riskPct: s.riskPct, rr1: s.rr1, blockTop: s.block.top, blockBottom: s.block.bottom, blockScope: s.block.scope,
@@ -406,6 +412,7 @@ export async function startEngine(): Promise<void> {
   void backfillLoop();
   startTracker();
   startTelegram();
+  startTradingRelay();
   let lastBar = Math.floor(Date.now() / INTERVAL_MS["30m"]) * INTERVAL_MS["30m"];
   let lastPrune = 0;
   const tick = async () => {

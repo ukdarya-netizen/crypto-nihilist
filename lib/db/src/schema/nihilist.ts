@@ -197,3 +197,23 @@ export const nhRejectionOutcomes = pgTable("nh_rejection_outcomes", {
   lastCandleT: bigint("last_candle_t", { mode: "number" }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("nh_rejection_outcomes_status").on(t.status)]);
+
+/**
+ * Durable outbox to the trading bot (owner 2026-11-02, lib/trading-relay.ts):
+ * entry signals and commands (move_stop / close), repeated with the same id
+ * until the receiver stores them.
+ */
+export const nhTradingOutbox = pgTable("nh_trading_outbox", {
+  id: serial("id").primaryKey(),
+  kind: text("kind").notNull(),
+  signalId: integer("signal_id").notNull(),
+  messageId: text("message_id").notNull().unique(),
+  payload: jsonb("payload").notNull(),
+  status: text("status").notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  lastHttp: integer("last_http"),
+  lastAnswer: text("last_answer"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+}, (t) => [index("nh_trading_outbox_due").on(t.status, t.nextAttemptAt)]);
