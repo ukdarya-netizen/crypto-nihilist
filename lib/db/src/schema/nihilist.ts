@@ -217,3 +217,34 @@ export const nhTradingOutbox = pgTable("nh_trading_outbox", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
 }, (t) => [index("nh_trading_outbox_due").on(t.status, t.nextAttemptAt)]);
+
+/**
+ * Metric snapshots at entry / close and the post-entry trajectory
+ * (stats/snapshots.ts creates them; declared here so a schema push or the
+ * publish diff never offers to drop them). Same columns and key names.
+ */
+export const nhSignalSnapshots = pgTable("nh_signal_snapshots", {
+  signalId: integer("signal_id").primaryKey(),
+  version: text("version").notNull(),
+  status: text("status").notNull().default("ready"),
+  reconstructed: boolean("reconstructed").notNull().default(false),
+  metrics: jsonb("metrics"),
+  capturedAt: timestamp("captured_at", { withTimezone: true }).notNull().defaultNow(),
+  closeContext: jsonb("close_context"),
+  closeReconstructed: boolean("close_reconstructed"),
+  closeCapturedAt: timestamp("close_captured_at", { withTimezone: true }),
+  derivAt: timestamp("deriv_at", { withTimezone: true }),
+  closeDerivAt: timestamp("close_deriv_at", { withTimezone: true }),
+});
+
+export const nhSignalTrajectory = pgTable("nh_signal_trajectory", {
+  signalId: integer("signal_id").notNull(),
+  label: text("label").notNull(),
+  at: timestamp("at", { withTimezone: true }).notNull(),
+  elapsedMs: bigint("elapsed_ms", { mode: "number" }).notNull(),
+  price: doublePrecision("price"),
+  pctFromEntry: doublePrecision("pct_from_entry"),
+  metrics: jsonb("metrics"),
+  reconstructed: boolean("reconstructed").notNull().default(false),
+  capturedAt: timestamp("captured_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [primaryKey({ name: "nh_signal_trajectory_pkey", columns: [t.signalId, t.label] })]);
