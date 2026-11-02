@@ -49,7 +49,9 @@ export const DEFAULT_SETUP_OPTIONS: SetupOptions = {
   touchWindowBars: 12,
   stopMode: "extreme",
   stopAtrBuffer: 0.1,
-  minRr: 1,
+  // No take profit (owner 2026-11-02): the "TP1 closer than 1R" rejection is off;
+  // signals pass if the other filters pass. 0 = never rejects.
+  minRr: 0,
   maxRiskPct: 20,
   blockScopes: ["internal", "swing"],
   reuseBlocks: false,

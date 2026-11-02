@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { CandlestickChart, X } from "lucide-react";
 import { Segmented } from "./ui";
-import { coin, get, price, type Candle, type Signal } from "../lib/api";
+import { coin, get, hasTp1, price, type Candle, type Signal } from "../lib/api";
 
 type Tf = "30m" | "1h" | "4h" | "1d";
 const SPAN: Record<Tf, number> = { "30m": 1_800_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000 };
@@ -19,7 +19,7 @@ export function CandleChart({ symbol, signal, tf }: { symbol: string; signal?: S
   if (candles === null) return <p className="py-16 text-center text-sm text-muted">Загрузка свечей…</p>;
   if (!candles.length) return <p className="py-16 text-center text-sm text-muted">Свечей по монете нет (монета ещё не загружена).</p>;
   const W = 1000; const H = 420; const PAD = 64;
-  const levels = signal ? [signal.block_top, signal.block_bottom, signal.entry, signal.stop, signal.tp1, signal.current_stop ?? signal.stop] : [];
+  const levels = signal ? [signal.block_top, signal.block_bottom, signal.entry, signal.stop, ...(hasTp1(signal) ? [signal.tp1] : []), signal.current_stop ?? signal.stop] : [];
   const hi = Math.max(...candles.map((c) => c.h), ...levels);
   const lo = Math.min(...candles.map((c) => c.l), ...levels);
   const y = (p: number) => 10 + ((hi - p) / (hi - lo || 1)) * (H - 30);
@@ -50,7 +50,7 @@ export function CandleChart({ symbol, signal, tf }: { symbol: string; signal?: S
       {signal && [
         line(signal.entry, "stroke-foreground/70", "вход"),
         line(signal.stop, "stroke-down", "стоп"),
-        line(signal.tp1, "stroke-up", "тейк 1"),
+        ...(hasTp1(signal) ? [line(signal.tp1, "stroke-up", "тейк 1")] : []),
         ...(signal.current_stop !== null && signal.current_stop !== signal.stop ? [line(signal.current_stop, "stroke-warn", "стоп сейчас")] : []),
       ]}
     </svg>

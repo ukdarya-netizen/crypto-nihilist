@@ -3,7 +3,8 @@
  * AltBullet-style with a structural first take:
  *   - stop: the structural stop of the setup;
  *   - optional break-even at +BE% (AltBullet's +5%; off unless enabled);
- *   - TP1 (nearest unbroken HTF level): 50% closed, stop to entry;
+ *   - TP1 (nearest unbroken HTF level): 50% closed, stop to entry — only for
+ *     trades opened with a take profit (off for new trades since 2026-11-02);
  *   - trailing from +15% of favourable move: stop = peak − 10 p.p. (never
  *     looser than the stop already in place), for whatever is still open;
  *   - progress alerts at +5, +8, +10, then every +5% (one per jump, highest);
@@ -55,6 +56,8 @@ export type TradeState = {
   /** Break-even trigger in % (null = only after TP1). */
   breakevenAtPct: number | null;
   breakevenMoved: boolean;
+  /** false = no take profit: the trade is managed by break-even and trailing only. */
+  tp1Enabled: boolean;
   tp1Hit: boolean;
   tp1At: number | null;
   currentStop: number;
@@ -75,12 +78,14 @@ export type TradeState = {
 export function openTrade(input: {
   side: Side; entry: number; stop: number; tp1: number; openedAt: number; maxHoldMs: number;
   breakevenAtPct?: number | null;
+  /** Default true (trades before 2026-11-02 and the old backtest rules). */
+  takeProfit?: boolean;
 }): TradeState {
   return {
     side: input.side, entry: input.entry, stop: input.stop, tp1: input.tp1,
     openedAt: input.openedAt, expiresAt: input.openedAt + input.maxHoldMs,
     breakevenAtPct: input.breakevenAtPct ?? null, breakevenMoved: false,
-    tp1Hit: false, tp1At: null, currentStop: input.stop, trailingActive: false,
+    tp1Enabled: input.takeProfit ?? true, tp1Hit: false, tp1At: null, currentStop: input.stop, trailingActive: false,
     peakPct: 0, lastMilestone: 0,
     closed: false, closedAt: null, closeReason: null, exitPrice: null,
     mfePct: 0, maePct: 0, lastCandleTime: null,
@@ -130,7 +135,7 @@ export function applyCandles(state: TradeState, candles: Candle[], spanMs: numbe
       s.currentStop = tighter(s, s.currentStop, s.entry);
       events.push({ kind: "breakeven", at, price: priceAtPct(s, s.breakevenAtPct) });
     }
-    if (!s.tp1Hit && (dir === 1 ? c.h >= s.tp1 : c.l <= s.tp1)) {
+    if (s.tp1Enabled && !s.tp1Hit && (dir === 1 ? c.h >= s.tp1 : c.l <= s.tp1)) {
       s.tp1Hit = true;
       s.tp1At = at;
       s.breakevenMoved = true;

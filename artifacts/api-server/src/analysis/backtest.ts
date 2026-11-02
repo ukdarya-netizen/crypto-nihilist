@@ -20,7 +20,7 @@
  * symbol and setup.
  */
 import { INTERVAL_MS, type Candle, type Interval } from "../engine/candles";
-import { BREAKEVEN_AT_PCT, COMBOS, MAX_HOLD_MS } from "../engine/config";
+import { BREAKEVEN_AT_PCT, COMBOS, MAX_HOLD_MS, TAKE_PROFIT_ENABLED } from "../engine/config";
 import { evaluateSetups, type SetupOptions, type SetupSignal } from "../engine/setups";
 import { applyCandles, openTrade, tradeResult } from "../engine/trade";
 import { getCandleHistory, getUniverse } from "../market/coinglass";
@@ -66,7 +66,7 @@ function simulate(
     for (const s of signals.sort((a, b) => a.signalAt - b.signalAt)) {
       if (s.signalAt < from || s.signalAt < busyUntil) continue;
       const { state: trade } = applyCandles(
-        openTrade({ side: s.side, entry: s.entry, stop: s.stop, tp1: s.tp1, openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf], breakevenAtPct }),
+        openTrade({ side: s.side, entry: s.entry, stop: s.stop, tp1: s.tp1, openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf], breakevenAtPct, takeProfit: TAKE_PROFIT_ENABLED }),
         data["30m"], INTERVAL_MS["30m"],
       );
       const last = data["30m"][data["30m"].length - 1];

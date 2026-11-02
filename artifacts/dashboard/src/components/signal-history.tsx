@@ -5,7 +5,7 @@ import { CoinLink } from "./chart";
 import { SnapshotPanel } from "./snapshot";
 import { metricCols, MetricCell } from "./metric-columns";
 import { Trajectory } from "./trajectory";
-import { coin, get, isOwner, price, SETUPS, setupLabel, signed, tone, usePoll, when, type Signal } from "../lib/api";
+import { coin, get, hasTp1, isOwner, price, SETUPS, setupLabel, signed, tone, usePoll, when, type Signal } from "../lib/api";
 
 export type TradeStatus = "profit" | "be_stop" | "stop_loss" | "expired" | "open";
 export type HistoryRow = Signal & { trade_status: TradeStatus };
@@ -73,7 +73,9 @@ function Details({ s }: { s: HistoryRow }) {
         <dt className="text-muted">Ордер-блок</dt><dd>{price(s.block_bottom)} – {price(s.block_top)} <span className="text-muted">({s.block_scope})</span></dd>
         <dt className="text-muted">Вход</dt><dd>{price(s.entry)}</dd>
         <dt className="text-muted">Стоп</dt><dd className="text-down">{price(s.stop)} ({signed(pct(s.stop), 1, "%")})</dd>
-        <dt className="text-muted">Тейк 1</dt><dd className="text-up">{price(s.tp1)} ({signed(pct(s.tp1), 1, "%")}){s.tp1_hit ? " ✓" : ""}</dd>
+        <dt className="text-muted">Тейк 1</dt>{hasTp1(s)
+          ? <dd className="text-up">{price(s.tp1)} ({signed(pct(s.tp1), 1, "%")}){s.tp1_hit ? " ✓" : ""}</dd>
+          : <dd className="text-muted">нет — безубыток +5%, трейлинг с +15%</dd>}
         <dt className="text-muted">Стоп сейчас</dt><dd>{s.current_stop !== null ? `${price(s.current_stop)} (${signed(pct(s.current_stop), 1, "%")})` : "—"}</dd>
         <dt className="text-muted">Пик / просадка</dt><dd>{signed(s.peak_pct, 1, "%")} / {signed(s.mae_pct, 1, "%")}</dd>
         <dt className="text-muted">R</dt><dd className={tone(s.r_multiple)}>{signed(s.r_multiple)}</dd>

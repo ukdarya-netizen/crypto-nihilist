@@ -7,7 +7,7 @@
  */
 import { pool } from "@workspace/db";
 import { INTERVAL_MS } from "./candles";
-import { BREAKEVEN_AT_PCT, TRACK_INTERVAL } from "./config";
+import { BREAKEVEN_AT_PCT, NO_TP_TARGETS_SOURCE, TRACK_INTERVAL } from "./config";
 import type { HtfInterval } from "./setups";
 import { applyCandles, tradeResult, type TradeEvent, type TradeState } from "./trade";
 import { getCandles } from "../market/coinglass";
@@ -20,7 +20,7 @@ export type OpenRow = {
   entry: number; stop: number; tp1: number; current_stop: number | null;
   opened_at: Date; expires_at: Date; tp1_hit: boolean; tp1_at: Date | null;
   breakeven_moved: boolean; trailing_active: boolean; peak_pct: number; last_milestone: number;
-  mfe_pct: number; mae_pct: number; last_candle_time: string | null;
+  mfe_pct: number; mae_pct: number; last_candle_time: string | null; targets_source?: string | null;
 };
 
 export function stateFromRow(row: OpenRow): TradeState {
@@ -28,6 +28,7 @@ export function stateFromRow(row: OpenRow): TradeState {
     side: row.side, entry: row.entry, stop: row.stop, tp1: row.tp1,
     openedAt: row.opened_at.getTime(), expiresAt: row.expires_at.getTime(),
     breakevenAtPct: BREAKEVEN_AT_PCT, breakevenMoved: row.breakeven_moved,
+    tp1Enabled: row.targets_source !== NO_TP_TARGETS_SOURCE,
     tp1Hit: row.tp1_hit, tp1At: row.tp1_at ? row.tp1_at.getTime() : null,
     currentStop: row.current_stop ?? row.stop, trailingActive: row.trailing_active,
     peakPct: row.peak_pct, lastMilestone: row.last_milestone,

@@ -27,6 +27,16 @@ export const LIVE_SETUPS: ReadonlySet<string> = new Set<string>(
 export const BREAKEVEN_AT_PCT: number | null = 5;
 
 /**
+ * No take profit (owner 2026-11-02): targets from other order blocks were the
+ * wrong idea; trades are managed by break-even at +5% and the trailing stop
+ * from +15% only. The nearest HTF level is still computed and stored in tp1
+ * for research, but it is never traded; such signals carry targets_source
+ * "trailing_only". Trades opened before keep their TP1.
+ */
+export const TAKE_PROFIT_ENABLED = false;
+export const NO_TP_TARGETS_SOURCE = "trailing_only";
+
+/**
  * Entry filter for LONGS (owner 2026-11-02). A long is opened only when:
  *   - the stop is at least 7% from the entry (TA stop + 3%);
  *   - the order block is at most 300 hours old at the signal;

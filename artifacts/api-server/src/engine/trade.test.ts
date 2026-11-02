@@ -57,3 +57,18 @@ test("timeout closes at the candle close", () => {
   assert.equal(state.closeReason, "timeout");
   assert.equal(state.exitPrice, 101.5);
 });
+
+test("no take profit (2026-11-02): the TP1 level is passed without a take; break-even at +5%, trailing from +15%", () => {
+  const t0 = openTrade({ side: "long", entry: 100, stop: 95, tp1: 108, openedAt: 0, maxHoldMs: 10 * 86_400_000, breakevenAtPct: 5, takeProfit: false });
+  const { state, events } = applyCandles(t0, [
+    bar(0, 99, 106),    // +6%: milestone 5, break-even
+    bar(1, 104, 109),   // through the old TP1 108: nothing taken
+    bar(2, 107, 124),   // peak +24%: trailing on, stop → 114
+    bar(3, 113.5, 118), // trailing stop 114 hit
+  ], M);
+  assert.deepEqual(events.map((e) => e.kind), ["milestone", "breakeven", "milestone", "milestone", "trailing_on", "closed"]);
+  assert.equal(state.tp1Hit, false);
+  assert.equal(state.closeReason, "trailing");
+  // the whole position exits at +14%, minus 0.1% fees
+  assert.ok(Math.abs(tradeResult(state).pnlPct - 13.9) < 1e-6, String(tradeResult(state).pnlPct));
+});
