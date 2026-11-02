@@ -16,7 +16,7 @@ import {
 } from "../engine/metrics";
 import { derivativeMetrics } from "../market/derivatives";
 
-import { trajectoryPoints } from "../engine/trajectory";
+import { postBreakevenTrajectoryPoints, trajectoryPoints } from "../engine/trajectory";
 export { trajectoryPoints };
 
 type DueTrajectoryPoint<T> = { row: { id: number }; at: number; value: T };
@@ -422,10 +422,19 @@ export async function backfillSnapshots(limit = 300): Promise<{ entries: number;
 
 /** Due trajectory points, newest first (the live picture stays current; history fills behind). */
 export async function backfillTrajectory(limit: number, now = Date.now()): Promise<number> {
-  const { rows } = await pool.query<{ id: number; symbol: string; side: "long" | "short"; entry: number; opened_at: Date; closed_at: Date | null; details: Record<string, unknown>; have: string[] | null }>(
+  const { rows } = await pool.query<{ id: number; symbol: string; side: "long" | "short"; entry: number; opened_at: Date; closed_at: Date | null; be_at: Date | null; details: Record<string, unknown>; have: string[] | null }>(
     `SELECT s.id, s.symbol, s.side, s.entry, s.opened_at, s.closed_at, s.details,
+            be.created_at AS be_at,
             (SELECT array_agg(t.label) FROM nh_signal_trajectory t WHERE t.signal_id = s.id) AS have
-     FROM nh_signals s WHERE s.opened_at > now() - interval '40 days' ORDER BY s.id DESC LIMIT 400`,
+     FROM nh_signals s
+     LEFT JOIN LATERAL (
+       SELECT e.created_at FROM nh_signal_events e
+       WHERE e.signal_id = s.id AND e.kind IN ('breakeven', 'tp1')
+       ORDER BY e.created_at, e.id LIMIT 1
+     ) be ON true
+     WHERE s.opened_at > now() - interval '40 days'
+        OR be.created_at > now() - interval '72 hours'
+     ORDER BY s.id DESC LIMIT 400`,
   );
   const due: Array<{ row: (typeof rows)[number]; label: string; offsetMs: number; at: number }> = [];
   for (const row of rows) {
@@ -435,8 +444,17 @@ export async function backfillTrajectory(limit: number, now = Date.now()): Promi
     const have = new Set(row.have ?? []);
     for (const p of trajectoryPoints(opened, Number.isFinite(touch) ? touch : null, end)) {
       const at = opened + p.offsetMs;
-      if (at > now || have.has(p.label)) continue;
+      if (at > end || at > now || have.has(p.label)) continue;
       due.push({ row, label: p.label, offsetMs: p.offsetMs, at });
+    }
+    if (row.be_at) {
+      const beAt = new Date(row.be_at).getTime();
+      const postBeEnd = Math.min(now, beAt + 72 * 60 * 60_000);
+      for (const p of postBreakevenTrajectoryPoints(beAt, postBeEnd)) {
+        const at = beAt + p.offsetMs;
+        if (at > now || have.has(p.label)) continue;
+        due.push({ row, label: p.label, offsetMs: at - opened, at });
+      }
     }
   }
   // The scan's current picture stays responsive, while each pass reserves
