@@ -182,9 +182,9 @@ export function SignalHistory({ days, live, status, onStatus, limit = 200, title
           {/* Desktop: table */}
           <div className="hidden md:block">
             <div className="overflow-x-auto">
-            <table className="w-full min-w-[1500px] text-sm">
+            <table className={`w-full text-sm ${isOwner() ? "min-w-[1400px]" : "min-w-[1000px]"}`}>
               <thead>
-                <tr className="text-left">{["Открыт", "Монета", "Сетап", "Вход", "Сейчас / выход", "Пик", "Результат", "R", "Статус", "Время", ...metricCols().map((c) => c.head), ""].map((h) => <th key={h} className="label whitespace-nowrap pb-2 pr-3 font-normal">{h}</th>)}</tr>
+                <tr className="text-left">{["Открыт", "Монета", "ОБ → слом", "Вход", "Сейчас / выход", "Пик", "Результат", "R", "Статус", "Время", ...metricCols().map((c) => c.head), ""].map((h) => <th key={h} className="label whitespace-nowrap pb-2 pr-3 font-normal">{h}</th>)}</tr>
               </thead>
               <tbody className="tabular">
                 {rows.map((s) => {
@@ -194,8 +194,8 @@ export function SignalHistory({ days, live, status, onStatus, limit = 200, title
                     <Fragment key={s.id}>
                       <tr onClick={() => setOpen(isOpen ? null : s.id)} className="cursor-pointer border-t border-border hover:bg-white/[0.02]">
                         <td className="whitespace-nowrap py-2.5 pr-3 text-muted">{when(s.opened_at)}</td>
-                        <td className="pr-3 font-sans font-semibold"><span className="flex items-center gap-2"><CoinLink symbol={s.symbol} signal={s} /> <SideTag side={s.side} />{!s.live && <span className="font-mono text-[10px] font-normal text-muted">тень</span>}</span></td>
-                        <td className="whitespace-nowrap pr-3 font-sans text-xs text-muted">{setupLabel(s.setup)}</td>
+                        <td className="pr-3 font-sans font-semibold"><span className="flex items-center gap-2"><CoinLink symbol={s.symbol} signal={s} /> <SideTag side={s.side} /></span></td>
+                        <td className="whitespace-nowrap pr-3 font-sans text-xs text-muted" title={setupLabel(s.setup)}>{s.htf === "1d" ? "1D" : s.htf} → {s.ltf}</td>
                         <td className="pr-3">{price(s.entry)}</td>
                         <td className="pr-3">{price(s.status === "closed" ? s.exit_price : s.last_price)}</td>
                         <td className="pr-3 text-up">{signed(s.peak_pct, 1, "%")}</td>

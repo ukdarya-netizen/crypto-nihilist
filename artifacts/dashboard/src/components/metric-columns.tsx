@@ -1,16 +1,18 @@
 import { isOwner, compact, metricLabel, type Snapshot } from "../lib/api";
 
 /** Metric columns of the signal lists (as AltBullet's tracker/history). */
+/**
+ * Only metrics that separated profits from stops in the 25.10–02.11 analysis
+ * (owner 2026-11-02): stop at entry, order-block age and height, volatility,
+ * and VSA volume. The rest (OI, L/S, RSI, BTC, OB strength) stays in the card.
+ */
 export const METRIC_COLUMNS: Array<{ key: string; head: string; suffix?: string; signed?: boolean }> = [
-  { key: "ob_displacement_atr", head: "ОБ сила", suffix: "×" },
-  { key: "ob_penetration_pct", head: "Глуб. ОБ", suffix: "%" },
+  { key: "risk_pct", head: "Стоп при входе", suffix: "%" },
+  { key: "block_age_h", head: "Возраст ОБ", suffix: "ч" },
+  { key: "block_size_pct", head: "Высота ОБ", suffix: "%" },
+  { key: "atrpct_30m", head: "ATR 30m", suffix: "%" },
   { key: "vsa_ext_vol_rel", head: "Объём экстр.", suffix: "×" },
   { key: "vsa_choch_vol_rel", head: "Объём слома", suffix: "×" },
-  { key: "d_oi_chg1h", head: "OI 1ч", suffix: "%", signed: true },
-  { key: "d_oi_chg24h", head: "OI 24ч", suffix: "%", signed: true },
-  { key: "d_ls_long_pct", head: "L/S лонг", suffix: "%" },
-  { key: "rsi_1h", head: "RSI 1ч" },
-  { key: "btc_chg24h", head: "BTC 24ч", suffix: "%", signed: true },
 ];
 
 export function MetricCell({ snapshot, col }: { snapshot?: Snapshot | null; col: (typeof METRIC_COLUMNS)[number] }) {
