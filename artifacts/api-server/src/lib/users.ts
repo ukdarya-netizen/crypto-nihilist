@@ -207,6 +207,19 @@ export async function requireUser(req: AuthedRequest, res: Response, next: NextF
   }
 }
 
+/** After requireUser: owner only. */
+export function ownerOnly(req: AuthedRequest, res: Response, next: NextFunction): void {
+  if (req.role !== "owner") { res.status(403).json({ error: "Только для владельца" }); return; }
+  next();
+}
+export const isOwnerReq = (req: Request) => (req as AuthedRequest).role === "owner";
+
+/** What users do not see: entry metrics and engine details of a signal. */
+export function publicSignal<T extends Record<string, unknown>>(row: T): T {
+  const { snapshot: _s, close_context: _c, snapshot_reconstructed: _r, snapshot_status: _t, details: _d, ...rest } = row;
+  return rest as T;
+}
+
 export async function requireOwner(req: AuthedRequest, res: Response, next: NextFunction): Promise<void> {
   await requireUser(req, res, () => {
     if (req.role !== "owner") { res.status(403).json({ error: "Только для владельца" }); return; }

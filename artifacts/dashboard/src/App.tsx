@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from "react";
-import { Layout, PUBLIC_ROUTES, useRoute, type Route } from "./components/layout";
+import { Layout, OWNER_ROUTES, PUBLIC_ROUTES, useRoute, type Route } from "./components/layout";
 import { AuthError, currentSession, get, onAuthError, saveSession } from "./lib/api";
 import { Login, Register, ResetPassword } from "./pages/auth";
 import Members from "./pages/members";
@@ -43,5 +43,6 @@ export default function App() {
     "/": <Overview />, "/tracker": <Tracker />, "/scanner": <Scanner />, "/history": <History />, "/metrics": <Metrics />,
     "/health": <Health />, "/reference": <Reference />, ...(owner ? { "/members": <Members /> } : {}),
   };
-  return <Layout route={route}>{pages[route] ?? <Overview />}</Layout>;
+  const allowed = owner || !OWNER_ROUTES.includes(route);
+  return <Layout route={allowed ? route : "/"}>{(allowed && pages[route]) || <Overview />}</Layout>;
 }

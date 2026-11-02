@@ -3,9 +3,9 @@ import { ChevronDown } from "lucide-react";
 import { Empty, Kpi, Panel, Segmented, SideTag } from "../components/ui";
 import { CoinLink } from "../components/chart";
 import { SnapshotPanel } from "../components/snapshot";
-import { METRIC_COLUMNS, MetricCell } from "../components/metric-columns";
+import { metricCols, MetricCell } from "../components/metric-columns";
 import { Trajectory } from "../components/trajectory";
-import { fmtHours, livePct, price, setupLabel, signed, tone, usePoll, when, type Signal } from "../lib/api";
+import { fmtHours, isOwner, livePct, price, setupLabel, signed, tone, usePoll, when, type Signal } from "../lib/api";
 
 const TRAIL_AT = 15;
 
@@ -55,9 +55,9 @@ function Card({ s }: { s: Signal }) {
         {s.trailing_active ? " · трейлинг идёт: пик − 10 п.п." : " · трейлинг с +15%"} · цена {price(s.last_price)}
         {" · в сделке "}{fmtHours((Date.now() - new Date(s.opened_at).getTime()) / 3_600_000)}
       </p>
-      <button type="button" onClick={() => setMore((v) => !v)} className="mt-2 flex items-center gap-1 font-mono text-[11px] text-muted hover:text-foreground">
+      {isOwner() && <button type="button" onClick={() => setMore((v) => !v)} className="mt-2 flex items-center gap-1 font-mono text-[11px] text-muted hover:text-foreground">
         <ChevronDown className={`size-3.5 transition ${more ? "rotate-180" : ""}`} />метрики при сигнале
-      </button>
+      </button>}
       {more && <div className="mt-2 border-t border-border pt-2 text-xs"><SnapshotPanel snapshot={s.snapshot} reconstructed={s.snapshot_reconstructed} status={s.snapshot_status} /></div>}
     </div>
   );
@@ -85,16 +85,16 @@ function Row({ s, open, onToggle }: { s: Signal; open: boolean; onToggle: () => 
         <td className="pr-3 text-up">{price(s.tp1)}{s.tp1_hit ? " ✓" : ""}</td>
         <td className="whitespace-nowrap pr-3 text-xs">{s.trailing_active ? <span className="text-primary">трейлинг</span> : s.tp1_hit ? "тейк 1 взят" : "ждёт тейк 1"}</td>
         <td className="pr-3 text-muted">{fmtHours((Date.now() - new Date(s.opened_at).getTime()) / 3_600_000)}</td>
-        {METRIC_COLUMNS.map((c) => <MetricCell key={c.key} snapshot={s.snapshot} col={c} />)}
+        {metricCols().map((c) => <MetricCell key={c.key} snapshot={s.snapshot} col={c} />)}
         <td><ChevronDown className={`size-4 text-muted transition ${open ? "rotate-180" : ""}`} /></td>
       </tr>
       {open && (
-        <tr><td colSpan={12 + METRIC_COLUMNS.length} className="p-0">
+        <tr><td colSpan={12 + metricCols().length} className="p-0">
           <div className="grid gap-4 border-t border-border bg-black/20 p-4 text-xs lg:grid-cols-2">
             <div><Card s={s} /></div>
-            <div><p className="label mb-2">Траектория: рынок после входа</p><Trajectory id={s.id} /></div>
-            <div className="lg:col-span-2"><p className="label mb-2">Метрики при сигнале</p>
-              <SnapshotPanel snapshot={s.snapshot} reconstructed={s.snapshot_reconstructed} status={s.snapshot_status} /></div>
+            {isOwner() && <div><p className="label mb-2">Траектория: рынок после входа</p><Trajectory id={s.id} /></div>}
+            {isOwner() && <div className="lg:col-span-2"><p className="label mb-2">Метрики при сигнале</p>
+              <SnapshotPanel snapshot={s.snapshot} reconstructed={s.snapshot_reconstructed} status={s.snapshot_status} /></div>}
           </div>
         </td></tr>
       )}
@@ -124,7 +124,9 @@ export default function Tracker() {
         <Kpi label="Тейк 1 взят / трейлинг" value={data ? `${all.filter((s) => s.tp1_hit).length} / ${all.filter((s) => s.trailing_active).length}` : "—"} />
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted">Сделки ведутся по 5-минутным свечам. Метрики — на момент сигнала; нажми строку — карточка, траектория и все метрики.</p>
+        <p className="text-sm text-muted">{isOwner()
+          ? "Сделки ведутся по 5-минутным свечам. Метрики — на момент сигнала; нажми строку — карточка, траектория и все метрики."
+          : "Сделки ведутся по 5-минутным свечам. Нажми строку — карточка сделки."}</p>
         <div className="flex flex-wrap gap-2">
           <Segmented value={side} onChange={(id) => setSide(id as "" | "long" | "short")} options={[{ id: "", label: "все" }, { id: "long", label: "лонг" }, { id: "short", label: "шорт" }]} />
           <Segmented value={sort} onChange={(id) => setSort(id as Sort)} options={[{ id: "time", label: "новые" }, { id: "pnl", label: "по %" }, { id: "peak", label: "по пику" }]} />
@@ -135,7 +137,7 @@ export default function Tracker() {
           <>
             <div className="hidden overflow-x-auto md:block">
               <table className="w-full min-w-[1500px] text-sm">
-                <thead><tr className="text-left">{["Открыта", "Монета", "Сетап", "Вход", "Цена", "Результат", "Пик", "Стоп", "Тейк 1", "Этап", "В сделке", ...METRIC_COLUMNS.map((c) => c.head), ""].map((h) => <th key={h} className="label whitespace-nowrap pb-2 pr-3 font-normal">{h}</th>)}</tr></thead>
+                <thead><tr className="text-left">{["Открыта", "Монета", "Сетап", "Вход", "Цена", "Результат", "Пик", "Стоп", "Тейк 1", "Этап", "В сделке", ...metricCols().map((c) => c.head), ""].map((h) => <th key={h} className="label whitespace-nowrap pb-2 pr-3 font-normal">{h}</th>)}</tr></thead>
                 <tbody className="tabular">{rows.map((s) => <Row key={s.id} s={s} open={openId === s.id} onToggle={() => setOpenId(openId === s.id ? null : s.id)} />)}</tbody>
               </table>
             </div>
