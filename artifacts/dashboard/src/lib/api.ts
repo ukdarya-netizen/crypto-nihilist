@@ -163,6 +163,9 @@ export const when = (iso: string | number | null) =>
   (iso === null ? "—" : new Date(iso).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }));
 export const coin = (symbol: string) => symbol.replace(/-USDT$/, "");
 
+/** No take profit (owner 2026-11-02): trades since then are managed by break-even and trailing only. */
+export const hasTp1 = (s: { targets_source?: string | null }) => s.targets_source !== "trailing_only";
+
 /** Live result of an open trade in % (no fees), from the last closed 30m price. */
 /** Price move of an open trade from entry, % in the trade direction (as in AltBullet). */
 export function livePct(s: Signal): number | null {

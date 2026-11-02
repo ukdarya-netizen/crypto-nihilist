@@ -2,7 +2,7 @@
  * Telegram texts in the AltBullet layout (POSITION UPDATE / POSITION CLOSED,
  * ticker and setup hashtags). Plain text only: no HTML, no Markdown.
  */
-import { BREAKEVEN_AT_PCT } from "../engine/config";
+import { BREAKEVEN_AT_PCT, NO_TP_TARGETS_SOURCE } from "../engine/config";
 
 export type SignalForText = {
   symbol: string; setup: string; htf: string; ltf: string; side: "long" | "short";
@@ -50,13 +50,14 @@ export function formatEvent(s: SignalForText, e: EventForText): string {
   if (e.kind === "opened") {
     const stopPct = pctFrom(s, s.stop);
     const tp1Pct = pctFrom(s, s.tp1);
+    const noTp = s.targets_source === NO_TP_TARGETS_SOURCE;
     return [
       `🟣 NIHILYST · ${sym}`,
       `Ордер-блок ${tf(s.htf)} → слом структуры ${tf(s.ltf)}`,
       ``,
       `Вход: ${fmtP(s.entry)}`,
       `Стоп: ${fmtP(s.stop)} (${fmtPct(stopPct)})`,
-      `Тейк 1: ${fmtP(s.tp1)} (${fmtPct(tp1Pct)}) — фиксируем 50%, стоп в безубыток`,
+      noTp ? null : `Тейк 1: ${fmtP(s.tp1)} (${fmtPct(tp1Pct)}) — фиксируем 50%, стоп в безубыток`,
       BREAKEVEN_AT_PCT !== null ? `Безубыток: на +${BREAKEVEN_AT_PCT}% стоп переносится на вход` : null,
       `Трейлинг: с +15%, стоп на 10 п.п. ниже пика`,
       ``,

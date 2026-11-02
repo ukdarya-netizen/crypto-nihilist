@@ -38,3 +38,10 @@ test("the 15% milestone includes trailing activation instead of a separate messa
   });
   assert.match(m, /^📊 POSITION UPDATE — JCT ЛОНГ\n🚀 \+15\.0%\n📈 Трейлинг активирован с \+15%:/);
 });
+
+test("opened without take profit (2026-11-02): no TP line; break-even and trailing rules stay", () => {
+  const text = formatEvent({ ...s, targets_source: "trailing_only" }, { kind: "opened", price: s.entry, detail: {}, created_at: s.opened_at });
+  assert.doesNotMatch(text, /Тейк/);
+  assert.match(text, /Безубыток: на \+5% стоп переносится на вход/);
+  assert.match(text, /Трейлинг: с \+15%, стоп на 10 п\.п\. ниже пика/);
+});
