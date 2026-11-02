@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
 import { engineStatus, scannerView } from "../engine/runtime";
 import { telegramEnabled } from "../telegram/transport";
+import { ensureUserTables, ownerEmail, recipientSql } from "../lib/users";
 import { cgRequest, coinglassGovernorStats, EXCHANGE } from "../market/coinglass";
 import { apiHealth } from "../lib/apiHealth";
 import { buildJournal, tradeStatus, type JournalRow } from "../stats/journal";
@@ -30,10 +31,15 @@ router.get("/nh/status", async (_req, res) => {
      FROM nh_telegram_deliveries d
      JOIN nh_signal_events e ON e.id = d.event_id
      JOIN nh_signals s ON s.id = e.signal_id
-     WHERE d.channel AND s.live`,
+     WHERE s.live`,
+  );
+  await ensureUserTables();
+  const { rows: recipientRows } = await pool.query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM nh_users u WHERE ${recipientSql("$1")}`, [ownerEmail()],
   );
   const telegram = {
     configured: Boolean(process.env.TELEGRAM_BOT_TOKEN),
+    recipients: recipientRows[0]?.n ?? 0,
     enabled: telegramEnabled(),
     channel: process.env.NIHILIST_TELEGRAM_CHANNEL?.trim() || null,
     deliveries: deliveryRows[0],

@@ -133,3 +133,37 @@ export const nhTelegramDeliveries = pgTable("nh_telegram_deliveries", {
 ]);
 
 export type NhSignal = typeof nhSignals.$inferSelect;
+
+/**
+ * Accounts (owner 2026-11-02, as in AltBullet): registration on the dashboard
+ * with the Telegram Chat ID; the owner approves or blocks from Telegram; the
+ * bot and the dashboard are open only to approved users whose subscription
+ * has not ended (subscribed_until NULL = no end date). The owner (by email)
+ * is approved automatically and never expires.
+ */
+export const nhUsers = pgTable("nh_users", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  name: text("name").notNull(),
+  chatId: text("chat_id").unique(),
+  telegramUsername: text("telegram_username"),
+  status: text("status").notNull().default("pending"),
+  subscribedUntil: timestamp("subscribed_until", { withTimezone: true }),
+  /** Telegram signals on (false after /unsubscribe; /start turns them back on). */
+  notify: boolean("notify").notNull().default(true),
+  /** Signals are sent for events from this moment (approval or the last /start). */
+  notifySince: timestamp("notify_since", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+});
+
+/** One-time password reset codes sent by the bot (/resetpassword), 15 minutes. */
+export const nhPasswordResets = pgTable("nh_password_resets", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  code: text("code").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  used: boolean("used").notNull().default(false),
+}, (t) => [index("nh_password_resets_user").on(t.userId)]);

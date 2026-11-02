@@ -1,24 +1,46 @@
 import { useEffect, useState } from "react";
 
-export const PIN_KEY = "nihilist-pin";
-export class PinError extends Error {}
-
-export function readPin(): string {
-  try { return localStorage.getItem(PIN_KEY) ?? ""; } catch { return ""; }
+/** Session (accounts as in CAB, owner 2026-11-02). */
+export const TOKEN_KEY = "nihilist-token";
+export type Session = { token: string; name: string; email: string; role: "owner" | "user" };
+export class ApiError extends Error {
+  constructor(message: string, public code?: string) { super(message); }
 }
-export function savePin(pin: string): void {
-  try { localStorage.setItem(PIN_KEY, pin); } catch { /* private mode: PIN lives for this tab only */ }
+/** Signed out, or access ended (pending / blocked / subscription expired). */
+export class AuthError extends ApiError {}
+
+export function readSession(): Session | null {
+  try { const raw = localStorage.getItem(TOKEN_KEY); return raw ? JSON.parse(raw) as Session : null; } catch { return null; }
+}
+let session = readSession();
+export function saveSession(s: Session | null): void {
+  session = s;
+  try { if (s) localStorage.setItem(TOKEN_KEY, JSON.stringify(s)); else localStorage.removeItem(TOKEN_KEY); } catch { /* private mode: this tab only */ }
+}
+export const currentSession = () => session;
+
+const authListeners = new Set<(e: AuthError) => void>();
+export function onAuthError(fn: (e: AuthError) => void): () => void { authListeners.add(fn); return () => authListeners.delete(fn); }
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (session?.token) headers.Authorization = `Bearer ${session.token}`;
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const res = await fetch(`/api${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  const data = await res.json().catch(() => ({})) as { error?: string; code?: string };
+  if ((res.status === 401 || res.status === 403) && !path.startsWith("/auth/")) {
+    const err = new AuthError(data.error ?? "Требуется вход", data.code);
+    if (res.status === 401 || data.code) authListeners.forEach((fn) => fn(err));
+    throw err;
+  }
+  if (!res.ok) throw new ApiError(data.error ?? `HTTP ${res.status}`, data.code ?? String(res.status));
+  return data as T;
 }
 
-let currentPin = readPin();
-export function setCurrentPin(pin: string): void { currentPin = pin; }
-
-export async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`/api${path}`, { headers: currentPin ? { "x-dashboard-pin": currentPin } : {} });
-  if (res.status === 401) throw new PinError();
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<T>;
-}
+export const get = <T>(path: string) => request<T>("GET", path);
+export const post = <T>(path: string, body: unknown) => request<T>("POST", path, body);
+export const patch = <T>(path: string, body: unknown) => request<T>("PATCH", path, body);
+export const del = <T>(path: string) => request<T>("DELETE", path);
 
 export function usePoll<T>(path: string, ms = 15_000): { data: T | null; error: Error | null } {
   const [data, setData] = useState<T | null>(null);
@@ -54,7 +76,7 @@ export type Status = {
   health: Record<string, { lastError: string | null; lastErrorAt: number | null; lastSuccessAt: number | null; consecutiveFailures: number }>;
   signals: { open: number; closed: number };
   telegram?: {
-    configured: boolean; enabled?: boolean; channel: string | null;
+    configured: boolean; enabled?: boolean; channel: string | null; recipients?: number;
     deliveries?: { sent: number; pending: number; failed: number; skipped: number };
   };
 };

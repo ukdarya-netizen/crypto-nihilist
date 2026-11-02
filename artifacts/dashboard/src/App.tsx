@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
-import { Layout, useRoute } from "./components/layout";
-import { BrandMark, SLOGAN, Wordmark } from "./components/brand";
-import { PinError, get, readPin, savePin, setCurrentPin } from "./lib/api";
+import { useEffect, useState, type ReactElement } from "react";
+import { Layout, PUBLIC_ROUTES, useRoute, type Route } from "./components/layout";
+import { AuthError, currentSession, get, onAuthError, saveSession } from "./lib/api";
+import { Login, Register, ResetPassword } from "./pages/auth";
+import Users from "./pages/users";
 import Overview from "./pages/overview";
 import Tracker from "./pages/tracker";
 import Scanner from "./pages/scanner";
@@ -10,41 +11,37 @@ import Health from "./pages/health";
 import Metrics from "./pages/metrics";
 import Reference from "./pages/reference";
 
-function PinGate({ onPin, wrong }: { onPin: (pin: string) => void; wrong: boolean }) {
-  const [value, setValue] = useState("");
-  return (
-    <div className="flex min-h-[100dvh] items-center justify-center p-4">
-      <div className="panel w-full max-w-sm p-8 text-center">
-        <BrandMark className="mx-auto size-28" />
-        <Wordmark className="mx-auto mt-6 h-16" />
-        <p className="mt-1 font-type text-xs tracking-[0.24em] text-primary">CRYPTO TRADING</p>
-        <form onSubmit={(e) => { e.preventDefault(); onPin(value); }} className="mt-8 space-y-3">
-          <input value={value} onChange={(e) => setValue(e.target.value)} type="password" placeholder="PIN" autoFocus
-            className="h-12 w-full border border-border bg-background px-4 text-center font-mono tracking-[0.3em]" />
-          {wrong && <p className="text-xs text-down">Неверный PIN</p>}
-          <button className="h-12 w-full bg-primary font-semibold text-white transition hover:bg-primary-deep">Войти</button>
-        </form>
-        <p className="mt-6 font-type text-[10px] tracking-[0.2em] text-muted">{SLOGAN}</p>
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
   const route = useRoute();
-  const [state, setState] = useState<"checking" | "pin" | "wrong" | "ok">("checking");
-  const check = (pin: string) => {
-    setCurrentPin(pin);
-    get("/nh/status").then(() => { savePin(pin); setState("ok"); })
-      .catch((e) => setState(e instanceof PinError ? (pin ? "wrong" : "pin") : "ok"));
-  };
+  const [state, setState] = useState<"checking" | "out" | "ok">(currentSession() ? "checking" : "out");
+  const [notice, setNotice] = useState<string | null>(null);
+  const signOut = (message: string | null) => { saveSession(null); setNotice(message); setState("out"); };
+
   useEffect(() => {
-    check(readPin());
     // Phones open the positions first, as in AltBullet.
     if (!window.location.hash && window.innerWidth < 768) window.location.hash = "/tracker";
+    const off = onAuthError((e) => signOut(e.code === "auth_required" ? null : e.message));
+    if (currentSession()) {
+      get<{ role: "owner" | "user"; name: string; email: string }>("/auth/me")
+        .then((me) => { const s = currentSession(); if (s) saveSession({ ...s, role: me.role, name: me.name }); setState("ok"); })
+        .catch((e) => signOut(e instanceof AuthError && e.code !== "auth_required" ? e.message : null));
+    }
+    return () => { off(); };
   }, []);
+
+  if (route === "/register") return <Register />;
+  if (route === "/reset-password") return <ResetPassword />;
   if (state === "checking") return <div className="flex min-h-[100dvh] items-center justify-center text-sm text-muted">Загрузка…</div>;
-  if (state !== "ok") return <PinGate onPin={check} wrong={state === "wrong"} />;
-  const page = { "/": <Overview />, "/tracker": <Tracker />, "/scanner": <Scanner />, "/history": <History />, "/metrics": <Metrics />, "/health": <Health />, "/reference": <Reference /> }[route];
-  return <Layout route={route}>{page}</Layout>;
+  if (state === "out" || route === "/login") {
+    return <Login notice={notice} onLogin={() => {
+      setNotice(null); setState("ok");
+      if (PUBLIC_ROUTES.includes(route)) window.location.hash = window.innerWidth < 768 ? "/tracker" : "/";
+    }} />;
+  }
+  const owner = currentSession()?.role === "owner";
+  const pages: Partial<Record<Route, ReactElement>> = {
+    "/": <Overview />, "/tracker": <Tracker />, "/scanner": <Scanner />, "/history": <History />, "/metrics": <Metrics />,
+    "/health": <Health />, "/reference": <Reference />, ...(owner ? { "/users": <Users /> } : {}),
+  };
+  return <Layout route={route}>{pages[route] ?? <Overview />}</Layout>;
 }
