@@ -27,46 +27,41 @@ export const LIVE_SETUPS: ReadonlySet<string> = new Set<string>(
 export const BREAKEVEN_AT_PCT: number | null = 5;
 
 /**
- * Entry filter (owner 2026-11-02, 255 closed trades 25.10-02.11). A signal is
- * published (live) only when all three hold:
- *   - stop at least 7% from the entry;
- *   - order block at most 300 hours old at the signal;
- *   - longs only: aggregated OI over the last 4 hours up at least 1%.
- * Longs (202 closed): 25 passed, avg +3.33%, stops 20% (5), 8 of 14 trailing
- * profits kept; all longs avg -2.86%, stops 64%.
- * Shorts (53 closed): no OI condition — before short profits OI barely moved
- * (median -0.4% in 4h), a deep OI drop came before B.U. closes instead.
- * Stop + block age: 20 passed, avg +0.86%, stops 2; all shorts avg -1.16%.
- * Signals that fail are not opened (owner: no shadow trades); the rejection
- * and its reason are written to nh_decisions.
+ * Entry filter for LONGS (owner 2026-11-02). A long is opened only when:
+ *   - the stop is at least 7% from the entry (TA stop + 3%);
+ *   - the order block is at most 300 hours old at the signal;
+ *   - the order block is at least 4% of the price high.
+ * Live, 202 closed longs 25.10-02.11: 26 passed, 10 of 14 trailing profits,
+ * stops 31% (all longs 64%), avg +2.92% (all -2.86%). 60-day backtest
+ * (stop + block age, 495 coins): 564 longs, avg +1.78%, stops 30%, both
+ * halves and both months positive (all longs +0.04%, October -2.07%).
+ * Shorts are not filtered: neither condition helped shorts live or on the
+ * backtest. A long that fails is not opened; the rejection and its reason go
+ * to nh_decisions.
  */
 export const ENTRY_FILTER_MIN_RISK_PCT = 7;
 export const ENTRY_FILTER_MAX_BLOCK_AGE_H = 300;
-export const ENTRY_FILTER_MIN_OI_4H_PCT = 1;
+export const ENTRY_FILTER_MIN_BLOCK_SIZE_PCT = 4;
 
 export type EntryFilterResult = {
-  pass: boolean; reason: string | null; riskPct: number; blockAgeH: number | null; oi4hPct: number | null;
+  pass: boolean; reason: string | null; riskPct: number; blockAgeH: number | null; blockSizePct: number;
 };
 
-/** Stop distance and block age: checked first (no network). */
-export function entryFilterGeometry(input: { riskPct: number; signalAt: number; blockCreatedAt?: number | null; blockTime?: number | null }): EntryFilterResult {
+export function entryFilter(input: {
+  side: "long" | "short"; riskPct: number; entry: number; blockTop: number; blockBottom: number;
+  signalAt: number; blockCreatedAt?: number | null; blockTime?: number | null;
+}): EntryFilterResult {
   const origin = input.blockCreatedAt ?? input.blockTime ?? null;
   const blockAgeH = origin !== null ? (input.signalAt - origin) / 3_600_000 : null;
+  const blockSizePct = ((input.blockTop - input.blockBottom) / input.entry) * 100;
   const reasons: string[] = [];
-  if (!(input.riskPct >= ENTRY_FILTER_MIN_RISK_PCT)) reasons.push("risk_below_7pct");
-  if (blockAgeH === null) reasons.push("block_age_unknown");
-  else if (blockAgeH > ENTRY_FILTER_MAX_BLOCK_AGE_H) reasons.push("block_older_300h");
-  return { pass: reasons.length === 0, reason: reasons.length ? reasons.join(",") : null, riskPct: input.riskPct, blockAgeH, oi4hPct: null };
-}
-
-/** Adds the OI condition (longs only) to a geometry result; OI missing on a long = not published. */
-export function entryFilterWithOi(geo: EntryFilterResult, side: "long" | "short", oi4hPct: number | null): EntryFilterResult {
-  const reasons = geo.reason ? geo.reason.split(",") : [];
-  if (side === "long") {
-    if (oi4hPct === null) reasons.push("oi_unknown");
-    else if (!(oi4hPct >= ENTRY_FILTER_MIN_OI_4H_PCT)) reasons.push("oi_4h_below_1pct");
+  if (input.side === "long") {
+    if (!(input.riskPct >= ENTRY_FILTER_MIN_RISK_PCT)) reasons.push("risk_below_7pct");
+    if (blockAgeH === null) reasons.push("block_age_unknown");
+    else if (blockAgeH > ENTRY_FILTER_MAX_BLOCK_AGE_H) reasons.push("block_older_300h");
+    if (!(blockSizePct >= ENTRY_FILTER_MIN_BLOCK_SIZE_PCT)) reasons.push("block_below_4pct");
   }
-  return { ...geo, oi4hPct, pass: reasons.length === 0, reason: reasons.length ? reasons.join(",") : null };
+  return { pass: reasons.length === 0, reason: reasons.length ? reasons.join(",") : null, riskPct: input.riskPct, blockAgeH, blockSizePct };
 }
 
 /** Open trades are followed on 5-minute candles. */

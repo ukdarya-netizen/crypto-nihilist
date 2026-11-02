@@ -21,9 +21,8 @@ import { removeDuplicateSignals } from "../stats/dedupe";
 import { evaluateSetups, type HtfInterval, type SetupCandidate, type SetupSignal } from "./setups";
 import { COMBOS, MAX_HOLD_MS } from "./config";
 import { openTrade } from "./trade";
-import { BREAKEVEN_AT_PCT, LIVE_SETUPS, OB_MIN_DISPLACEMENT_ATR, entryFilterGeometry, entryFilterWithOi } from "./config";
+import { BREAKEVEN_AT_PCT, LIVE_SETUPS, OB_MIN_DISPLACEMENT_ATR, entryFilter } from "./config";
 import { chochBarMetrics } from "./choch-bar";
-import { oiChange4h } from "../market/derivatives";
 import { insertEvent, startTracker } from "./tracker";
 import { startTelegram } from "../telegram/telegram";
 import { backfill, book, loadFromDb, needsBackfill, pruneDb, refresh } from "../market/candleStore";
@@ -169,11 +168,12 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
       { ...signalDetails(s), openSignalId: busy.rows[0].id, openSetup: busy.rows[0].setup });
     return "busy";
   }
-  // Entry filter (owner 2026-11-02): a signal that fails is not opened at all;
-  // the rejection and its reason go to nh_decisions. Geometry first, OI only
-  // for a long whose geometry passes.
-  const geo = entryFilterGeometry({ riskPct: s.riskPct, signalAt: s.signalAt, blockCreatedAt: s.block.createdAt, blockTime: s.block.time });
-  const filter = geo.pass ? entryFilterWithOi(geo, s.side, s.side === "long" ? await oiChange4h(symbol, s.signalAt) : null) : geo;
+  // Entry filter (owner 2026-11-02, longs only): a long that fails is not
+  // opened at all; the rejection and its reason go to nh_decisions.
+  const filter = entryFilter({
+    side: s.side, riskPct: s.riskPct, entry: s.entry, blockTop: s.block.top, blockBottom: s.block.bottom,
+    signalAt: s.signalAt, blockCreatedAt: s.block.createdAt, blockTime: s.block.time,
+  });
   if (!filter.pass) {
     await recordDecision(symbol, s.setup, s.barTime, "rejected", `entry_filter:${filter.reason}`, s.block.id,
       { ...signalDetails(s), entryFilter: filter, chochBar });

@@ -76,6 +76,26 @@ function trueRange(c: Candle, p: Candle): number {
   return Math.max(c.h - c.l, Math.abs(c.h - p.c), Math.abs(c.l - p.c));
 }
 
+/** Wilder ADX(14) with +DI / -DI at the last bar (null without enough history). */
+export function adxDi(candles: Candle[], n = 14): { adx: number | null; pdi: number | null; mdi: number | null } {
+  if (candles.length < n * 3) return { adx: null, pdi: null, mdi: null };
+  let tr = 0; let pdm = 0; let mdm = 0; let adx: number | null = null; let dxCount = 0; let dxSum = 0;
+  let pdi = 0; let mdi = 0;
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i]; const p = candles[i - 1];
+    const up = c.h - p.h; const dn = p.l - c.l;
+    const t = trueRange(c, p);
+    const pd = up > dn && up > 0 ? up : 0; const md = dn > up && dn > 0 ? dn : 0;
+    if (i <= n) { tr += t; pdm += pd; mdm += md; if (i < n) continue; }
+    else { tr = tr - tr / n + t; pdm = pdm - pdm / n + pd; mdm = mdm - mdm / n + md; }
+    pdi = tr ? (100 * pdm) / tr : 0; mdi = tr ? (100 * mdm) / tr : 0;
+    const dx = pdi + mdi ? (100 * Math.abs(pdi - mdi)) / (pdi + mdi) : 0;
+    if (adx === null) { dxSum += dx; dxCount += 1; if (dxCount === n) adx = dxSum / n; }
+    else adx = (adx * (n - 1) + dx) / n;
+  }
+  return { adx, pdi, mdi };
+}
+
 /** % change of the last close vs `bars` bars earlier. */
 function change(candles: Candle[], bars: number): number | null {
   if (candles.length <= bars) return null;
@@ -158,6 +178,12 @@ export function signalSnapshot(sig: SignalLike, coin: BookLike, btc: BookLike | 
     weekday_utc: new Date(sig.signalAt).getUTCDay(),
     ...marketMetrics(coin, sig.signalAt),
   };
+  // ADX / DI on 4h and 1D, DI difference in the trade direction (observation, owner 2026-11-02).
+  for (const tf of ["4h", "1d"] as const) {
+    const x = adxDi(closedAsOf(coin[tf] ?? [], tf, sig.signalAt));
+    m[`adx_${tf}`] = r2(x.adx);
+    m[`di_diff_${tf}`] = x.pdi === null || x.mdi === null ? null : r2((x.pdi - x.mdi) * dir);
+  }
   // Trend of the coin in the trade direction (a long "with" the trend = true).
   for (const tf of ["4h", "1d"] as const) {
     const t = m[`trend_${tf}`];
