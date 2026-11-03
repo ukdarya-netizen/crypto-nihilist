@@ -18,6 +18,7 @@ type Group = "long_filtered" | "long_all" | "short";
 type Dataset = {
   name: "live" | "history"; from: string | null; to: string | null; trades: number; symbols: number; skippedSymbols: number;
   groups: Record<Group, Array<{ id: string; label: string; stats: Stats }>>;
+  filters?: Array<{ id: string; side: "long" | "short"; label: string; stats: Record<string, Stats> }>;
 };
 type Report = {
   status: "idle" | "running" | "done" | "failed"; startedAt: string | null; finishedAt: string | null; error: string | null;
@@ -36,6 +37,7 @@ const pct = (v: number) => `${Math.round(v)}%`;
 const tone = (v: number | null) => (v === null || Math.abs(v) < 1e-9 ? "" : v > 0 ? "text-up" : "text-down");
 const holdText = (h: number) => (h >= 48 ? `${(h / 24).toFixed(1).replace(".", ",")} д` : `${h.toFixed(0)} ч`);
 const stable = (s: Stats) => (s.half1.avg ?? -1) > 0 && (s.half2.avg ?? -1) > 0;
+const TRADED: Array<[string, string]> = [["source", "как Нигилист"], ["take5", "фикс +5%"], ["take10", "фикс +10%"], ["take15", "фикс +15%"]];
 
 export default function Strategies() {
   const { data, error } = usePoll<Resp>("/nh/strategy-report", 10_000);
@@ -171,7 +173,63 @@ export default function Strategies() {
           </div>
         </>
       )}
+      {dataset?.filters && <FilterCheck ds={dataset} />}
       {!report && !running && <p className="text-sm text-muted">Расчёт ещё не запускался.</p>}
+    </div>
+  );
+}
+
+/** Candidate entry filters (owner 2026-11-03): each set alone and together, for each way the trading bot leads a trade. */
+function FilterCheck({ ds }: { ds: Dataset }) {
+  const [m, setM] = useState("source");
+  const rows = ds.filters ?? [];
+  return (
+    <div className="space-y-2">
+      <div className="panel space-y-2 p-4 text-sm">
+        <p className="font-bold">Проверка новых фильтров входа · {DS_LABEL[ds.name]}</p>
+        <p className="text-xs text-muted">
+          Фильтры из «Метрик входа»: ATR 30m (лонги ≥ 1.3%, шорты ≥ 1.0%), сила блока — слом за блоком ≥ 0.9 ATR, у лонгов — заход в блок ≥ 23%.
+          На сигналы они пока не действуют — только этот расчёт. Каждая строка — свой поток сделок (одна сделка на монету и сторону).
+          Сравнивайте строки лонгов со строкой «фильтр сейчас», шортов — со строкой «все».
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {TRADED.map(([id, label]) => (
+            <button key={id} type="button" onClick={() => setM(id)}
+              className={`h-9 border px-3 text-xs ${m === id ? "border-foreground font-bold" : "border-border text-muted"}`}>{label}</button>
+          ))}
+        </div>
+      </div>
+      <div className="panel overflow-x-auto">
+        <table className="w-full min-w-[1000px] font-mono text-[11px]">
+          <thead>
+            <tr className="text-left text-muted">
+              {["Фильтр", "Сделок", "В плюс", "Стопы", "Ср. %", "Сумма %", "PF", "Просадка", "1-я пол.", "2-я пол.", "Устойч."].map((h) => <th key={h} className="px-2 py-2 font-normal">{h}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((f, i) => {
+              const s = f.stats[m];
+              if (!s) return null;
+              const head = i === 0 || rows[i - 1]!.side !== f.side;
+              return (
+                <tr key={f.id} className={`border-t ${head ? "border-foreground/40" : "border-border"} ${f.id === "long_today" || f.id === "short_any" ? "bg-card-hi" : ""}`}>
+                  <td className="px-2 py-1.5 font-sans text-xs">{f.label}</td>
+                  <td className="px-2">{s.n}{s.open ? <span className="text-muted"> +{s.open} откр.</span> : null}</td>
+                  <td className="px-2">{pct(s.winPct)}</td>
+                  <td className="px-2">{pct(s.stopPct)}</td>
+                  <td className={`px-2 ${tone(s.avg)}`}>{sg(s.avg)}</td>
+                  <td className={`px-2 font-bold ${tone(s.sum)}`}>{sg(s.sum, 0)}</td>
+                  <td className="px-2">{s.pf === null ? "—" : s.pf.toFixed(2).replace(".", ",")}</td>
+                  <td className="px-2 text-down">{s.maxDd ? `−${s.maxDd.toFixed(0)}` : "0"}</td>
+                  <td className={`px-2 ${tone(s.half1.avg)}`}>{sg(s.half1.avg)} <span className="text-muted">({s.half1.n})</span></td>
+                  <td className={`px-2 ${tone(s.half2.avg)}`}>{sg(s.half2.avg)} <span className="text-muted">({s.half2.n})</span></td>
+                  <td className="px-2">{s.n ? (stable(s) ? <span className="text-up">да</span> : <span className="text-down">нет</span>) : "—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -203,6 +261,15 @@ function reportText(r: Report): string {
         out.push([id, `${s.n} (${s.open})`, pct(s.winPct), pct(s.stopPct), pct(s.flatPct), sg(s.avg), sg(s.sum, 0), s.pf ?? "—", `−${s.maxDd.toFixed(0)}`, s.worstStreak,
           `${sg(s.half1.avg)} (${s.half1.n})`, `${sg(s.half2.avg)} (${s.half2.n})`, s.avgHoldH.toFixed(0), sg(s.perDay),
           s.buckets.map(([k, v]) => `${k}:${v}`).join(" ")].join(" | "));
+      }
+    }
+    if (ds.filters) {
+      out.push("", `--- Проверка новых фильтров входа (${DS_LABEL[ds.name]})`, "фильтр | ведение | n (откр.) | плюс% | стоп% | ср.% | сумма% | PF | просадка | 1-я пол. ср.(n) | 2-я пол. ср.(n)");
+      for (const f of ds.filters) for (const [id, label] of TRADED) {
+        const s = f.stats[id];
+        if (!s) continue;
+        out.push([f.label, label, `${s.n} (${s.open})`, pct(s.winPct), pct(s.stopPct), sg(s.avg), sg(s.sum, 0), s.pf ?? "—", `−${s.maxDd.toFixed(0)}`,
+          `${sg(s.half1.avg)} (${s.half1.n})`, `${sg(s.half2.avg)} (${s.half2.n})`].join(" | "));
       }
     }
   }
