@@ -18,10 +18,11 @@
  */
 import type { Candle } from "../engine/candles";
 
-type C = Candle & { v: number };
-const MS: Record<string, number> = { "30m": 1_800_000, "1h": 3_600_000 };
+export type C = Candle & { v: number };
+const MS: Record<string, number> = { "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000 };
 
-async function bingxKlines(symbol: string, interval: string, end: number, bars: number): Promise<C[]> {
+/** BingX public klines with volume, bars closed by `end` (oldest first). */
+export async function bingxKlines(symbol: string, interval: string, end: number, bars: number): Promise<C[]> {
   const out = new Map<number, C>();
   const span = MS[interval]!;
   let to = end;
@@ -45,7 +46,7 @@ async function bingxKlines(symbol: string, interval: string, end: number, bars: 
   return [...out.values()].filter((c) => c.t + span <= end).sort((a, b) => a.t - b.t);
 }
 
-const mirror = (cs: C[]): C[] => cs.map((c) => ({ t: c.t, o: -c.o, h: -c.l, l: -c.h, c: -c.c, v: c.v }));
+export const mirror = (cs: C[]): C[] => cs.map((c) => ({ t: c.t, o: -c.o, h: -c.l, l: -c.h, c: -c.c, v: c.v }));
 function atrAt(cs: C[], i: number, n = 14): number | null {
   if (i < n) return null;
   let s = 0;
