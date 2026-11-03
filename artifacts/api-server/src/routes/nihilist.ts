@@ -11,6 +11,7 @@ import { ensureSnapshotTable, snapshotBackfillDiagnostics } from "../stats/snaps
 import { analyzeMetrics, type AnalysisRow } from "../stats/metricAnalysis";
 import { book } from "../market/candleStore";
 import { INTERVAL_MS, type Interval } from "../engine/candles";
+import { HISTORY_DAYS, loadReport, runStrategyReport, strategyReportRunning } from "../analysis/strategy-report";
 
 const router: IRouter = Router();
 
@@ -177,6 +178,17 @@ router.get("/nh/journal", async (req, res) => {
 });
 
 /** Entry metrics vs results (AltBullet indicator relations) over closed trades. */
+// Owner (2026-11-03): management variants for the trading bot, live and 60-day history.
+router.get("/nh/strategy-report", async (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ running: strategyReportRunning(), report: await loadReport(), historyDays: HISTORY_DAYS });
+});
+router.post("/nh/strategy-report/run", (req, res) => {
+  if (strategyReportRunning()) { res.status(409).json({ error: "already_running" }); return; }
+  void runStrategyReport({ history: req.query.history !== "0" });
+  res.status(202).json({ started: true });
+});
+
 router.get("/nh/metrics", async (req, res) => {
   const d = days(req.query.days, 90);
   const setup = typeof req.query.setup === "string" && req.query.setup ? req.query.setup : null;

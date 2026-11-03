@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Activity, BookOpen, FlaskConical, HeartPulse, History, LogOut, MoreHorizontal, ScanSearch, Target, Users, X } from "lucide-react";
+import { Activity, BookOpen, CandlestickChart, FlaskConical, HeartPulse, History, LogOut, MoreHorizontal, ScanSearch, Target, Users, X } from "lucide-react";
 import { BrandLockup, BrandMark, SLOGAN, Wordmark } from "./brand";
 import { STAGE_LABEL, currentSession, dur, get, isOwner, post, saveSession, usePoll, type Status } from "../lib/api";
 
-export type Route = "/" | "/tracker" | "/scanner" | "/history" | "/metrics" | "/health" | "/reference" | "/members"
+export type Route = "/" | "/tracker" | "/scanner" | "/history" | "/metrics" | "/health" | "/reference" | "/members" | "/strategies"
   | "/login" | "/register" | "/reset-password";
 export const PUBLIC_ROUTES: Route[] = ["/login", "/register", "/reset-password"];
 
@@ -17,7 +17,10 @@ export const NAV: Array<{ href: Route; label: string; sub: string; icon: typeof 
   { href: "/reference", label: "Справочник", sub: "сетапы · правила", icon: BookOpen },
 ];
 /** Owner only (as CAB «Подписчики»). */
-export const OWNER_NAV: typeof NAV = [{ href: "/members", label: "Подписчики", sub: "дашборд + Telegram-бот", icon: Users }];
+export const OWNER_NAV: typeof NAV = [
+  { href: "/strategies", label: "Стратегии торговли", sub: "как вести сделки в торговом боте", icon: CandlestickChart },
+  { href: "/members", label: "Подписчики", sub: "дашборд + Telegram-бот", icon: Users },
+];
 
 /** Owner: pending access requests for the «+N» badge (as CAB), every 60 s. */
 function usePendingCount(): number {
@@ -48,7 +51,7 @@ const PendingBadge = ({ href, n }: { href: Route; n: number }) =>
   href === "/members" && n > 0 ? <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">+{n}</span> : null;
 
 /** Owner-only pages (users do not see the scanner, research and engine health). */
-export const OWNER_ROUTES: Route[] = ["/scanner", "/metrics", "/health", "/members"];
+export const OWNER_ROUTES: Route[] = ["/scanner", "/metrics", "/health", "/members", "/strategies"];
 
 function navFor(): typeof NAV {
   return isOwner() ? [...NAV, ...OWNER_NAV] : NAV.filter((n) => !OWNER_ROUTES.includes(n.href));
