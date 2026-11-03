@@ -1,0 +1,30 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "z8oTUydcE5U8HUtY25KJE"
+uri = "file://.agents/outputs/production-uai-shorts.csv"
+type = "table"
+title = "Production query 1 — UAI shorts"
+description = "Raw CSV output from the first read-only production query."
+logical_id = "01eb0d94-ccb7-415c-9b00-9bfe9231de24"
+content_hash = "sha256:f9723398e94b129ebc515e63a8b3bea660a05cfbdc737508acc0b88beb744fc1"
+size = 6348
+mtime_ms = 1793724799730
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:476063e5-597f-4e0e-98f7-49ac8906e0b3/01eb0d94-ccb7-415c-9b00-9bfe9231de24/d09f6758-fd71-45b5-8635-01bf8bae328c"
+storage_version_token = "1793724800594270"
+content_type = "text/csv"
+
+[[outputs]]
+id = "HkIb9JZqA46PVqrwn-ByL"
+uri = "file://.agents/outputs/production-shorts-24h-window.csv"
+type = "table"
+title = "Production query 2 — shorts within ±24 hours"
+description = "Raw CSV output from the second read-only production query."
+logical_id = "341e83de-8ac9-4df0-8216-688a0ce5cc6f"
+content_hash = "sha256:85ca4b0cf2d753b2e78287140407a83c9628ea3254bb4c6584d4193ff9a8168d"
+size = 310382
+mtime_ms = 1793724799902
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:476063e5-597f-4e0e-98f7-49ac8906e0b3/341e83de-8ac9-4df0-8216-688a0ce5cc6f/836b1f90-7097-4aeb-b1a8-dc3ff8181853"
+storage_version_token = "1793724801309413"
+content_type = "text/csv"
