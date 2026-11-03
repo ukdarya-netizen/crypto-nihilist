@@ -25,12 +25,9 @@ type Report = {
 };
 type Resp = { running: boolean; report: Report | null; historyDays: number };
 
-const GROUP_LABEL: Record<Group, string> = {
-  long_filtered: "Лонги — с текущим фильтром входа (так торгуется сейчас)",
-  long_all: "Лонги — все, без фильтра",
-  short: "Шорты",
-};
-const DS_LABEL = { history: "История", live: "Живые сигналы" } as const;
+// Only what is really traded: Nihilist sends longs that pass its entry filter, and shorts.
+const GROUP_LABEL: Partial<Record<Group, string>> = { long_filtered: "Лонги", short: "Шорты" };
+const DS_LABEL = { history: "Бэктест 60 дней", live: "Реальные сигналы" } as const;
 const TZ = "Asia/Dubai";
 const dt = (s: string | null) => (s ? new Date(s).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short", timeZone: TZ }) : "—");
 const d = (s: string | null) => (s ? new Date(s).toLocaleDateString("ru-RU", { timeZone: TZ }) : "—");
@@ -68,8 +65,8 @@ export default function Strategies() {
       <div className="panel space-y-3 p-4 text-sm">
         <p>
           Каждый сигнал Нигилиста прогоняется через разные способы ведения сделки: тейки, безубыток, трейлинг, частичная фиксация.
-          Два набора данных: <b>история</b> — те же сетапы за последние {data?.historyDays ?? 60} дней по всем парам BingX (одна сделка на монету и сторону, как в торговом боте),
-          и <b>живые сигналы</b> — все опубликованные сигналы Нигилиста. Лонги и шорты отдельно.
+          Два набора данных: <b>бэктест</b> — те же сетапы за последние {data?.historyDays ?? 60} дней по всем парам BingX (одна сделка на монету и сторону, как в торговом боте),
+          и <b>реальные сигналы</b> — все сигналы, которые Нигилист уже выдал. Лонги и шорты отдельно.
         </p>
         <p className="text-xs text-muted">
           Результат — % хода цены за сделку с комиссиями (на марже при 10x — в 10 раз больше). Внутри свечи 30m первым проверяется стоп — оценка осторожная.
@@ -89,7 +86,7 @@ export default function Strategies() {
           )}
           {report && (
             <span className="text-xs text-muted">
-              {report.status === "running" && `${report.progress.stage === "history" ? "история" : "живые сигналы"}: ${report.progress.done} из ${report.progress.total} · `}
+              {report.status === "running" && `${report.progress.stage === "history" ? "бэктест" : "реальные сигналы"}: ${report.progress.done} из ${report.progress.total} · `}
               {report.status === "failed" && <span className="text-down">ошибка: {report.error} · </span>}
               начат {dt(report.startedAt)}{report.finishedAt ? ` · готов ${dt(report.finishedAt)}` : ""}
             </span>
@@ -114,7 +111,7 @@ export default function Strategies() {
             <span className="mx-1 w-px bg-border" />
             {(Object.keys(GROUP_LABEL) as Group[]).map((g) => (
               <button key={g} type="button" onClick={() => setGroup(g)}
-                className={`h-9 border px-3 text-xs ${group === g ? "border-foreground font-bold" : "border-border text-muted"}`}>{g === "short" ? "Шорты" : g === "long_all" ? "Лонги все" : "Лонги с фильтром"}</button>
+                className={`h-9 border px-3 text-xs ${group === g ? "border-foreground font-bold" : "border-border text-muted"}`}>{GROUP_LABEL[g]}</button>
             ))}
           </div>
           <p className="text-xs text-muted">
