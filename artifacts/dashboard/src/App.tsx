@@ -10,6 +10,7 @@ import History from "./pages/history";
 import Health from "./pages/health";
 import Metrics from "./pages/metrics";
 import Reference from "./pages/reference";
+import Strategies from "./pages/strategies";
 
 export default function App() {
   const route = useRoute();
@@ -41,7 +42,7 @@ export default function App() {
   const owner = currentSession()?.role === "owner";
   const pages: Partial<Record<Route, ReactElement>> = {
     "/": <Overview />, "/tracker": <Tracker />, "/scanner": <Scanner />, "/history": <History />, "/metrics": <Metrics />,
-    "/health": <Health />, "/reference": <Reference />, ...(owner ? { "/members": <Members /> } : {}),
+    "/health": <Health />, "/reference": <Reference />, ...(owner ? { "/members": <Members />, "/strategies": <Strategies /> } : {}),
   };
   const allowed = owner || !OWNER_ROUTES.includes(route);
   return <Layout route={allowed ? route : "/"}>{(allowed && pages[route]) || <Overview />}</Layout>;
