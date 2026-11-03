@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { SPAN, closedIdx, deltaDivergence, entryFlowMetrics, oiQuadrant, pointFlowMetrics, postEntryMetrics, type FlowSeries, type FlowSignal } from "./flow";
+import { SPAN, closedIdx, deltaDivergence, entryFlowMetrics, oiQuadrant, pointFlowMetrics, postEntryMetrics, withAggregatedVolume, type FlowSeries, type FlowSignal } from "./flow";
 import { mirror, type C } from "./vsa";
 
 const H = 3_600_000;
@@ -28,7 +28,7 @@ function series(side: "long" | "short", over: Partial<FlowSeries> = {}): FlowSer
   const oi = (tf: string, n: number, up: boolean) => Array.from({ length: n }, (_, i) => ({ t: T0 + i * SPAN[tf]!, c: 1000 * (1 + (up ? 1 : -1) * 0.001 * i) }));
   const tk = (tf: string, n: number, buyShare: number) => Array.from({ length: n }, (_, i) => ({ t: T0 + i * SPAN[tf]!, buy: 100 * buyShare, sell: 100 * (1 - buyShare) }));
   return {
-    side, bars: b,
+    side, bars: b, volSrc: { "30m": "bingx", "1h": "bingx", "4h": "bingx", "1d": "bingx" },
     oi: { "15m": oi("15m", 1200, true), "30m": oi("30m", 600, true), "1h": oi("1h", 300, true), "4h": oi("4h", 80, true), "1d": oi("1d", 10, true) },
     fut: { "15m": tk("15m", 1200, 0.6), "30m": tk("30m", 600, 0.6), "1h": tk("1h", 300, 0.6), "4h": tk("4h", 80, 0.6) },
     spot: { "15m": tk("15m", 1200, 0.4), "30m": tk("30m", 600, 0.4), "1h": tk("1h", 300, 0.4), "4h": tk("4h", 80, 0.4) },
@@ -97,4 +97,19 @@ test("after the entry: VSA snapshot, OI since entry, volume against the trade; +
   assert.ok("v30m_last_vol_rel" in p && "oi1d_chg1" in p);
   const post = postEntryMetrics(sig("long"), s, signalAt + 5 * H);
   assert.ok("post1h_vol_rel" in post && "post4h_against_share" in post && "post2h_oi_since_entry" in post);
+});
+
+test("volume is aggregated (all futures exchanges) when it covers the bars; BingX only as a marked fallback", () => {
+  const cs = bars("1h", T0, 50);
+  const full: FlowSeries = { side: "long", bars: { "1h": cs }, volSrc: {}, oi: {}, spot: {},
+    fut: { "1h": cs.map((c) => ({ t: c.t, buy: 700, sell: 300 })) } };
+  const agg = withAggregatedVolume(full, "1h");
+  assert.equal(full.volSrc["1h"], "aggregated");
+  assert.ok(agg.every((c) => c.v === 1000));
+  const partial: FlowSeries = { ...full, volSrc: {}, fut: { "1h": cs.slice(0, 30).map((c) => ({ t: c.t, buy: 700, sell: 300 })) } };
+  const own = withAggregatedVolume(partial, "1h");
+  assert.equal(partial.volSrc["1h"], "bingx");
+  assert.ok(own.every((c) => c.v === 100));
+  const m = entryFlowMetrics(sig("long"), series("long"));
+  assert.equal(m.vol_src_4h, "bingx");
 });

@@ -24,7 +24,7 @@ const FUTURES_EXCHANGES = "Binance,BingX,Bitfinex,Bitget,Bybit,Coinbase,Crypto.c
 
 export const SPAN: Record<string, number> = { "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000 };
 export const OI_TFS = ["15m", "30m", "1h", "4h", "1d"] as const;
-export const TAKER_TFS = ["15m", "30m", "1h", "4h"] as const;
+export const TAKER_TFS = ["15m", "30m", "1h", "4h", "1d"] as const;
 export const VSA_TFS = ["30m", "1h", "4h", "1d"] as const;
 const KLINE_TFS = ["15m", ...VSA_TFS] as const;
 
@@ -32,7 +32,9 @@ export type Oi = { t: number; c: number };
 export type Taker = { t: number; buy: number; sell: number };
 export type FlowSeries = {
   side: "long" | "short";
-  bars: Record<string, C[]>;      // mirrored for shorts
+  bars: Record<string, C[]>;      // mirrored for shorts; volume aggregated when it covers the bars
+  /** Per timeframe: "aggregated" (taker volume of all futures exchanges, CoinGlass) or "bingx" (BingX only, fallback). */
+  volSrc: Record<string, "aggregated" | "bingx">;
   oi: Record<string, Oi[]>;
   fut: Record<string, Taker[]>;
   spot: Record<string, Taker[]>;
@@ -73,7 +75,7 @@ export async function fetchFlowSeries(sig: FlowSignal, to: number): Promise<Flow
   // Look back far enough for the block candle (1D: 120 bars) and for averages before the touch.
   const touch = sig.firstTouchAt && sig.firstTouchAt < sig.signalAt ? sig.firstTouchAt : sig.signalAt;
   const from = Math.min(touch, sig.blockTime ?? touch) - 40 * SPAN["1d"]!;
-  const series: FlowSeries = { side: sig.side, bars: {}, oi: {}, fut: {}, spot: {} };
+  const series: FlowSeries = { side: sig.side, bars: {}, volSrc: {}, oi: {}, fut: {}, spot: {} };
   const barsWanted = (tf: string) => Math.min(4000, Math.ceil((to - from) / SPAN[tf]!) + 30);
   await Promise.all([
     ...KLINE_TFS.map(async (tf) => {
@@ -95,7 +97,23 @@ export async function fetchFlowSeries(sig: FlowSignal, to: number): Promise<Flow
       series.spot[tf] = (s ?? []).map((r) => ({ t: r.time, buy: num(r.agg_taker_buy_vol) ?? 0, sell: num(r.agg_taker_sell_vol) ?? 0 }));
     }),
   ]);
+  for (const tf of KLINE_TFS) series.bars[tf] = withAggregatedVolume(series, tf);
   return series;
+}
+
+/**
+ * Owner 2026-11-03: volume is the AGGREGATED one (taker buy + sell of all
+ * futures exchanges in CoinGlass = every trade); BingX's own volume only when
+ * the aggregated series does not cover the bars, and then it is marked.
+ */
+export function withAggregatedVolume(s: FlowSeries, tf: string): C[] {
+  const cs = s.bars[tf] ?? [];
+  const agg = new Map((s.fut[tf] ?? []).map((r) => [r.t, r.buy + r.sell]));
+  const covered = cs.filter((c) => (agg.get(c.t) ?? 0) > 0).length;
+  if (!cs.length || covered / cs.length < 0.95) { s.volSrc[tf] = "bingx"; return cs; }
+  s.volSrc[tf] = "aggregated";
+  let last = 0;
+  return cs.map((c) => { const v = agg.get(c.t); if (v && v > 0) last = v; return { ...c, v: v && v > 0 ? v : last }; });
 }
 
 // ---------------- pure helpers ----------------
@@ -136,6 +154,7 @@ export function oiQuadrant(priceChgDir: number | null, oiChg: number | null): st
 // ---------------- metrics at the signal ----------------
 export function entryFlowMetrics(sig: FlowSignal, s: FlowSeries): M {
   const m: M = { flow_v: FLOW_VERSION };
+  for (const tf of VSA_TFS) m[`vol_src_${tf}`] = s.volSrc[tf] ?? null;
   const dir = sig.side === "long" ? 1 : -1;
   const at = sig.signalAt;
   const touch = sig.firstTouchAt && sig.firstTouchAt < at ? sig.firstTouchAt : null;
@@ -260,7 +279,7 @@ export function deltaDivergence(p30: C[], rows: Taker[], tf: string, touch: numb
 // ---------------- metrics at a moment after the signal ----------------
 /** 2. VSA snapshot, 3. OI on every timeframe, 8. volume and delta since the entry — at moment `at`. */
 export function pointFlowMetrics(sig: FlowSignal, s: FlowSeries, at: number): M {
-  const m: M = { flow_v: FLOW_VERSION };
+  const m: M = { flow_v: FLOW_VERSION, vol_src_30m: s.volSrc["30m"] ?? null };
   const dir = sig.side === "long" ? 1 : -1;
   for (const tf of ["30m", "1h", "4h"] as const) {
     const cs = s.bars[tf] ?? [];

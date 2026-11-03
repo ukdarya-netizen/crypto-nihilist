@@ -201,11 +201,11 @@ const BASE_LABEL: Record<string, string> = {
   ob_penetration_pct: "Глубина захода в ОБ, %",
   d_oi_usd: "OI, $", d_oi_chg1h: "OI Δ1ч, %", d_oi_chg4h: "OI Δ4ч, %", d_oi_chg24h: "OI Δ24ч, %",
   d_ls_long_pct: "Binance: аккаунтов в лонге, %", d_ls_long_pct_chg: "Binance: Δ доли лонгов (5ч), п.п.",
-  vsa_choch_vol_rel: "VSA: объём свечи слома / средний 20", vsa_ext_vol_rel: "VSA: объём свечи экстремума / средний 20",
-  vsa_ext_close_pos: "VSA: закрытие свечи экстремума (1 = против хода вниз, выкуп)", vsa_ext_spread_atr: "VSA: размах свечи экстремума, ATR",
-  vsa_max_vol_rel: "VSA: макс. объём от касания до слома / средний 20", vsa_test_low_vol: "VSA: тест экстремума на низком объёме",
-  vsa_vol_trend: "VSA: объём 5 свечей до слома / средний 20", vsa_no_supply_bars: "VSA: свечей «нет предложения»",
-  vsa_window_bars: "VSA: свечей от касания до слома",
+  vsa_choch_vol_rel: "VSA ТФ слома (только BingX): объём свечи слома / средний 20", vsa_ext_vol_rel: "VSA ТФ слома (только BingX): объём свечи экстремума / средний 20",
+  vsa_ext_close_pos: "VSA ТФ слома (только BingX): закрытие свечи экстремума (1 = против хода вниз, выкуп)", vsa_ext_spread_atr: "VSA ТФ слома (только BingX): размах свечи экстремума, ATR",
+  vsa_max_vol_rel: "VSA ТФ слома (только BingX): макс. объём от касания до слома / средний 20", vsa_test_low_vol: "VSA ТФ слома (только BingX): тест экстремума на низком объёме",
+  vsa_vol_trend: "VSA ТФ слома (только BingX): объём 5 свечей до слома / средний 20", vsa_no_supply_bars: "VSA ТФ слома (только BingX): свечей «нет предложения»",
+  vsa_window_bars: "VSA ТФ слома (только BingX): свечей от касания до слома",
   choch_range_atr: "Свеча слома: размах, ATR", choch_body_atr: "Свеча слома: тело, ATR", choch_range_pct: "Свеча слома: размах, %",
   choch_body_pct: "Свеча слома: тело, %", choch_close_pos: "Свеча слома: закрытие (0–1)",
   trend_4h_aligned: "Тренд 4h (EMA50/200) по ходу", trend_1d_aligned: "Тренд 1D (EMA50/200) по ходу", btc_trend_4h_aligned: "Тренд BTC 4h по ходу",
@@ -225,6 +225,7 @@ export function flowLabel(k: string): string | null {
   let m: RegExpMatchArray | null;
   const tf = (x: string) => x.replace("1d", "1D");
   if ((m = k.match(/^vsa(30m|1h|4h|1d)_(.+)$/))) return `VSA ${tf(m[1]!)}: ${FLOW_PART[m[2]!] ?? m[2]}`;
+  if ((m = k.match(/^vol_src_(30m|1h|4h|1d)$/))) return `Источник объёма ${tf(m[1]!)} (aggregated = все биржи, bingx = только BingX)`;
   if ((m = k.match(/^app(30m|1h|4h)_(.+)$/))) return `Подход к блоку ${m[1]}: ${{ vol_trend: "тренд объёма", spread_atr: "размах баров, ATR", press_bars: "бары давления (объём+размах к блоку)", move10: "ход цены за 10 баров" }[m[2]!] ?? m[2]}`;
   if ((m = k.match(/^oi(15m|30m|1h|4h|1d)_chg(1|4|_touch)$/))) return `OI ${tf(m[1]!)}: изменение ${m[2] === "_touch" ? "от касания до сигнала" : m[2] === "1" ? "за 1 бар" : "за 4 бара"}, %`;
   if ((m = k.match(/^oi_quad_(break|touch)_(15m|30m|1h)$/))) return `Цена × OI ${m[2]} ${m[1] === "break" ? "на баре слома" : "от касания"}`;
