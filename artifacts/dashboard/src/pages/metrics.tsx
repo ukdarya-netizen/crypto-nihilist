@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Empty, Kpi, Panel, Segmented } from "../components/ui";
-import { SETUPS, isUncollectedMetric, metricLabel, setupLabel, signed, tone, usePoll } from "../lib/api";
+import { SETUPS, get, isUncollectedMetric, metricLabel, setupLabel, signed, tone, usePoll } from "../lib/api";
 
 type Bucket = { label: string; n: number; winRate: number | null; avgR: number | null; avgPnl: number | null; sumR: number };
 type Metric = { key: string; kind: "number" | "label"; n: number; buckets: Bucket[]; spreadR: number | null };
@@ -54,7 +54,8 @@ export default function Metrics() {
     <div className="space-y-4 md:space-y-6">
       <p className="text-sm text-muted">
         По каждой закрытой сделке записан срез рынка в момент сигнала (как снапшоты AltBullet): геометрия сетапа, RSI, ATR, EMA, изменения цены,
-        положение в диапазоне, тренд — у монеты и у BTC. Только теханализ, без объёмов. Ниже каждая метрика разбита на группы
+        положение в диапазоне, тренд — у монеты и у BTC; объёмы (VSA на 30m/1h/4h/1D, объём свечи блока, подход к блоку),
+        OI на 15m–1D и вместе с ценой, дельта фьючерсов и спота от касания, объём и OI в первые часы после входа. Ниже каждая метрика разбита на группы
         (числа — на четверти по значению); зелёным — лучшая группа по среднему R, красным — худшая. Метрики сверху сильнее всего разделяют
         прибыль и стопы — это кандидаты в фильтры входа. Малое n — не вывод.
       </p>
@@ -72,6 +73,7 @@ export default function Metrics() {
           {SETUPS.map((s) => <option key={s} value={s}>{setupLabel(s)}</option>)}
         </select>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="поиск метрики" className="h-8 w-40 border border-border bg-transparent px-2 text-xs outline-none" />
+        <CopyReport days={days} setup={setup} />
       </div>
       {!data ? <Panel><Empty>Загрузка…</Empty></Panel> : !shown.length ? (
         <Panel><Empty>Пока мало закрытых сделок с метриками: нужно хотя бы 6 по метрике.</Empty></Panel>
@@ -79,5 +81,32 @@ export default function Metrics() {
         <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">{shown.map((m) => <MetricCard key={m.key} m={m} />)}</div>
       )}
     </div>
+  );
+}
+
+/** All metrics, longs and shorts apart, as plain text to paste into a chat (owner 2026-11-03). */
+function CopyReport({ days, setup }: { days: number; setup: string }) {
+  const [state, setState] = useState<"" | "busy" | "done" | "error">("");
+  const run = async () => {
+    setState("busy");
+    try {
+      const out: string[] = [`Нигилист — метрики входа, ${days >= 3650 ? "всё время" : `${days} дн`}${setup ? `, сетап ${setup}` : ""}`];
+      for (const side of ["long", "short"] as const) {
+        const p = new URLSearchParams({ days: String(days), side });
+        if (setup) p.set("setup", setup);
+        const d = await get<Data>(`/nh/metrics?${p}`);
+        out.push("", `=== ${side === "long" ? "ЛОНГИ" : "ШОРТЫ"}: закрытых сделок ${d.closed}`, "метрика | группа | n | win% | ср.R | ср.% | сумма R");
+        for (const m of d.metrics.filter((x) => !isUncollectedMetric(x.key))) {
+          for (const b of m.buckets) out.push([m.key, b.label, b.n, b.winRate ?? "—", b.avgR ?? "—", b.avgPnl ?? "—", b.sumR].join(" | "));
+        }
+      }
+      await navigator.clipboard.writeText(out.join("\n"));
+      setState("done");
+    } catch { setState("error"); }
+  };
+  return (
+    <button type="button" onClick={run} disabled={state === "busy"} className="h-8 border border-border px-3 text-xs">
+      {state === "busy" ? "Собираю…" : state === "done" ? "Скопировано" : state === "error" ? "Не вышло — ещё раз" : "Копировать всё текстом (лонги и шорты)"}
+    </button>
   );
 }

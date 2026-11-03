@@ -16,6 +16,7 @@ import {
 } from "../engine/metrics";
 import { derivativeMetrics } from "../market/derivatives";
 import { vsaMetrics } from "../market/vsa";
+import { FLOW_VERSION, entryFlowMetrics, fetchFlowSeries, pointFlowMetrics, postEntryMetrics, type FlowSignal } from "../market/flow";
 
 import { postBreakevenTrajectoryPoints, trajectoryPoints } from "../engine/trajectory";
 export { trajectoryPoints };
@@ -115,7 +116,7 @@ function serializeThrown(err: unknown, seen = new WeakSet<object>()): unknown {
   }
 }
 
-export type SnapshotBackfillStage = "entry" | "close" | "derivs" | "vsa" | "trajectory";
+export type SnapshotBackfillStage = "entry" | "close" | "derivs" | "vsa" | "trajectory" | "flow";
 
 export const SNAPSHOT_BACKFILL_STALE_AFTER_MS = 30 * 60_000;
 
@@ -446,7 +447,56 @@ export async function backfillSnapshots(limit = 300): Promise<{ entries: number;
   });
 
   const trajectory = await runSnapshotBackfillStage("trajectory", () => backfillTrajectory(200));
+  // Volume / OI / delta on every timeframe (owner 2026-11-03): entry, early post-entry and every trajectory point.
+  await runSnapshotBackfillStage("flow", () => backfillFlow(8));
   return { entries, closes, unavailable, derivs, trajectory };
+}
+
+/**
+ * Flow metrics (market/flow.ts) for signals that miss them: the entry
+ * snapshot, the post-entry marks (+1h/+2h/+4h) and every trajectory point
+ * without them. One fetch per signal covers all its moments. Newest first.
+ */
+export async function backfillFlow(limit: number, now = Date.now()): Promise<number> {
+  const { rows } = await pool.query<SignalRow & { need_entry: boolean; need_post: boolean }>(
+    `SELECT s.id, s.symbol, s.side, s.htf, s.ltf, s.opened_at, s.closed_at, s.details,
+            NOT (coalesce(n.metrics, '{}'::jsonb) ? 'flow_v') AS need_entry,
+            (s.opened_at < now() - interval '4 hours' AND NOT (coalesce(n.metrics, '{}'::jsonb) ? 'flow_post_v')) AS need_post
+     FROM nh_signal_snapshots n JOIN nh_signals s ON s.id = n.signal_id
+     WHERE n.status = 'ready' AND (
+       NOT (coalesce(n.metrics, '{}'::jsonb) ? 'flow_v')
+       OR (s.opened_at < now() - interval '4 hours' AND NOT (coalesce(n.metrics, '{}'::jsonb) ? 'flow_post_v'))
+       OR EXISTS (SELECT 1 FROM nh_signal_trajectory t WHERE t.signal_id = s.id AND NOT (coalesce(t.metrics, '{}'::jsonb) ? 'flow_v')))
+     ORDER BY s.id DESC LIMIT $1`, [limit],
+  );
+  let done = 0;
+  await runSnapshotBackfillRows("flow", rows, (row) => row.id, async (row) => {
+    const d = row.details ?? {};
+    const n = (v: unknown) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v));
+    const sig: FlowSignal = {
+      symbol: row.symbol, side: row.side, htf: row.htf, ltf: row.ltf, signalAt: new Date(row.opened_at).getTime(),
+      firstTouchAt: n(d.firstTouchAt), blockTime: n(d.blockTime),
+    };
+    const s = await fetchFlowSeries(sig, now);
+    const empty = !(s.bars["30m"]?.length) && !(s.oi["1h"]?.length);
+    if (row.need_entry) {
+      const m = empty ? { flow_v: FLOW_VERSION, flow_empty: 1 } : entryFlowMetrics(sig, s);
+      await pool.query(`UPDATE nh_signal_snapshots SET metrics = coalesce(metrics, '{}'::jsonb) || $2::jsonb WHERE signal_id = $1`, [row.id, JSON.stringify(m)]);
+    }
+    if (row.need_post) {
+      await pool.query(`UPDATE nh_signal_snapshots SET metrics = coalesce(metrics, '{}'::jsonb) || $2::jsonb WHERE signal_id = $1`,
+        [row.id, JSON.stringify({ ...(empty ? {} : postEntryMetrics(sig, s, now)), flow_post_v: FLOW_VERSION })]);
+    }
+    const pts = await pool.query<{ label: string; at: Date }>(
+      "SELECT label, at FROM nh_signal_trajectory WHERE signal_id = $1 AND NOT (coalesce(metrics, '{}'::jsonb) ? 'flow_v')", [row.id]);
+    for (const p of pts.rows) {
+      const m = empty ? { flow_v: FLOW_VERSION, flow_empty: 1 } : pointFlowMetrics(sig, s, new Date(p.at).getTime());
+      await pool.query(`UPDATE nh_signal_trajectory SET metrics = coalesce(metrics, '{}'::jsonb) || $3::jsonb WHERE signal_id = $1 AND label = $2`,
+        [row.id, p.label, JSON.stringify(m)]);
+    }
+    done += 1;
+  });
+  return done;
 }
 
 /** Due trajectory points, newest first (the live picture stays current; history fills behind). */
