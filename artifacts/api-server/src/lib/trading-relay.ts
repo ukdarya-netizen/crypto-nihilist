@@ -103,7 +103,9 @@ export async function enqueueSignal(s: RelaySignal): Promise<void> {
   await pool.query(
     `INSERT INTO nh_trading_outbox (kind, signal_id, message_id, payload) VALUES ('signal', $1, $2, $3)
      ON CONFLICT (message_id) DO NOTHING`,
-    [s.id, sourceSignalId(s.id), JSON.stringify(signalPayload(s))],
+    // releasedAt = the moment the signal is released (its message goes out): the trading
+    // bot counts freshness from here, not from the bar close in signalAt (owner 2026-11-03).
+    [s.id, sourceSignalId(s.id), JSON.stringify({ ...signalPayload(s), releasedAt: new Date().toISOString() })],
   );
 }
 
