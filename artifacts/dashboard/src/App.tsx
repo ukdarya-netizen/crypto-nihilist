@@ -6,6 +6,7 @@ import Members from "./pages/members";
 import Overview from "./pages/overview";
 import Tracker from "./pages/tracker";
 import Scanner from "./pages/scanner";
+import Rejections from "./pages/rejections";
 import History from "./pages/history";
 import Health from "./pages/health";
 import Metrics from "./pages/metrics";
@@ -41,7 +42,7 @@ export default function App() {
   }
   const owner = currentSession()?.role === "owner";
   const pages: Partial<Record<Route, ReactElement>> = {
-    "/": <Overview />, "/tracker": <Tracker />, "/scanner": <Scanner />, "/history": <History />, "/metrics": <Metrics />,
+    "/": <Overview />, "/tracker": <Tracker />, "/scanner": <Scanner />, "/rejections": <Rejections />, "/history": <History />, "/metrics": <Metrics />,
     "/health": <Health />, "/reference": <Reference />, ...(owner ? { "/members": <Members />, "/strategies": <Strategies /> } : {}),
   };
   const allowed = owner || !OWNER_ROUTES.includes(route);
