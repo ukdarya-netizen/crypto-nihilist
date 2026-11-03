@@ -49,7 +49,12 @@ async function save(r: Report): Promise<void> {
 }
 export async function loadReport(): Promise<Report | null> {
   const { rows } = await pool.query<{ value: Report }>("SELECT value FROM nh_state WHERE key = $1", [KEY]);
-  return rows[0]?.value ?? null;
+  const r = rows[0]?.value ?? null;
+  // A run lives in this process only: after a restart (publish) it is gone, not "still running".
+  if (r && r.status === "running" && !running) {
+    return { ...r, status: "failed", error: "расчёт прерван перезапуском сервера (публикация) — запустите заново" };
+  }
+  return r;
 }
 
 const groupsOf = (side: "long" | "short", passes: boolean): Group[] =>
