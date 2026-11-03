@@ -11,7 +11,8 @@
  */
 import { pool } from "@workspace/db";
 import { INTERVAL_MS, type Candle, type Interval } from "../engine/candles";
-import { COMBOS, MAX_HOLD_MS, entryFilter } from "../engine/config";
+import { COMBOS, MAX_HOLD_MS, candidateChecks, entryFilter, type CandidateChecks } from "../engine/config";
+import { atr, closedAsOf } from "../engine/metrics";
 import { evaluateSetups, type SetupSignal } from "../engine/setups";
 import { SETUP_PRIORITY } from "../engine/runtime";
 import { getCandleHistory, getUniverse, waitForScanIdle } from "../market/coinglass";
@@ -28,7 +29,41 @@ export type DatasetReport = {
   name: "live" | "history";
   from: string | null; to: string | null; trades: number; symbols: number; skippedSymbols: number;
   groups: Record<Group, Array<{ id: string; label: string; stats: Stats }>>;
+  /** Candidate entry filters (owner 2026-11-03): each set followed as its own stream of trades. */
+  filters?: Array<{ id: string; side: "long" | "short"; label: string; stats: Record<string, Stats> }>;
 };
+
+/**
+ * Filter sets checked (owner 2026-11-03). Longs on top of today's filter (each new filter
+ * alone and all three), plus all longs and the three new filters without today's one;
+ * shorts (not filtered today) — ATR, strength, both. Each set is a separate stream with
+ * one open trade per coin and side, as the trading bot.
+ */
+export const FILTER_SETS: Array<{ id: string; side: "long" | "short"; label: string; test: (today: boolean, c: CandidateChecks) => boolean }> = [
+  { id: "long_any", side: "long", label: "Лонги: все, без фильтра", test: () => true },
+  { id: "long_today", side: "long", label: "Лонги: фильтр сейчас (стоп ≥7%, блок ≤300ч, ≥4%)", test: (t) => t },
+  { id: "long_atr", side: "long", label: "сейчас + ATR 30m ≥ 1.3%", test: (t, c) => t && c.atr },
+  { id: "long_disp", side: "long", label: "сейчас + слом за блоком ≥ 0.9 ATR", test: (t, c) => t && c.disp },
+  { id: "long_pen", side: "long", label: "сейчас + заход в блок ≥ 23%", test: (t, c) => t && c.pen },
+  { id: "long_all3", side: "long", label: "сейчас + все три новых", test: (t, c) => t && c.atr && c.disp && c.pen },
+  { id: "long_new3", side: "long", label: "только три новых (без фильтра сейчас)", test: (_t, c) => c.atr && c.disp && c.pen },
+  { id: "short_any", side: "short", label: "Шорты: все (фильтра сейчас нет)", test: () => true },
+  { id: "short_atr", side: "short", label: "ATR 30m ≥ 1.0%", test: (_t, c) => c.atr },
+  { id: "short_disp", side: "short", label: "слом за блоком ≥ 0.9 ATR", test: (_t, c) => c.disp },
+  { id: "short_both", side: "short", label: "ATR + слом", test: (_t, c) => c.atr && c.disp },
+];
+/** The ways the trading bot can lead a Nihilist trade. */
+export const TRADED = ["source", "take5", "take10", "take15"] as const;
+const setsOf = (side: "long" | "short", today: boolean, c: CandidateChecks) =>
+  FILTER_SETS.filter((f) => f.side === side && f.test(today, c)).map((f) => f.id);
+
+/** ATR(14) of closed 30m bars at the moment, % of the last close — as «ATR 30m» on the metrics page. */
+export function atr30PctAt(candles30m: Candle[], at: number): number | null {
+  const closed = closedAsOf(candles30m, "30m", at).slice(-200);
+  const a = atr(closed);
+  const last = closed[closed.length - 1]?.c;
+  return a !== null && last ? (a / last) * 100 : null;
+}
 export type Report = {
   status: "idle" | "running" | "done" | "failed";
   startedAt: string | null; finishedAt: string | null; error: string | null;
@@ -38,7 +73,7 @@ export type Report = {
   parity: { checked: number; mismatched: number } | null;
 };
 
-type Item = { trade: SimTrade; group: Group[]; candles: Candle[] };
+type Item = { trade: SimTrade; group: Group[]; sets: string[]; candles: Candle[] };
 
 async function save(r: Report): Promise<void> {
   await pool.query(
@@ -65,20 +100,33 @@ class Acc {
   private rows = new Map<string, Record<Group, Row[]>>();
   private open = new Map<string, Record<Group, number>>();
   private times: number[] = [];
+  private fRows = new Map<string, Record<string, Row[]>>();
+  private fOpen = new Map<string, Record<string, number>>();
   constructor(private readonly ms: Mgmt[] = variants()) {
     for (const m of ms) {
       this.rows.set(m.id, { long_filtered: [], long_all: [], short: [] });
       this.open.set(m.id, { long_filtered: 0, long_all: 0, short: 0 });
     }
+    for (const f of FILTER_SETS) {
+      this.fRows.set(f.id, Object.fromEntries(TRADED.map((id) => [id, []])));
+      this.fOpen.set(f.id, Object.fromEntries(TRADED.map((id) => [id, 0])));
+    }
   }
   add(it: Item): void {
-    if (!it.group.length) return;
-    this.times.push(it.trade.openedAt);
+    if (!it.group.length && !it.sets.length) return;
+    if (it.group.length) this.times.push(it.trade.openedAt);
     for (const m of this.ms) {
+      const inSets = (TRADED as readonly string[]).includes(m.id) ? it.sets : [];
+      if (!it.group.length && !inSets.length) continue;
       const r = simulate(it.trade, it.candles, SPAN, m);
+      const row = r.closed ? { tradeId: it.trade.id, openedAt: it.trade.openedAt, closedAt: r.closedAt!, pnlPct: r.pnlPct, reason: r.reason!, holdH: r.holdH, peakPct: r.peakPct } : null;
       for (const g of it.group) {
-        if (!r.closed) { this.open.get(m.id)![g] += 1; continue; }
-        this.rows.get(m.id)![g].push({ tradeId: it.trade.id, openedAt: it.trade.openedAt, closedAt: r.closedAt!, pnlPct: r.pnlPct, reason: r.reason!, holdH: r.holdH, peakPct: r.peakPct });
+        if (!row) { this.open.get(m.id)![g] += 1; continue; }
+        this.rows.get(m.id)![g].push(row);
+      }
+      for (const f of inSets) {
+        if (!row) { this.fOpen.get(f)![m.id] += 1; continue; }
+        this.fRows.get(f)![m.id].push(row);
       }
     }
   }
@@ -87,8 +135,12 @@ class Acc {
     for (const m of this.ms) for (const g of Object.keys(groups) as Group[]) {
       groups[g].push({ id: m.id, label: m.label, stats: stats(this.rows.get(m.id)![g], this.open.get(m.id)![g]) });
     }
+    const filters = FILTER_SETS.map((f) => ({
+      id: f.id, side: f.side, label: f.label,
+      stats: Object.fromEntries(TRADED.map((id) => [id, stats(this.fRows.get(f.id)![id], this.fOpen.get(f.id)![id])])),
+    }));
     return {
-      name, trades: this.times.length, symbols, skippedSymbols: skipped, groups,
+      name, trades: this.times.length, symbols, skippedSymbols: skipped, groups, filters,
       from: this.times.length ? new Date(Math.min(...this.times)).toISOString() : null,
       to: this.times.length ? new Date(Math.max(...this.times)).toISOString() : null,
     };
@@ -98,13 +150,15 @@ class Acc {
 // ---------- live ----------
 type LiveRow = {
   id: number; symbol: string; side: "long" | "short"; htf: "4h" | "1d"; entry: number; stop: number; risk_pct: number;
-  opened_at: Date; block_top: number; block_bottom: number; details: any;
+  opened_at: Date; block_top: number; block_bottom: number; details: any; metrics: Record<string, unknown> | null;
 };
+const numOrNull = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
 async function liveItems(): Promise<{ items: Item[]; symbols: number; skipped: number }> {
   const { rows } = await pool.query<LiveRow>(
-    `SELECT id, symbol, side, htf, entry, stop, risk_pct, opened_at, block_top, block_bottom, details
-     FROM nh_signals WHERE live ORDER BY opened_at`,
+    `SELECT s.id, s.symbol, s.side, s.htf, s.entry, s.stop, s.risk_pct, s.opened_at, s.block_top, s.block_bottom, s.details,
+       (SELECT n.metrics FROM nh_signal_snapshots n WHERE n.signal_id = s.id ORDER BY n.version DESC LIMIT 1) AS metrics
+     FROM nh_signals s WHERE s.live ORDER BY s.opened_at`,
   );
   const bySymbol = new Map<string, LiveRow[]>();
   for (const r of rows) bySymbol.set(r.symbol, [...(bySymbol.get(r.symbol) ?? []), r]);
@@ -125,9 +179,16 @@ async function liveItems(): Promise<{ items: Item[]; symbols: number; skipped: n
         side: r.side, riskPct: r.risk_pct, entry: r.entry, blockTop: r.block_top, blockBottom: r.block_bottom,
         signalAt: openedAt, blockCreatedAt: d.blockCreatedAt ?? null, blockTime: d.blockTime ?? null,
       }).pass;
+      // Candidate filters on live signals: the values recorded at the signal (metrics snapshot, else signal details).
+      const m = r.metrics ?? {};
+      const checks = candidateChecks({
+        side: r.side, atr30Pct: numOrNull(m.atrpct_30m),
+        displacementAtr: numOrNull(m.ob_displacement_atr) ?? numOrNull(d.ob?.displacementAtr),
+        penetrationPct: numOrNull(m.ob_penetration_pct) ?? numOrNull(d.ob?.penetrationPct),
+      });
       items.push({
         trade: { id: `nh-${r.id}`, side: r.side, entry: r.entry, stop: r.stop, openedAt, maxHoldMs: MAX_HOLD_MS[r.htf] },
-        group: groupsOf(r.side, passes), candles,
+        group: groupsOf(r.side, passes), sets: setsOf(r.side, passes, checks), candles,
       });
     }
   }
@@ -165,20 +226,28 @@ export function historySignals(symbol: string, data: Data, now = Date.now()): It
   all.sort((a, b) => a.signalAt - b.signalAt || prio(a) - prio(b));
   // One open trade per coin and side. Longs are followed twice: every long ("long_all") and only the
   // longs that pass today's filter ("long_filtered") — a failed long never blocks a filtered one.
-  const busy: Record<Group, number> = { long_all: 0, long_filtered: 0, short: 0 };
+  // Each candidate filter set is its own stream too.
+  const busy: Record<string, number> = { long_all: 0, long_filtered: 0, short: 0 };
+  for (const f of FILTER_SETS) busy[`f:${f.id}`] = 0;
   const items: Item[] = [];
   for (const s of all) {
     const passes = s.side === "short" || entryFilter({
       side: s.side, riskPct: s.riskPct, entry: s.entry, blockTop: s.block.top, blockBottom: s.block.bottom,
       signalAt: s.signalAt, blockCreatedAt: s.block.createdAt ?? null, blockTime: s.block.time ?? null,
     }).pass;
-    const group = groupsOf(s.side, passes).filter((g) => s.signalAt >= busy[g]);
-    if (!group.length) continue;
+    const group = groupsOf(s.side, passes).filter((g) => s.signalAt >= busy[g]!);
+    const checks = candidateChecks({
+      side: s.side, atr30Pct: atr30PctAt(data["30m"], s.signalAt), displacementAtr: s.ob.displacementAtr, penetrationPct: s.ob.penetrationPct,
+    });
+    const sets = setsOf(s.side, passes, checks).filter((f) => s.signalAt >= busy[`f:${f}`]!);
+    if (!group.length && !sets.length) continue;
     const trade: SimTrade = { id: `${symbol}:${s.setup}:${s.signalAt}`, side: s.side, entry: s.entry, stop: s.stop, openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf] };
     const base = simulate(trade, data["30m"], SPAN, SOURCE);
-    for (const g of group) busy[g] = base.closed ? base.closedAt! : Infinity;
+    const until = base.closed ? base.closedAt! : Infinity;
+    for (const g of group) busy[g] = until;
+    for (const f of sets) busy[`f:${f}`] = until;
     const start = trade.openedAt - SPAN, end = trade.openedAt + trade.maxHoldMs + SPAN;
-    items.push({ trade, group, candles: data["30m"].filter((c) => c.t >= start && c.t <= end) });
+    items.push({ trade, group, sets, candles: data["30m"].filter((c) => c.t >= start && c.t <= end) });
   }
   return items;
 }
