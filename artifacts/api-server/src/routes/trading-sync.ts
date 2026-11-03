@@ -9,6 +9,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
 import { ensureRelayTable, sourceSignalId, tradingToken, wireSymbol } from "../lib/trading-relay";
+import { HISTORY_DAYS, loadReport, runStrategyReport, strategyReportRunning } from "../analysis/strategy-report";
 
 const PAGE = 200;
 
@@ -69,6 +70,27 @@ router.get("/trading/position-sync", async (req, res) => {
   } catch {
     res.status(503).json({ error: "position_sync_unavailable" });
   }
+});
+
+// The trading bot shows Nihilist's strategy report on its «Стратегии» page (owner 2026-11-03).
+router.get("/trading/strategy-report", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const expected = tradingToken();
+  if (!expected) { res.status(503).json({ error: "trading_bot_access_not_configured" }); return; }
+  if (!tokenMatches(req.get("x-trading-token"), expected)) { res.status(401).json({ error: "unauthorized" }); return; }
+  try {
+    res.json({ running: strategyReportRunning(), report: await loadReport(), historyDays: HISTORY_DAYS });
+  } catch {
+    res.status(503).json({ error: "report_unavailable" });
+  }
+});
+router.post("/trading/strategy-report/run", (req, res) => {
+  const expected = tradingToken();
+  if (!expected) { res.status(503).json({ error: "trading_bot_access_not_configured" }); return; }
+  if (!tokenMatches(req.get("x-trading-token"), expected)) { res.status(401).json({ error: "unauthorized" }); return; }
+  if (strategyReportRunning()) { res.status(409).json({ error: "already_running" }); return; }
+  void runStrategyReport({});
+  res.status(202).json({ started: true });
 });
 
 export default router;
