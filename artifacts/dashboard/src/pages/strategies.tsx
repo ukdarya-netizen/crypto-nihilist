@@ -72,6 +72,7 @@ export default function Strategies() {
   const [starting, setStarting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
+  const [exportingTraj, setExportingTraj] = useState<string | null>(null);
 
   const report = data?.report ?? null;
   const running = Boolean(data?.running) || report?.status === "running";
@@ -110,6 +111,10 @@ export default function Strategies() {
           <button type="button" onClick={() => void exportTrades(setExporting)} disabled={exporting === "…"}
             className="flex h-9 items-center gap-2 border border-border px-3 text-xs disabled:opacity-50">
             <Download className="size-4" />{exporting ?? "Наши сделки с метриками (CSV)"}
+          </button>
+          <button type="button" onClick={() => void exportTrades(setExportingTraj, "/nh/live-trajectory-export", "nihilist-trajectory")} disabled={exportingTraj === "…"}
+            className="flex h-9 items-center gap-2 border border-border px-3 text-xs disabled:opacity-50">
+            <Download className="size-4" />{exportingTraj ?? "Траектория лонгов: от касания блока до +24 ч (CSV)"}
           </button>
           {report && report.status === "done" && (
             <button type="button" onClick={copy} className="flex h-9 items-center gap-2 border border-border px-3 text-xs">
@@ -285,10 +290,10 @@ function Dist({ title, data, n }: { title: string; data: Array<[string, number]>
  * Our trades with every entry metric as a CSV file (owner 2026-11-04: analysis on our own trades, by name).
  * «;» between columns and a decimal comma, so it opens as a table in Excel / Numbers.
  */
-async function exportTrades(status: (s: string | null) => void): Promise<void> {
+async function exportTrades(status: (s: string | null) => void, path = "/nh/live-trades-export", name = "nihilist-trades"): Promise<void> {
   status("…");
   try {
-    const d = await get<{ columns: string[]; rows: unknown[][] }>("/nh/live-trades-export");
+    const d = await get<{ columns: string[]; rows: unknown[][] }>(path);
     const cell = (v: unknown) => {
       if (v === null || v === undefined) return "";
       const t = typeof v === "number" ? String(v).replace(".", ",") : String(v);
@@ -297,10 +302,10 @@ async function exportTrades(status: (s: string | null) => void): Promise<void> {
     const csv = "\uFEFF" + [d.columns, ...d.rows].map((r) => r.map(cell).join(";")).join("\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    a.download = `nihilist-trades-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `${name}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
-    status(`Скачано: ${d.rows.length} сделок`);
+    status(`Скачано: ${d.rows.length} строк`);
   } catch (e) {
     status(`Не удалось: ${e instanceof Error ? e.message : String(e)}`);
   }

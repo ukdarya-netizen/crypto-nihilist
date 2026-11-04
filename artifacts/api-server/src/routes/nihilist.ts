@@ -149,6 +149,34 @@ router.get("/nh/live-trades-export", async (req, res) => {
   });
 });
 
+/**
+ * Trajectory of our trades (owner 2026-11-04: what changes after the order-block touch and after the
+ * entry): every recorded point from the first touch of the block to 24 hours after the entry — price vs
+ * entry and every metric at that moment (VSA 30m/1h/4h, OI on every timeframe, delta, flow since entry,
+ * technical picture). Owner only; the dashboard turns it into a CSV file.
+ */
+router.get("/nh/live-trajectory-export", async (req, res) => {
+  if (!isOwnerReq(req)) { res.status(403).json({ error: "Только владелец" }); return; }
+  await ensureSnapshotTable();
+  const { rows } = await pool.query(
+    `SELECT t.signal_id, s.symbol, s.side, s.setup, s.status, s.close_reason, s.pnl_pct, s.opened_at,
+            t.label, t.elapsed_ms, t.at, t.price, t.pct_from_entry, t.reconstructed, t.metrics
+     FROM nh_signal_trajectory t JOIN nh_signals s ON s.id = t.signal_id
+     WHERE s.live AND s.side = 'long' AND t.label NOT LIKE 'be+%' AND t.elapsed_ms <= 86400000
+     ORDER BY s.opened_at DESC, t.elapsed_ms`,
+  );
+  const keys = new Set<string>();
+  for (const r of rows) for (const k of Object.keys(r.metrics ?? {})) keys.add(k);
+  const metricKeys = [...keys].sort();
+  const base = ["signal_id", "symbol", "side", "setup", "status", "close_reason", "pnl_pct", "opened_at", "label", "elapsed_ms", "at", "price", "pct_from_entry", "reconstructed"];
+  const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : v);
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    columns: [...base, ...metricKeys],
+    rows: rows.map((r) => [...base.map((k) => iso(r[k]) ?? null), ...metricKeys.map((k) => (r.metrics ?? {})[k] ?? null)]),
+  });
+});
+
 router.get("/nh/decisions", async (req, res) => {
   const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
   const decision = typeof req.query.decision === "string" ? req.query.decision : null;
