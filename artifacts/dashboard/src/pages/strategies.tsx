@@ -20,7 +20,31 @@ type Dataset = {
   groups: Record<Group, Array<{ id: string; label: string; stats: Stats }>>;
   filters?: Array<{ id: string; side: "long" | "short"; label: string; stats: Record<string, Stats> }>;
   smcUnknown?: number;
+  tradeList?: TradeRow[];
 };
+type Smc = { trendSwing: boolean | null; trendInternal: boolean | null; discount: boolean | null; sweep: boolean | null; fvg: boolean | null; fresh: boolean | null };
+type TradeRow = {
+  symbol: string; side: "long" | "short"; setup: string; openedAt: string;
+  source: { pnlPct: number; reason: string | null }; take5: { pnlPct: number; reason: string | null };
+  today: boolean | null; smc: Smc | null;
+};
+const REASON: Record<string, string> = { stop: "стоп", breakeven: "б.у.", trailing: "трейлинг", take: "тейк", timeout: "время" };
+const yn = (v: boolean | null | undefined) => (v === true ? "да" : v === false ? "нет" : "?");
+const res = (r: { pnlPct: number; reason: string | null }) => `${sg(r.pnlPct)}% ${r.reason ? REASON[r.reason] ?? r.reason : "открыта"}`;
+/** Plain-text list of every live trade and the rules it passes (owner 2026-11-04). */
+function tradesText(rows: TradeRow[]): string[] {
+  const out = ["", "--- Наши сделки: результат и правила (да = сделка проходит правило; ? = не измерено, считается «нет»)",
+    "дата | монета | сторона | сетап | как Нигилист | фикс +5% | фильтр сейчас | swing-тренд | internal-тренд | дисконт/премиум | ликвидность | FVG | первый возврат"];
+  for (const side of ["long", "short"] as const) {
+    for (const t of rows.filter((r) => r.side === side)) {
+      const m = t.smc;
+      out.push([dt(t.openedAt), t.symbol.replace(/-?USDT$/, ""), side === "long" ? "лонг" : "шорт", t.setup.replace(/_(long|short)$/, ""),
+        res(t.source), res(t.take5), t.today === null ? "—" : yn(t.today),
+        yn(m?.trendSwing), yn(m?.trendInternal), yn(m?.discount), yn(m?.sweep), yn(m?.fvg), yn(m?.fresh)].join(" | "));
+    }
+  }
+  return out;
+}
 type Report = {
   status: "idle" | "running" | "done" | "failed"; startedAt: string | null; finishedAt: string | null; error: string | null;
   progress: { stage: string; done: number; total: number }; datasets: Dataset[]; parity: { checked: number; mismatched: number } | null;
@@ -276,6 +300,7 @@ function reportText(r: Report): string {
           `${sg(s.half1.avg)} (${s.half1.n})`, `${sg(s.half2.avg)} (${s.half2.n})`, s.buckets.map(([k, v]) => `${k}:${v}`).join(" ")].join(" | "));
       }
     }
+    if (ds.tradeList?.length) out.push(...tradesText(ds.tradeList));
   }
   return out.join("\n");
 }
