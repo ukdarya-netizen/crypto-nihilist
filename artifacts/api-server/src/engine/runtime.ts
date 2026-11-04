@@ -227,7 +227,7 @@ function signalDetails(s: SetupSignal): Record<string, unknown> {
     blockTime: s.block.time, blockCreatedAt: s.block.createdAt, firstTouchAt: s.firstTouchAt,
     lastTouchAt: s.lastTouchAt, extreme: s.extreme, chochLevel: s.chochLevel,
     htfSwingTrend: s.htfSwingTrend, htfInternalTrend: s.htfInternalTrend, ltfAtr: s.ltfAtr,
-    ob: s.ob,
+    ob: s.ob, smc: s.smc,
   };
 }
 

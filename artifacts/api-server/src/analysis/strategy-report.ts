@@ -11,9 +11,8 @@
  */
 import { pool } from "@workspace/db";
 import { INTERVAL_MS, type Candle, type Interval } from "../engine/candles";
-import { COMBOS, MAX_HOLD_MS, candidateChecks, entryFilter, type CandidateChecks } from "../engine/config";
-import { atr, closedAsOf } from "../engine/metrics";
-import { evaluateSetups, type SetupSignal } from "../engine/setups";
+import { COMBOS, MAX_HOLD_MS, entryFilter } from "../engine/config";
+import { evaluateSetups, type SetupSignal, type SmcChecks } from "../engine/setups";
 import { SETUP_PRIORITY } from "../engine/runtime";
 import { getCandleHistory, getUniverse, waitForScanIdle } from "../market/coinglass";
 import { logger } from "../lib/logger";
@@ -29,41 +28,45 @@ export type DatasetReport = {
   name: "live" | "history";
   from: string | null; to: string | null; trades: number; symbols: number; skippedSymbols: number;
   groups: Record<Group, Array<{ id: string; label: string; stats: Stats }>>;
-  /** Candidate entry filters (owner 2026-11-03): each set followed as its own stream of trades. */
+  /** SMC rules (owner 2026-11-04): each set followed as its own stream of trades. */
   filters?: Array<{ id: string; side: "long" | "short"; label: string; stats: Record<string, Stats> }>;
+  /** Live signals whose SMC conditions could not be measured (not stored and not reproduced on the history). */
+  smcUnknown?: number;
 };
 
 /**
- * Filter sets checked (owner 2026-11-03). Longs on top of today's filter (each new filter
- * alone and all three), plus all longs and the three new filters without today's one;
- * shorts (not filtered today) — ATR, strength, both. Each set is a separate stream with
- * one open trade per coin and side, as the trading bot.
+ * Classic SMC rules the setup does not require (owner 2026-11-04), checked one by one and all
+ * together: longs on top of all longs and on top of today's filter, shorts on top of all shorts.
+ * An unknown value fails its rule. Each set is a separate stream with one open trade per coin
+ * and side, as the trading bot.
  */
-export const FILTER_SETS: Array<{ id: string; side: "long" | "short"; label: string; test: (today: boolean, c: CandidateChecks) => boolean }> = [
-  { id: "long_any", side: "long", label: "Лонги: все, без фильтра", test: () => true },
+type Rule = { id: keyof SmcChecks | "all"; label: (side: "long" | "short") => string };
+const RULES: Rule[] = [
+  { id: "trendSwing", label: () => "тренд старшего ТФ (swing) по ходу" },
+  { id: "trendInternal", label: () => "тренд старшего ТФ (internal) по ходу" },
+  { id: "discount", label: (s) => (s === "long" ? "вход в дисконте (нижняя половина диапазона)" : "вход в премиуме (верхняя половина диапазона)") },
+  { id: "sweep", label: () => "снятие ликвидности перед сломом" },
+  { id: "fvg", label: () => "имбаланс (FVG) у блока" },
+  { id: "fresh", label: () => "блок нетронутый (первое касание)" },
+  { id: "all", label: () => "все SMC: swing-тренд, зона, ликвидность, FVG, нетронутый" },
+];
+const ALL_SMC: Array<keyof SmcChecks> = ["trendSwing", "discount", "sweep", "fvg", "fresh"];
+const passRule = (id: Rule["id"], c: SmcChecks | null) =>
+  c !== null && (id === "all" ? ALL_SMC.every((k) => c[k] === true) : c[id] === true);
+
+export const FILTER_SETS: Array<{ id: string; side: "long" | "short"; label: string; test: (today: boolean, c: SmcChecks | null) => boolean }> = [
+  { id: "long_any", side: "long", label: "Лонги: все", test: () => true },
+  ...RULES.map((r) => ({ id: `long_any_${r.id}`, side: "long" as const, label: `все + ${r.label("long")}`, test: (_t: boolean, c: SmcChecks | null) => passRule(r.id, c) })),
   { id: "long_today", side: "long", label: "Лонги: фильтр сейчас (стоп ≥7%, блок ≤300ч, ≥4%)", test: (t) => t },
-  { id: "long_atr", side: "long", label: "сейчас + ATR 30m ≥ 1.3%", test: (t, c) => t && c.atr },
-  { id: "long_disp", side: "long", label: "сейчас + слом за блоком ≥ 0.9 ATR", test: (t, c) => t && c.disp },
-  { id: "long_pen", side: "long", label: "сейчас + заход в блок ≥ 23%", test: (t, c) => t && c.pen },
-  { id: "long_all3", side: "long", label: "сейчас + все три новых", test: (t, c) => t && c.atr && c.disp && c.pen },
-  { id: "long_new3", side: "long", label: "только три новых (без фильтра сейчас)", test: (_t, c) => c.atr && c.disp && c.pen },
-  { id: "short_any", side: "short", label: "Шорты: все (фильтра сейчас нет)", test: () => true },
-  { id: "short_atr", side: "short", label: "ATR 30m ≥ 1.0%", test: (_t, c) => c.atr },
-  { id: "short_disp", side: "short", label: "слом за блоком ≥ 0.9 ATR", test: (_t, c) => c.disp },
-  { id: "short_both", side: "short", label: "ATR + слом", test: (_t, c) => c.atr && c.disp },
+  ...RULES.map((r) => ({ id: `long_today_${r.id}`, side: "long" as const, label: `сейчас + ${r.label("long")}`, test: (t: boolean, c: SmcChecks | null) => t && passRule(r.id, c) })),
+  { id: "short_any", side: "short", label: "Шорты: все", test: () => true },
+  ...RULES.map((r) => ({ id: `short_any_${r.id}`, side: "short" as const, label: `все + ${r.label("short")}`, test: (_t: boolean, c: SmcChecks | null) => passRule(r.id, c) })),
 ];
 /** The ways the trading bot can lead a Nihilist trade. */
 export const TRADED = ["source", "take5", "take10", "take15"] as const;
-const setsOf = (side: "long" | "short", today: boolean, c: CandidateChecks) =>
+const setsOf = (side: "long" | "short", today: boolean, c: SmcChecks | null) =>
   FILTER_SETS.filter((f) => f.side === side && f.test(today, c)).map((f) => f.id);
 
-/** ATR(14) of closed 30m bars at the moment, % of the last close — as «ATR 30m» on the metrics page. */
-export function atr30PctAt(candles30m: Candle[], at: number): number | null {
-  const closed = closedAsOf(candles30m, "30m", at).slice(-200);
-  const a = atr(closed);
-  const last = closed[closed.length - 1]?.c;
-  return a !== null && last ? (a / last) * 100 : null;
-}
 export type Report = {
   status: "idle" | "running" | "done" | "failed";
   startedAt: string | null; finishedAt: string | null; error: string | null;
@@ -130,7 +133,7 @@ class Acc {
       }
     }
   }
-  report(name: DatasetReport["name"], symbols: number, skipped: number): DatasetReport {
+  report(name: DatasetReport["name"], symbols: number, skipped: number, smcUnknown?: number): DatasetReport {
     const groups = { long_filtered: [], long_all: [], short: [] } as DatasetReport["groups"];
     for (const m of this.ms) for (const g of Object.keys(groups) as Group[]) {
       groups[g].push({ id: m.id, label: m.label, stats: stats(this.rows.get(m.id)![g], this.open.get(m.id)![g]) });
@@ -140,7 +143,7 @@ class Acc {
       stats: Object.fromEntries(TRADED.map((id) => [id, stats(this.fRows.get(f.id)![id], this.fOpen.get(f.id)![id])])),
     }));
     return {
-      name, trades: this.times.length, symbols, skippedSymbols: skipped, groups, filters,
+      name, trades: this.times.length, symbols, skippedSymbols: skipped, groups, filters, ...(smcUnknown !== undefined ? { smcUnknown } : {}),
       from: this.times.length ? new Date(Math.min(...this.times)).toISOString() : null,
       to: this.times.length ? new Date(Math.max(...this.times)).toISOString() : null,
     };
@@ -149,21 +152,28 @@ class Acc {
 
 // ---------- live ----------
 type LiveRow = {
-  id: number; symbol: string; side: "long" | "short"; htf: "4h" | "1d"; entry: number; stop: number; risk_pct: number;
-  opened_at: Date; block_top: number; block_bottom: number; details: any; metrics: Record<string, unknown> | null;
+  id: number; symbol: string; setup: string; side: "long" | "short"; htf: "4h" | "1d"; entry: number; stop: number; risk_pct: number;
+  bar_time: string; opened_at: Date; block_top: number; block_bottom: number; details: any;
 };
-const numOrNull = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const smcKey = (symbol: string, setup: string, barTime: number) => `${symbol}|${setup}|${barTime}`;
 
-async function liveItems(): Promise<{ items: Item[]; symbols: number; skipped: number }> {
+async function liveRows(): Promise<LiveRow[]> {
   const { rows } = await pool.query<LiveRow>(
-    `SELECT s.id, s.symbol, s.side, s.htf, s.entry, s.stop, s.risk_pct, s.opened_at, s.block_top, s.block_bottom, s.details,
-       (SELECT n.metrics FROM nh_signal_snapshots n WHERE n.signal_id = s.id ORDER BY n.version DESC LIMIT 1) AS metrics
-     FROM nh_signals s WHERE s.live ORDER BY s.opened_at`,
+    `SELECT id, symbol, setup, side, htf, entry, stop, risk_pct, bar_time, opened_at, block_top, block_bottom, details
+     FROM nh_signals WHERE live ORDER BY opened_at`,
   );
+  return rows;
+}
+
+/**
+ * Live signals as trades. SMC conditions: those stored with the signal (from 2026-11-04), else the
+ * same signal reproduced on the 60-day history (same setup and bar); else unknown (counted).
+ */
+async function liveItems(rows: LiveRow[], smc: Map<string, SmcChecks>): Promise<{ items: Item[]; symbols: number; skipped: number; smcUnknown: number }> {
   const bySymbol = new Map<string, LiveRow[]>();
   for (const r of rows) bySymbol.set(r.symbol, [...(bySymbol.get(r.symbol) ?? []), r]);
   const items: Item[] = [];
-  let skipped = 0;
+  let skipped = 0, smcUnknown = 0;
   for (const [symbol, list] of bySymbol) {
     const from = Math.min(...list.map((r) => r.opened_at.getTime())) - SPAN;
     const { rows: cs } = await pool.query<{ t: string; o: number; h: number; l: number; c: number }>(
@@ -179,20 +189,15 @@ async function liveItems(): Promise<{ items: Item[]; symbols: number; skipped: n
         side: r.side, riskPct: r.risk_pct, entry: r.entry, blockTop: r.block_top, blockBottom: r.block_bottom,
         signalAt: openedAt, blockCreatedAt: d.blockCreatedAt ?? null, blockTime: d.blockTime ?? null,
       }).pass;
-      // Candidate filters on live signals: the values recorded at the signal (metrics snapshot, else signal details).
-      const m = r.metrics ?? {};
-      const checks = candidateChecks({
-        side: r.side, atr30Pct: numOrNull(m.atrpct_30m),
-        displacementAtr: numOrNull(m.ob_displacement_atr) ?? numOrNull(d.ob?.displacementAtr),
-        penetrationPct: numOrNull(m.ob_penetration_pct) ?? numOrNull(d.ob?.penetrationPct),
-      });
+      const checks: SmcChecks | null = d.smc ?? smc.get(smcKey(symbol, r.setup, Number(r.bar_time))) ?? null;
+      if (!checks) smcUnknown += 1;
       items.push({
         trade: { id: `nh-${r.id}`, side: r.side, entry: r.entry, stop: r.stop, openedAt, maxHoldMs: MAX_HOLD_MS[r.htf] },
         group: groupsOf(r.side, passes), sets: setsOf(r.side, passes, checks), candles,
       });
     }
   }
-  return { items, symbols: bySymbol.size, skipped };
+  return { items, symbols: bySymbol.size, skipped, smcUnknown };
 }
 
 // ---------- history ----------
@@ -215,18 +220,22 @@ async function history(symbol: string): Promise<Data | null> {
 const SOURCE = variants()[0]!;
 const prio = (s: SetupSignal) => SETUP_PRIORITY.indexOf(`${s.htf}_${s.ltf}`);
 
-/** Signals of one coin as live: one open trade per side (by Nihilist's own management), best setup first. */
-export function historySignals(symbol: string, data: Data, now = Date.now()): Item[] {
+/** Every setup signal of one coin over the last HISTORY_DAYS, in time order (best setup first). */
+export function allSignals(data: Data, now = Date.now()): SetupSignal[] {
   const from = now - HISTORY_DAYS * 86_400_000;
   const all: SetupSignal[] = [];
   for (const combo of COMBOS) {
     const { signals } = evaluateSetups({ htf: combo.htf, ltf: combo.ltf, htfCandles: data[combo.htf], ltfCandles: data[combo.ltf] });
     all.push(...signals.filter((s) => s.signalAt >= from));
   }
-  all.sort((a, b) => a.signalAt - b.signalAt || prio(a) - prio(b));
+  return all.sort((a, b) => a.signalAt - b.signalAt || prio(a) - prio(b));
+}
+
+/** Signals of one coin as live: one open trade per side (by Nihilist's own management), best setup first. */
+export function historySignals(symbol: string, data: Data, all: SetupSignal[] = allSignals(data)): Item[] {
   // One open trade per coin and side. Longs are followed twice: every long ("long_all") and only the
   // longs that pass today's filter ("long_filtered") — a failed long never blocks a filtered one.
-  // Each candidate filter set is its own stream too.
+  // Each SMC rule set is its own stream too.
   const busy: Record<string, number> = { long_all: 0, long_filtered: 0, short: 0 };
   for (const f of FILTER_SETS) busy[`f:${f.id}`] = 0;
   const items: Item[] = [];
@@ -236,10 +245,7 @@ export function historySignals(symbol: string, data: Data, now = Date.now()): It
       signalAt: s.signalAt, blockCreatedAt: s.block.createdAt ?? null, blockTime: s.block.time ?? null,
     }).pass;
     const group = groupsOf(s.side, passes).filter((g) => s.signalAt >= busy[g]!);
-    const checks = candidateChecks({
-      side: s.side, atr30Pct: atr30PctAt(data["30m"], s.signalAt), displacementAtr: s.ob.displacementAtr, penetrationPct: s.ob.penetrationPct,
-    });
-    const sets = setsOf(s.side, passes, checks).filter((f) => s.signalAt >= busy[`f:${f}`]!);
+    const sets = setsOf(s.side, passes, s.smc).filter((f) => s.signalAt >= busy[`f:${f}`]!);
     if (!group.length && !sets.length) continue;
     const trade: SimTrade = { id: `${symbol}:${s.setup}:${s.signalAt}`, side: s.side, entry: s.entry, stop: s.stop, openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf] };
     const base = simulate(trade, data["30m"], SPAN, SOURCE);
@@ -263,34 +269,38 @@ export async function runStrategyReport(opts: { history?: boolean } = {}): Promi
   };
   try {
     await save(report);
-    const live = await liveItems();
+    const rows = await liveRows();
+    const liveSymbols = new Set(rows.map((r) => r.symbol));
+    const withHistory = opts.history !== false;
+    const universe = withHistory ? await getUniverse() : [];
+    if (!universe) throw new Error("CoinGlass: список монет не получен");
+    const inUniverse = new Set(universe.map((u) => u.instrumentId));
+    // Every coin of the backtest, plus live coins no longer listed (their SMC conditions only).
+    const symbols = [...inUniverse, ...[...liveSymbols].filter((s) => !inUniverse.has(s))];
+    const acc = new Acc();
+    const smc = new Map<string, SmcChecks>();
+    let skipped = 0;
+    report.progress = { stage: "history", done: 0, total: symbols.length };
+    for (const [i, symbol] of symbols.entries()) {
+      const data = await history(symbol).catch(() => null);
+      if (!data) { if (inUniverse.has(symbol)) skipped += 1; }
+      else {
+        const all = allSignals(data);
+        if (liveSymbols.has(symbol)) for (const s of all) smc.set(smcKey(symbol, s.setup, s.barTime), s.smc);
+        if (inUniverse.has(symbol)) for (const it of historySignals(symbol, data, all)) acc.add(it);
+      }
+      if ((i + 1) % 10 === 0 || i + 1 === symbols.length) {
+        report.progress = { stage: "history", done: i + 1, total: symbols.length };
+        await save(report);
+      }
+      await new Promise((r) => setImmediate(r));
+    }
+    const live = await liveItems(rows, smc);
     const liveAcc = new Acc();
     for (const it of live.items) liveAcc.add(it);
-    report.datasets.push(liveAcc.report("live", live.symbols, live.skipped));
+    report.datasets.push(liveAcc.report("live", live.symbols, live.skipped, live.smcUnknown));
     report.parity = await parityCheck(live.items);
-    report.progress = { stage: "live", done: 1, total: 1 };
-    await save(report);
-
-    if (opts.history !== false) {
-      const universe = await getUniverse();
-      if (!universe) throw new Error("CoinGlass: список монет не получен");
-      const acc = new Acc();
-      let skipped = 0;
-      report.progress = { stage: "history", done: 0, total: universe.length };
-      for (const [i, u] of universe.entries()) {
-        const data = await history(u.instrumentId).catch(() => null);
-        if (!data) skipped += 1;
-        else {
-          for (const it of historySignals(u.instrumentId, data)) acc.add(it);
-        }
-        if ((i + 1) % 10 === 0 || i + 1 === universe.length) {
-          report.progress = { stage: "history", done: i + 1, total: universe.length };
-          await save(report);
-        }
-        await new Promise((r) => setImmediate(r));
-      }
-      report.datasets.push(acc.report("history", universe.length - skipped, skipped));
-    }
+    if (withHistory) report.datasets.push(acc.report("history", universe.length - skipped, skipped));
     report.status = "done";
     report.finishedAt = new Date().toISOString();
     await save(report);
