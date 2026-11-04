@@ -5,8 +5,8 @@
  * chooses the bot's strategy for Nihilist from it.
  */
 import { Fragment, useState } from "react";
-import { Copy, Loader2, Play } from "lucide-react";
-import { post, usePoll } from "../lib/api";
+import { Copy, Download, Loader2, Play } from "lucide-react";
+import { get, post, usePoll } from "../lib/api";
 
 type Stats = {
   n: number; open: number; winPct: number; stopPct: number; flatPct: number; takePct: number; trailPct: number; timeoutPct: number;
@@ -71,6 +71,7 @@ export default function Strategies() {
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [exporting, setExporting] = useState<string | null>(null);
 
   const report = data?.report ?? null;
   const running = Boolean(data?.running) || report?.status === "running";
@@ -105,6 +106,10 @@ export default function Strategies() {
             className="flex h-9 items-center gap-2 border border-primary bg-primary px-3 text-xs font-bold uppercase text-white disabled:opacity-50">
             {running || starting ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
             {running ? "Считается…" : report ? "Пересчитать" : "Запустить расчёт"}
+          </button>
+          <button type="button" onClick={() => void exportTrades(setExporting)} disabled={exporting === "…"}
+            className="flex h-9 items-center gap-2 border border-border px-3 text-xs disabled:opacity-50">
+            <Download className="size-4" />{exporting ?? "Наши сделки с метриками (CSV)"}
           </button>
           {report && report.status === "done" && (
             <button type="button" onClick={copy} className="flex h-9 items-center gap-2 border border-border px-3 text-xs">
@@ -274,6 +279,32 @@ function Dist({ title, data, n }: { title: string; data: Array<[string, number]>
       ))}
     </div>
   );
+}
+
+/**
+ * Our trades with every entry metric as a CSV file (owner 2026-11-04: analysis on our own trades, by name).
+ * «;» between columns and a decimal comma, so it opens as a table in Excel / Numbers.
+ */
+async function exportTrades(status: (s: string | null) => void): Promise<void> {
+  status("…");
+  try {
+    const d = await get<{ columns: string[]; rows: unknown[][] }>("/nh/live-trades-export");
+    const cell = (v: unknown) => {
+      if (v === null || v === undefined) return "";
+      const t = typeof v === "number" ? String(v).replace(".", ",") : String(v);
+      return /[;"\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const csv = "\uFEFF" + [d.columns, ...d.rows].map((r) => r.map(cell).join(";")).join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    a.download = `nihilist-trades-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    status(`Скачано: ${d.rows.length} сделок`);
+  } catch (e) {
+    status(`Не удалось: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  setTimeout(() => status(null), 4000);
 }
 
 /** Plain text of the whole report (no HTML), to paste into a chat. */
