@@ -32,6 +32,17 @@ export type DatasetReport = {
   filters?: Array<{ id: string; side: "long" | "short"; label: string; stats: Record<string, Stats> }>;
   /** Live signals whose SMC conditions could not be measured (not stored and not reproduced on the history). */
   smcUnknown?: number;
+  /** Live only (owner 2026-11-04): every trade with its result and which rules it passes. */
+  tradeList?: LiveTradeRow[];
+};
+
+export type LiveTradeRow = {
+  symbol: string; side: "long" | "short"; setup: string; openedAt: string;
+  /** Result, % of the entry net of fees (open: at the last close), and how it closed (null = open). */
+  source: { pnlPct: number; reason: string | null }; take5: { pnlPct: number; reason: string | null };
+  /** Today's long filter (shorts: null — not filtered). */
+  today: boolean | null;
+  smc: SmcChecks | null;
 };
 
 /**
@@ -76,7 +87,7 @@ export type Report = {
   parity: { checked: number; mismatched: number } | null;
 };
 
-type Item = { trade: SimTrade; group: Group[]; sets: string[]; candles: Candle[] };
+type Item = { trade: SimTrade; group: Group[]; sets: string[]; candles: Candle[]; row?: Omit<LiveTradeRow, "source" | "take5"> };
 
 async function save(r: Report): Promise<void> {
   await pool.query(
@@ -194,6 +205,7 @@ async function liveItems(rows: LiveRow[], smc: Map<string, SmcChecks>): Promise<
       items.push({
         trade: { id: `nh-${r.id}`, side: r.side, entry: r.entry, stop: r.stop, openedAt, maxHoldMs: MAX_HOLD_MS[r.htf] },
         group: groupsOf(r.side, passes), sets: setsOf(r.side, passes, checks), candles,
+        row: { symbol, side: r.side, setup: r.setup, openedAt: r.opened_at.toISOString(), today: r.side === "long" ? passes : null, smc: checks },
       });
     }
   }
@@ -218,6 +230,22 @@ async function history(symbol: string): Promise<Data | null> {
 }
 
 const SOURCE = variants()[0]!;
+const TAKE5 = variants().find((m) => m.id === "take5")!;
+
+/** Every live trade, newest first, with its result by Nihilist's management and by a fixed +5% take. */
+export function liveTradeRows(items: Item[]): LiveTradeRow[] {
+  const out: LiveTradeRow[] = [];
+  for (const it of items) {
+    if (!it.row) continue;
+    const a = simulate(it.trade, it.candles, SPAN, SOURCE), b = simulate(it.trade, it.candles, SPAN, TAKE5);
+    out.push({
+      ...it.row,
+      source: { pnlPct: a.pnlPct, reason: a.closed ? a.reason : null },
+      take5: { pnlPct: b.pnlPct, reason: b.closed ? b.reason : null },
+    });
+  }
+  return out.sort((x, y) => y.openedAt.localeCompare(x.openedAt));
+}
 const prio = (s: SetupSignal) => SETUP_PRIORITY.indexOf(`${s.htf}_${s.ltf}`);
 
 /** Every setup signal of one coin over the last HISTORY_DAYS, in time order (best setup first). */
@@ -298,7 +326,9 @@ export async function runStrategyReport(opts: { history?: boolean } = {}): Promi
     const live = await liveItems(rows, smc);
     const liveAcc = new Acc();
     for (const it of live.items) liveAcc.add(it);
-    report.datasets.push(liveAcc.report("live", live.symbols, live.skipped, live.smcUnknown));
+    const liveDs = liveAcc.report("live", live.symbols, live.skipped, live.smcUnknown);
+    liveDs.tradeList = liveTradeRows(live.items);
+    report.datasets.push(liveDs);
     report.parity = await parityCheck(live.items);
     if (withHistory) report.datasets.push(acc.report("history", universe.length - skipped, skipped));
     report.status = "done";
