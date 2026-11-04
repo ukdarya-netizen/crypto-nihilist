@@ -65,5 +65,5 @@ channel = "stable-25_05"
 NIHILIST_TELEGRAM_CHANNEL = "@nihilystcryptotrading"
 
 [userenv.shared]
-NIHILIST_TRADING_COMMAND_URL = "https://bybit-trading-bot.replit.app/api/trading/commands"
-NIHILIST_TRADING_SIGNAL_URL = "https://bybit-trading-bot.replit.app/api/trading/signals"
+NIHILIST_TRADING_COMMAND_URL = "https://lucys-trading-bot.replit.app/api/trading/commands"
+NIHILIST_TRADING_SIGNAL_URL = "https://lucys-trading-bot.replit.app/api/trading/signals"
