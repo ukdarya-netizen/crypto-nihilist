@@ -19,6 +19,7 @@ type Dataset = {
   name: "live" | "history"; from: string | null; to: string | null; trades: number; symbols: number; skippedSymbols: number;
   groups: Record<Group, Array<{ id: string; label: string; stats: Stats }>>;
   filters?: Array<{ id: string; side: "long" | "short"; label: string; stats: Record<string, Stats> }>;
+  smcUnknown?: number;
 };
 type Report = {
   status: "idle" | "running" | "done" | "failed"; startedAt: string | null; finishedAt: string | null; error: string | null;
@@ -179,18 +180,20 @@ export default function Strategies() {
   );
 }
 
-/** Candidate entry filters (owner 2026-11-03): each set alone and together, for each way the trading bot leads a trade. */
+/** SMC rules (owner 2026-11-04): each alone and all together, for each way the trading bot leads a trade. */
 function FilterCheck({ ds }: { ds: Dataset }) {
   const [m, setM] = useState("source");
   const rows = ds.filters ?? [];
   return (
     <div className="space-y-2">
       <div className="panel space-y-2 p-4 text-sm">
-        <p className="font-bold">Проверка новых фильтров входа · {DS_LABEL[ds.name]}</p>
+        <p className="font-bold">Проверка правил SMC · {DS_LABEL[ds.name]}</p>
         <p className="text-xs text-muted">
-          Фильтры из «Метрик входа»: ATR 30m (лонги ≥ 1.3%, шорты ≥ 1.0%), сила блока — слом за блоком ≥ 0.9 ATR, у лонгов — заход в блок ≥ 23%.
-          На сигналы они пока не действуют — только этот расчёт. Каждая строка — свой поток сделок (одна сделка на монету и сторону).
-          Сравнивайте строки лонгов со строкой «фильтр сейчас», шортов — со строкой «все».
+          Правила SMC, которых сейчас нет в сетапе: тренд старшего ТФ по ходу сделки; вход в дисконте (лонг) или премиуме (шорт) диапазона старшего ТФ;
+          снятие ликвидности в блоке (цена сделала минимум, отскочила и выбила его перед сломом); имбаланс (FVG) между свечой блока и сломом; первый возврат цены в блок.
+          На сигналы они не действуют — только этот расчёт. Каждая строка — свой поток сделок (одна сделка на монету и сторону).
+          Лонги сравнивайте со строкой «все» и «фильтр сейчас», шорты — со строкой «все».
+          {ds.smcUnknown ? ` Сигналов, где правила не удалось измерить (засчитаны как не прошедшие): ${ds.smcUnknown}.` : ""}
         </p>
         <div className="flex flex-wrap gap-2">
           {TRADED.map(([id, label]) => (
@@ -212,7 +215,7 @@ function FilterCheck({ ds }: { ds: Dataset }) {
               if (!s) return null;
               const head = i === 0 || rows[i - 1]!.side !== f.side;
               return (
-                <tr key={f.id} className={`border-t ${head ? "border-foreground/40" : "border-border"} ${f.id === "long_today" || f.id === "short_any" ? "bg-card-hi" : ""}`}>
+                <tr key={f.id} className={`border-t ${head || f.id === "long_today" ? "border-foreground/40" : "border-border"} ${f.id === "long_any" || f.id === "long_today" || f.id === "short_any" ? "bg-card-hi" : ""}`}>
                   <td className="px-2 py-1.5 font-sans text-xs">{f.label}</td>
                   <td className="px-2">{s.n}{s.open ? <span className="text-muted"> +{s.open} откр.</span> : null}</td>
                   <td className="px-2">{pct(s.winPct)}</td>
@@ -264,12 +267,13 @@ function reportText(r: Report): string {
       }
     }
     if (ds.filters) {
-      out.push("", `--- Проверка новых фильтров входа (${DS_LABEL[ds.name]})`, "фильтр | ведение | n (откр.) | плюс% | стоп% | ср.% | сумма% | PF | просадка | 1-я пол. ср.(n) | 2-я пол. ср.(n)");
+      out.push("", `--- Проверка правил SMC (${DS_LABEL[ds.name]})${ds.smcUnknown ? `, не измерено сигналов: ${ds.smcUnknown}` : ""}`,
+        "правило | ведение | n (откр.) | плюс% | стоп% | ≈0% | ср.% | сумма% | PF | просадка | 1-я пол. ср.(n) | 2-я пол. ср.(n) | распределение");
       for (const f of ds.filters) for (const [id, label] of TRADED) {
         const s = f.stats[id];
         if (!s) continue;
-        out.push([f.label, label, `${s.n} (${s.open})`, pct(s.winPct), pct(s.stopPct), sg(s.avg), sg(s.sum, 0), s.pf ?? "—", `−${s.maxDd.toFixed(0)}`,
-          `${sg(s.half1.avg)} (${s.half1.n})`, `${sg(s.half2.avg)} (${s.half2.n})`].join(" | "));
+        out.push([f.label, label, `${s.n} (${s.open})`, pct(s.winPct), pct(s.stopPct), pct(s.flatPct), sg(s.avg), sg(s.sum, 0), s.pf ?? "—", `−${s.maxDd.toFixed(0)}`,
+          `${sg(s.half1.avg)} (${s.half1.n})`, `${sg(s.half2.avg)} (${s.half2.n})`, s.buckets.map(([k, v]) => `${k}:${v}`).join(" ")].join(" | "));
       }
     }
   }

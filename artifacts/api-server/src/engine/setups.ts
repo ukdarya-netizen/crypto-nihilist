@@ -86,6 +86,27 @@ export type SetupSignal = {
   ltfAtr: number;
   /** Order-block strength (see obStrength). */
   ob: ObStrength;
+  /** Classic SMC conditions at the signal (research only; never filters signals). */
+  smc: SmcChecks;
+};
+
+/**
+ * Classic SMC rules the setup does not require (owner 2026-11-04: checked on the strategy report).
+ * Each is known at the signal (no lookahead); null = could not be measured.
+ */
+export type SmcChecks = {
+  /** HTF swing structure (50) in the trade's direction. */
+  trendSwing: boolean | null;
+  /** HTF internal structure (5) in the trade's direction. */
+  trendInternal: boolean | null;
+  /** Long: entry in the lower half (discount) of the HTF range (LuxAlgo trailing top/bottom); short: upper half (premium). */
+  discount: boolean | null;
+  /** Liquidity sweep in the block: the reaction made an LTF internal swing low (short: high), then took it out before the structure break. */
+  sweep: boolean | null;
+  /** Fair value gap (HTF imbalance) between the order-block candle and the structure break, in the break's direction. */
+  fvg: boolean | null;
+  /** Fresh block: the signal comes from the first return of price into the block since the structure break. */
+  fresh: boolean | null;
 };
 
 export type ObStrength = {
@@ -127,6 +148,11 @@ type Zone = {
   lastTouchIndex: number | null;
   lastTouchAt: number | null;
   extreme: number | null;
+  /** Open time of the LTF bar that set the extreme. */
+  extremeAt: number | null;
+  /** Separate returns into the block (touches more than touchWindowBars apart) and the start of the latest one. */
+  episodes: number;
+  episodeAt: number | null;
   broken: boolean;
   used: boolean;
 };
@@ -227,6 +253,47 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
       penetrationPct: pen === null ? null : round(Math.max(0, pen), 1),
     };
   };
+  const ltfStart = ltfCandles[0]!.t;
+  const smcChecks = (
+    block: OrderBlock, side: Side, entry: number, extreme: number,
+    touch: { firstTouchAt: number | null; extremeAt: number; episodes: number; episodeAt: number },
+    snap: SmcSnapshot, htfUpto: number,
+  ): SmcChecks => {
+    const dir = side === "long" ? 1 : -1;
+    const top = snap.trailingTop, bottom = snap.trailingBottom;
+    const eq = top !== null && bottom !== null && top > bottom ? (top + bottom) / 2 : null;
+    // Sweep inside the reaction: an LTF internal swing low (short: high) formed in this return into
+    // the block and confirmed before the extreme, then taken out by the extreme.
+    const ltfSnap = ltfEngine.snapshot();
+    const swept = (side === "long" ? ltfSnap.pivotLows : ltfSnap.pivotHighs).some((p) =>
+      p.scope === "internal" && p.time >= touch.episodeAt && p.confirmedAt < touch.extremeAt &&
+      (dir === 1 ? extreme < p.level : extreme > p.level));
+    const obIdx = htfIndex.get(block.time);
+    const brIdx = htfIndex.get(block.createdAt);
+    let fvg: boolean | null = null;
+    let fresh: boolean | null = null;
+    if (obIdx !== undefined && brIdx !== undefined) {
+      fvg = false;
+      for (let i = obIdx + 1; i < brIdx; i++) {
+        const a = htfCandles[i - 1]!, c = htfCandles[i + 1]!;
+        if (dir === 1 ? a.h < c.l : a.l > c.h) { fvg = true; break; }
+      }
+      // Fresh: this is the first return into the block. Before the LTF series starts the HTF bars
+      // tell (closed bars after the break); within it, the separate returns counted on the LTF.
+      fresh = touch.episodes === 1;
+      const until = Math.min(touch.firstTouchAt ?? Infinity, ltfStart);
+      for (let k = brIdx + 1; fresh && k <= htfUpto && htfCandles[k]!.t + htfSpan <= until; k++) {
+        if (dir === 1 ? htfCandles[k]!.l <= block.top : htfCandles[k]!.h >= block.bottom) fresh = false;
+      }
+    }
+    return {
+      trendSwing: snap.swingTrend === 0 ? null : snap.swingTrend === dir,
+      trendInternal: snap.internalTrend === 0 ? null : snap.internalTrend === dir,
+      discount: eq === null ? null : dir === 1 ? entry < eq : entry > eq,
+      sweep: swept,
+      fvg, fresh,
+    };
+  };
   const zones = new Map<string, Zone>();
   let htfPointer = -1;
 
@@ -254,29 +321,28 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
         zones.set(id, {
           block, side: block.bias === 1 ? "long" : "short",
           firstTouchIndex: null, firstTouchAt: null, lastTouchIndex: null, lastTouchAt: null,
-          extreme: null, broken: false, used: false,
+          extreme: null, extremeAt: null, episodes: 0, episodeAt: null, broken: false, used: false,
         });
       }
     }
 
     // Touches on this LTF bar.
+    const touch = (zone: Zone, j: number, t: number) => {
+      if (zone.firstTouchIndex === null) { zone.firstTouchIndex = j; zone.firstTouchAt = t; }
+      if (zone.lastTouchIndex === null || j - zone.lastTouchIndex > options.touchWindowBars) { zone.episodes += 1; zone.episodeAt = t; }
+      zone.lastTouchIndex = j; zone.lastTouchAt = t;
+    };
     for (const zone of zones.values()) {
       if (zone.broken || zone.used) continue;
       const b = zone.block;
       if (zone.side === "long") {
         if (bar.l < b.bottom) { zone.broken = true; continue; }
-        if (bar.l <= b.top) {
-          if (zone.firstTouchIndex === null) { zone.firstTouchIndex = j; zone.firstTouchAt = bar.t; }
-          zone.lastTouchIndex = j; zone.lastTouchAt = bar.t;
-        }
-        if (zone.firstTouchIndex !== null) zone.extreme = Math.min(zone.extreme ?? bar.l, bar.l);
+        if (bar.l <= b.top) touch(zone, j, bar.t);
+        if (zone.firstTouchIndex !== null && (zone.extreme === null || bar.l < zone.extreme)) { zone.extreme = bar.l; zone.extremeAt = bar.t; }
       } else {
         if (bar.h > b.top) { zone.broken = true; continue; }
-        if (bar.h >= b.bottom) {
-          if (zone.firstTouchIndex === null) { zone.firstTouchIndex = j; zone.firstTouchAt = bar.t; }
-          zone.lastTouchIndex = j; zone.lastTouchAt = bar.t;
-        }
-        if (zone.firstTouchIndex !== null) zone.extreme = Math.max(zone.extreme ?? bar.h, bar.h);
+        if (bar.h >= b.bottom) touch(zone, j, bar.t);
+        if (zone.firstTouchIndex !== null && (zone.extreme === null || bar.h > zone.extreme)) { zone.extreme = bar.h; zone.extremeAt = bar.t; }
       }
     }
 
@@ -292,11 +358,15 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
       candidates.sort((a, b) => (b.lastTouchIndex! - a.lastTouchIndex!) ||
         (side === "long" ? b.block.top - a.block.top : a.block.bottom - b.block.bottom));
       const zone = candidates[0];
-      const touched = { extreme: zone.extreme, firstTouchAt: zone.firstTouchAt, lastTouchAt: zone.lastTouchAt };
+      const touched = {
+        extreme: zone.extreme, firstTouchAt: zone.firstTouchAt, lastTouchAt: zone.lastTouchAt,
+        extremeAt: zone.extremeAt as number, episodes: zone.episodes, episodeAt: zone.episodeAt as number,
+      };
       if (options.reuseBlocks) {
         // The next signal from this block needs a fresh touch after this one.
         zone.firstTouchIndex = null; zone.firstTouchAt = null;
         zone.lastTouchIndex = null; zone.lastTouchAt = null; zone.extreme = null;
+        zone.extremeAt = null; zone.episodes = 0; zone.episodeAt = null;
       } else {
         zone.used = true;
       }
@@ -339,6 +409,7 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
       const rr2 = Math.abs(tp2 - entry) / risk;
       if (rr1 < options.minRr) { reject("rr_too_low", { rr1: round(rr1, 2), tp1, entry, stop }); continue; }
       const ob = obStrength(zone.block, extreme);
+      const smc = smcChecks(zone.block, side, entry, extreme, touched, snap, htfState.index);
       if (options.minObDisplacementAtr !== null &&
           (ob.displacementAtr === null || ob.displacementAtr < options.minObDisplacementAtr)) {
         reject("ob_too_weak", { obDisplacementAtr: ob.displacementAtr, min: options.minObDisplacementAtr, entry, stop });
@@ -354,7 +425,7 @@ export function evaluateSetups(input: EvaluateInput): { signals: SetupSignal[]; 
         lastTouchAt: touched.lastTouchAt as number,
         extreme, chochLevel: event.level,
         htfSwingTrend: snap.swingTrend, htfInternalTrend: snap.internalTrend,
-        ltfAtr, ob,
+        ltfAtr, ob, smc,
       });
     }
   }

@@ -45,7 +45,11 @@ export type StructureEvent = {
   orderBlock: OrderBlock | null;
 };
 
-export type PivotPoint = { level: number; time: number; scope: Scope };
+export type PivotPoint = {
+  level: number; time: number; scope: Scope;
+  /** Open time of the bar on which the pivot was confirmed (known after that bar closes). */
+  confirmedAt: number;
+};
 
 type Pivot = {
   currentLevel: number | null;
@@ -233,7 +237,7 @@ export class SmcEngine {
       p.barTime = pivotBar.t;
       p.barIndex = pivotIndex;
       if (!internal) this.trailingBottom = p.currentLevel;
-      this.pivotLows.push({ level: pivotBar.l, time: pivotBar.t, scope });
+      this.pivotLows.push({ level: pivotBar.l, time: pivotBar.t, scope, confirmedAt: this.candles[index].t });
       if (this.pivotLows.length > MAX_PIVOTS) this.pivotLows.shift();
     } else {
       const p = internal ? this.internalHigh : this.swingHigh;
@@ -243,7 +247,7 @@ export class SmcEngine {
       p.barTime = pivotBar.t;
       p.barIndex = pivotIndex;
       if (!internal) this.trailingTop = p.currentLevel;
-      this.pivotHighs.push({ level: pivotBar.h, time: pivotBar.t, scope });
+      this.pivotHighs.push({ level: pivotBar.h, time: pivotBar.t, scope, confirmedAt: this.candles[index].t });
       if (this.pivotHighs.length > MAX_PIVOTS) this.pivotHighs.shift();
     }
   }

@@ -74,34 +74,6 @@ export function entryFilter(input: {
   return { pass: reasons.length === 0, reason: reasons.length ? reasons.join(",") : null, riskPct: input.riskPct, blockAgeH, blockSizePct };
 }
 
-/**
- * Candidate entry filters (owner 2026-11-03, from «Метрики входа», 223 longs / 57 shorts):
- *   - ATR 30m % at the signal: low volatility goes to the stop on both sides
- *     (longs < 0.92%: −0.81R, ≥ 1.32%: −0.04R; shorts < 0.95%: −0.61R);
- *   - order-block strength (break beyond the block, HTF ATR): < 0.9 is the worst
- *     layer on both sides (longs −0.72R, shorts −0.54R);
- *   - depth into the block, longs: 1–22% −0.82R … 67–100% −0.40R.
- * Checked on the strategy report only (each alone and together) — NOT applied
- * to signals until the owner decides from that check.
- */
-export const CANDIDATE_FILTER = {
-  atr30MinPctLong: 1.3, atr30MinPctShort: 1.0, minDisplacementAtr: 0.9, minPenetrationPctLong: 23,
-} as const;
-
-export type CandidateChecks = { atr: boolean; disp: boolean; pen: boolean };
-/** An unknown value fails its check. Depth applies to longs only (shorts: always true). */
-export function candidateChecks(i: {
-  side: "long" | "short"; atr30Pct: number | null; displacementAtr: number | null; penetrationPct: number | null;
-}): CandidateChecks {
-  const f = CANDIDATE_FILTER;
-  const ok = (v: number | null, min: number) => v !== null && Number.isFinite(v) && v >= min;
-  return {
-    atr: ok(i.atr30Pct, i.side === "long" ? f.atr30MinPctLong : f.atr30MinPctShort),
-    disp: ok(i.displacementAtr, f.minDisplacementAtr),
-    pen: i.side === "short" ? true : ok(i.penetrationPct, f.minPenetrationPctLong),
-  };
-}
-
 /** Open trades are followed on 5-minute candles. */
 export const TRACK_INTERVAL = "5m" as const;
 

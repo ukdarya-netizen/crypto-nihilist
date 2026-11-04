@@ -91,3 +91,38 @@ test("order-block strength is measured on every signal and can filter weak block
   assert.equal(strict.signals.length, 0);
   assert.equal(strict.rejections[0]?.reason, "ob_too_weak");
 });
+
+test("SMC conditions: measured on every signal, the same for the mirrored short, no lookahead", () => {
+  const { ltf, htf } = scenario(84.8);
+  const long = evaluateSetups({ htf: "4h", ltf: "30m", htfCandles: htf, ltfCandles: ltf, sides: ["long"] }).signals[0]!;
+  const mirror = (c: Candle): Candle => ({ t: c.t, o: 200 - c.o, c: 200 - c.c, h: 200 - c.l, l: 200 - c.h });
+  const short = evaluateSetups({ htf: "4h", ltf: "30m", htfCandles: htf.map(mirror), ltfCandles: ltf.map(mirror), sides: ["short"] }).signals[0]!;
+  assert.deepEqual(short.smc, long.smc);
+  // The scenario: bullish CHoCH (swing trend up), a fresh block, a fast impulse leaving a gap.
+  assert.equal(long.smc.fresh, true);
+  assert.equal(long.smc.fvg, true);
+  // The short test series has no 50-bar swing yet: no range, the zone is unknown.
+  assert.equal(long.smc.discount, null);
+  const partial = evaluateSetups({
+    htf: "4h", ltf: "30m", sides: ["long"],
+    htfCandles: htf.filter((c) => c.t + 4 * 60 * 60_000 <= long.signalAt), ltfCandles: ltf.filter((c) => c.t + M30 <= long.signalAt),
+  }).signals[0]!;
+  assert.deepEqual(partial.smc, long.smc);
+});
+
+test("SMC: a block price already returned to before the LTF series starts is not fresh", () => {
+  const { ltf, htf } = scenario(84.8);
+  const s = evaluateSetups({ htf: "4h", ltf: "30m", htfCandles: htf, ltfCandles: ltf, sides: ["long"] }).signals[0]!;
+  const brIdx = htf.findIndex((c) => c.t === s.block.createdAt);
+  const h4 = 4 * 60 * 60_000;
+  // LTF series starting two 4h bars after the break; the first closed 4h bar after the break dips into the block.
+  const start = htf[brIdx + 2]!.t;
+  const later = ltf.filter((c) => c.t >= start);
+  const dipped = htf.map((c, i) => (i === brIdx + 1 ? { ...c, l: s.block.top - 0.01 } : c));
+  const clean = evaluateSetups({ htf: "4h", ltf: "30m", htfCandles: htf, ltfCandles: later, sides: ["long"] }).signals[0];
+  const dirty = evaluateSetups({ htf: "4h", ltf: "30m", htfCandles: dipped, ltfCandles: later, sides: ["long"] }).signals[0];
+  assert.ok(clean && dirty, "signal in both");
+  assert.ok(htf[brIdx + 1]!.t + h4 <= start);
+  assert.equal(clean.smc.fresh, true);
+  assert.equal(dirty.smc.fresh, false);
+});
