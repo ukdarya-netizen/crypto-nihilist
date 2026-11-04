@@ -121,6 +121,34 @@ router.get("/nh/signals", async (req, res) => {
   res.json({ signals: isOwnerReq(req) ? rows : rows.map(publicSignal) });
 });
 
+/**
+ * Our trades with their entry metrics (owner 2026-11-04: analysis on our own trades, by name).
+ * Every published signal: how Nihilist closed it (its own management) and every metric recorded
+ * at the signal (latest snapshot). Owner only; the dashboard turns it into a CSV file.
+ */
+router.get("/nh/live-trades-export", async (req, res) => {
+  if (!isOwnerReq(req)) { res.status(403).json({ error: "Только владелец" }); return; }
+  await ensureSnapshotTable();
+  const { rows } = await pool.query(
+    `SELECT s.id, s.symbol, s.side, s.setup, s.htf, s.ltf, s.status, s.close_reason, s.pnl_pct, s.r_multiple,
+            s.mfe_pct, s.mae_pct, s.peak_pct, s.risk_pct, s.entry, s.stop, s.exit_price, s.opened_at, s.closed_at,
+            (s.details->'entryFilter'->>'pass')::boolean AS filter_pass, s.details->'entryFilter'->>'reason' AS filter_reason,
+            (SELECT n.metrics FROM nh_signal_snapshots n WHERE n.signal_id = s.id ORDER BY n.version DESC LIMIT 1) AS metrics
+     FROM nh_signals s WHERE s.live ORDER BY s.opened_at DESC`,
+  );
+  const keys = new Set<string>();
+  for (const r of rows) for (const k of Object.keys(r.metrics ?? {})) keys.add(k);
+  const metricKeys = [...keys].filter((k) => !["side", "htf", "ltf"].includes(k)).sort();
+  const base = ["id", "opened_at", "closed_at", "symbol", "side", "setup", "status", "close_reason", "pnl_pct", "r_multiple",
+    "mfe_pct", "mae_pct", "peak_pct", "risk_pct", "entry", "stop", "exit_price", "filter_pass", "filter_reason"];
+  const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : v);
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    columns: [...base, ...metricKeys],
+    rows: rows.map((r) => [...base.map((k) => iso(r[k]) ?? null), ...metricKeys.map((k) => (r.metrics ?? {})[k] ?? null)]),
+  });
+});
+
 router.get("/nh/decisions", async (req, res) => {
   const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
   const decision = typeof req.query.decision === "string" ? req.query.decision : null;
