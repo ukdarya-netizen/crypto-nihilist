@@ -31,6 +31,7 @@ import { backfill, book, loadFromDb, needsBackfill, pruneDb, refresh } from "../
 import { getUniverse, setScanBusy, type UniverseSymbol } from "../market/coinglass";
 import { waitForEngineLease } from "../ops/lease";
 import { logger } from "../lib/logger";
+import { startVolumeStudyBackfill } from "../market/volume-study";
 
 /** LTF bars walked per evaluation (enough for the LTF structure to settle). */
 const LTF_WINDOW = 400;
@@ -413,6 +414,8 @@ export async function startEngine(): Promise<void> {
   startTracker();
   startTelegram();
   startTradingRelay();
+  // Owner 2026-11-05: Wyckoff + owner's volume indicators at the entry of every published signal.
+  startVolumeStudyBackfill();
   let lastBar = Math.floor(Date.now() / INTERVAL_MS["30m"]) * INTERVAL_MS["30m"];
   let lastPrune = 0;
   const tick = async () => {

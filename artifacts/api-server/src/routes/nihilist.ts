@@ -133,9 +133,21 @@ router.get("/nh/live-trades-export", async (req, res) => {
     `SELECT s.id, s.symbol, s.side, s.setup, s.htf, s.ltf, s.status, s.close_reason, s.pnl_pct, s.r_multiple,
             s.mfe_pct, s.mae_pct, s.peak_pct, s.risk_pct, s.entry, s.stop, s.exit_price, s.opened_at, s.closed_at,
             (s.details->'entryFilter'->>'pass')::boolean AS filter_pass, s.details->'entryFilter'->>'reason' AS filter_reason,
-            (SELECT n.metrics FROM nh_signal_snapshots n WHERE n.signal_id = s.id ORDER BY n.version DESC LIMIT 1) AS metrics
+            (SELECT n.metrics FROM nh_signal_snapshots n WHERE n.signal_id = s.id ORDER BY n.version DESC LIMIT 1) AS metrics,
+            s.details->'volumeStudy' AS volume_study
      FROM nh_signals s WHERE s.live ORDER BY s.opened_at DESC`,
   );
+  // Owner 2026-11-05: Wyckoff + volume colours at the entry (details.volumeStudy) as vs_* columns.
+  const flat = (prefix: string, v: unknown, out: Record<string, unknown>) => {
+    if (v === null || v === undefined) return;
+    if (typeof v !== "object" || Array.isArray(v)) { out[prefix] = Array.isArray(v) ? JSON.stringify(v) : v; return; }
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) flat(`${prefix}_${k}`, x, out);
+  };
+  for (const r of rows) {
+    const vs: Record<string, unknown> = {};
+    flat("vs", r.volume_study, vs);
+    r.metrics = { ...(r.metrics ?? {}), ...vs };
+  }
   const keys = new Set<string>();
   for (const r of rows) for (const k of Object.keys(r.metrics ?? {})) keys.add(k);
   const metricKeys = [...keys].filter((k) => !["side", "htf", "ltf"].includes(k)).sort();
