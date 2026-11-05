@@ -6,13 +6,15 @@
  *    candle and close position (VSA with candles: stopping volume, weakness, strength).
  * Entry candle = the last closed 1H candle before the signal. BingX klines (price + volume).
  * Shorts are read on mirrored candles (accumulation ↔ distribution). Stored in
- * nh_signals.details.volumeStudy (no new table). Observation only — no decision reads it.
+ * nh_signals.details.volumeStudy (no new table). Version 2 adds the Elliott wave count of the move into
+ * the block (market/elliott.ts). Observation only — no decision reads it.
  */
 import { pool } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { bingxKlines, mirror, type C } from "./vsa";
 import { computeWyckoff } from "./wyckoff";
 import { colorWindow } from "./volume-colors";
+import { countDeclineWaves } from "./elliott";
 
 const H1 = 3_600_000;
 const HISTORY_BARS = 450;
@@ -32,11 +34,12 @@ export async function computeVolumeStudy(symbol: string, side: string, openedAt:
   const w = computeWyckoff(ohlc, vol, entry);
   const counts: Record<string, number> = {};
   for (const e of w.events) counts[e.type] = (counts[e.type] ?? 0) + 1;
+  const elliott = countDeclineWaves(ohlc, ohlc.findIndex((b) => b.time === entry));
   const colors = colorWindow(cs.map((c) => c.t), (t) => vol.get(t) ?? null, entry, (t) => bars.get(t));
   return {
     ok: true as const,
     study: {
-      version: 1,
+      version: 2,
       entryCandle: new Date(entry).toISOString(),
       mirroredForShort: side === "short",
       wyckoff: {
@@ -46,6 +49,8 @@ export async function computeVolumeStudy(symbol: string, side: string, openedAt:
         counts,
       },
       colors,
+      /** Owner 2026-11-05: waves of the move into the block (3 = A-B-C correction, 5 = impulse). */
+      elliott,
       source: "bingx_1h_price_volume",
     },
   };
@@ -61,7 +66,7 @@ export async function runVolumeStudyBackfill(limit = 25, gapMs = 1_000): Promise
   const { rows } = await pool.query(
     `SELECT id, symbol, side, opened_at FROM nh_signals
       WHERE live AND opened_at < now() - interval '5 minutes'
-        AND NOT (COALESCE(details, '{}'::jsonb) ? 'volumeStudy')
+        AND COALESCE((details->'volumeStudy'->>'version')::int, 0) < 2
         AND NOT (id::text = ANY($1::text[]))
       ORDER BY opened_at DESC LIMIT $2`,
     [cooling, limit],
