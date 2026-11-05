@@ -16,6 +16,7 @@ import { computeWyckoff } from "./wyckoff";
 import { colorWindow } from "./volume-colors";
 import { countDeclineWaves } from "./elliott";
 import { liquidityReading } from "./liquidity";
+import { ictReading, mirrorIct } from "./ict";
 
 const H1 = 3_600_000;
 const HISTORY_BARS = 450;
@@ -36,6 +37,32 @@ async function computeLiquidity(symbol: string, side: string, openedAt: number, 
   return { ltf, ...liquidityReading(lb, touch, openedAt, short ? -bottom : top, short ? -top : bottom) };
 }
 
+/**
+ * Full ICT reading (owner 2026-11-05), the same module as in CAB (market/ict.ts), on BingX 15m and 1H.
+ * Entry bar = last closed bar before the signal; window = from the first touch of the block (else the
+ * last 24 bars on 1H / 48 on 15m); pattern level = the order block (mirrored for shorts).
+ */
+async function computeIct(symbol: string, side: string, openedAt: number, d: Record<string, unknown> | null) {
+  const touch = Number(d?.firstTouchAt), top = Number(d?.blockTop), bottom = Number(d?.blockBottom);
+  const short = side === "short";
+  const out: Record<string, unknown> = { version: 1, source: "bingx" };
+  for (const [key, tf, defWindow, n] of [["h1", "1h", 24, 320], ["m15", "15m", 48, 420]] as const) {
+    const ms = TF_MS[tf]!;
+    const entryStart = Math.floor(openedAt / ms) * ms - ms;
+    const cs = await bingxKlines(symbol, tf, entryStart + ms, n + Math.max(0, Math.ceil((entryStart - (Number.isFinite(touch) ? touch : entryStart)) / ms)));
+    let b = cs.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v }));
+    if (short) b = mirrorIct(b);
+    const e = b.findIndex((x) => x.time === entryStart);
+    if (e < 0) { out[key] = { reason: "нет свечи входа" }; continue; }
+    let w0 = e - defWindow + 1;
+    if (Number.isFinite(touch)) { const i = b.findIndex((x) => x.time + ms > touch); if (i >= 0 && i <= e) w0 = i; }
+    const lt = top > 0 && bottom > 0 ? (short ? -bottom : top) : null;
+    const lb = top > 0 && bottom > 0 ? (short ? -top : bottom) : null;
+    out[key] = ictReading(b, e, { w0, levelTop: lt, levelBottom: lb });
+  }
+  return out;
+}
+
 export async function computeVolumeStudy(symbol: string, side: string, openedAt: number, ltf = "", details: Record<string, unknown> | null = null) {
   const entry = Math.floor(openedAt / H1) * H1 - H1;
   let cs: C[] = await bingxKlines(symbol, "1h", entry + H1, HISTORY_BARS);
@@ -52,12 +79,13 @@ export async function computeVolumeStudy(symbol: string, side: string, openedAt:
   const counts: Record<string, number> = {};
   for (const e of w.events) counts[e.type] = (counts[e.type] ?? 0) + 1;
   const liquidity = await computeLiquidity(symbol, side, openedAt, ltf, details).catch((e) => ({ reason: String(e).slice(0, 80) }));
+  const ict = await computeIct(symbol, side, openedAt, details).catch((e) => ({ reason: String(e).slice(0, 80) }));
   const elliott = countDeclineWaves(ohlc, ohlc.findIndex((b) => b.time === entry));
   const colors = colorWindow(cs.map((c) => c.t), (t) => vol.get(t) ?? null, entry, (t) => bars.get(t));
   return {
     ok: true as const,
     study: {
-      version: 3,
+      version: 4,
       entryCandle: new Date(entry).toISOString(),
       mirroredForShort: side === "short",
       wyckoff: {
@@ -71,6 +99,8 @@ export async function computeVolumeStudy(symbol: string, side: string, openedAt:
       elliott,
       /** Owner 2026-11-05: ICT liquidity sweep around the block (market/liquidity.ts). */
       liquidity,
+      /** Owner 2026-11-05: full ICT on 15m and 1H (market/ict.ts, same as CAB). */
+      ict,
       source: "bingx_1h_price_volume",
     },
   };
@@ -86,7 +116,7 @@ export async function runVolumeStudyBackfill(limit = 25, gapMs = 1_000): Promise
   const { rows } = await pool.query(
     `SELECT id, symbol, side, opened_at, ltf, details FROM nh_signals
       WHERE live AND opened_at < now() - interval '5 minutes'
-        AND COALESCE((details->'volumeStudy'->>'version')::int, 0) < 3
+        AND COALESCE((details->'volumeStudy'->>'version')::int, 0) < 4
         AND NOT (id::text = ANY($1::text[]))
       ORDER BY opened_at DESC LIMIT $2`,
     [cooling, limit],
