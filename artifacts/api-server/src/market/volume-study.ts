@@ -16,7 +16,7 @@ import { computeWyckoff } from "./wyckoff";
 import { colorWindow } from "./volume-colors";
 import { countDeclineWaves } from "./elliott";
 import { liquidityReading } from "./liquidity";
-import { ictReading, mirrorIct } from "./ict";
+import { ictReading, ictSessionReading, mirrorIct } from "./ict";
 
 const H1 = 3_600_000;
 const HISTORY_BARS = 450;
@@ -58,7 +58,8 @@ async function computeIct(symbol: string, side: string, openedAt: number, d: Rec
     if (Number.isFinite(touch)) { const i = b.findIndex((x) => x.time + ms > touch); if (i >= 0 && i <= e) w0 = i; }
     const lt = top > 0 && bottom > 0 ? (short ? -bottom : top) : null;
     const lb = top > 0 && bottom > 0 ? (short ? -top : bottom) : null;
-    out[key] = ictReading(b, e, { w0, levelTop: lt, levelBottom: lb });
+    // Version 5 (owner 2026-11-05): + SMLS inducement and ICT Setup 05 New York session (market/ict.ts 8–9).
+    out[key] = { ...ictReading(b, e, { w0, levelTop: lt, levelBottom: lb }), ...ictSessionReading(b, e, { levelTop: lt, barMs: ms }) };
   }
   return out;
 }
@@ -85,7 +86,7 @@ export async function computeVolumeStudy(symbol: string, side: string, openedAt:
   return {
     ok: true as const,
     study: {
-      version: 4,
+      version: 5,
       entryCandle: new Date(entry).toISOString(),
       mirroredForShort: side === "short",
       wyckoff: {
@@ -116,7 +117,7 @@ export async function runVolumeStudyBackfill(limit = 25, gapMs = 1_000): Promise
   const { rows } = await pool.query(
     `SELECT id, symbol, side, opened_at, ltf, details FROM nh_signals
       WHERE live AND opened_at < now() - interval '5 minutes'
-        AND COALESCE((details->'volumeStudy'->>'version')::int, 0) < 4
+        AND COALESCE((details->'volumeStudy'->>'version')::int, 0) < 5
         AND NOT (id::text = ANY($1::text[]))
       ORDER BY opened_at DESC LIMIT $2`,
     [cooling, limit],

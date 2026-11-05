@@ -27,6 +27,19 @@
  *     fake breakout, TBO) or closed above it (a true break).
  *  6. Premium / discount: the entry close inside the last major swing range (0 = low, 1 = high).
  *  7. Structure: last two major swing highs and lows — HH+HL bullish, LH+LL bearish, else mixed.
+ *
+ * Version 2 (owner 2026-11-05, two more TradingFinder indicators):
+ *  8. «Smart Money Liquidity Structure» — liquidity in front of the level (inducement): pivot lows
+ *     (3 bars each side, the indicator's default) ABOVE the pattern level top, formed in the 100 bars
+ *     before the entry: how many the price took on its way to the level (low below) and how many were
+ *     still untouched at the entry. Only with a pattern level.
+ *  9. «ICT Setup 05 — Liquidity Sweep & OB Retest» — New York session: opening range 08:00–09:30 NY,
+ *     trading session 09:30–17:00 NY (DST handled). For the latest session that started at/before the
+ *     entry: was the entry inside the session, which side of the opening range was taken first (low =
+ *     sell-side sweep, high = buy-side), and after a low sweep the CISD — first close at/above the higher
+ *     open of the two bars after the last bullish candle before the sweep, within 120 bars (Balanced).
+ *     Entry bar as the retest confirmation: bullish, closed above the level top, close in the top 43% of
+ *     its range (close location ≥ 0.57, Balanced).
  */
 export type IctBar = { time: number; open: number; high: number; low: number; close: number; volume: number };
 
@@ -182,6 +195,72 @@ export function ictReading(
     levelTop: top,
     levelBottom: bottom,
     reason: null,
+  };
+}
+
+const NY = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
+function nyClock(t: number) {
+  const p: Record<string, string> = {};
+  for (const x of NY.formatToParts(new Date(t))) p[x.type] = x.value;
+  return { day: `${p.year}-${p.month}-${p.day}`, min: Number(p.hour) * 60 + Number(p.minute) };
+}
+
+/** Owner 2026-11-05: SMLS inducement + ICT Setup 05 New York session reading (see header, 8–9). */
+export function ictSessionReading(b: IctBar[], e: number, opts: { levelTop?: number | null; barMs: number }) {
+  const top = opts.levelTop ?? null;
+  const entry = b[e]!;
+  // 8. Inducement: pivot lows (3/3) above the level top in the 100 bars before the entry.
+  let inducementTaken: number | null = null, inducementLeft: number | null = null;
+  if (top !== null) {
+    inducementTaken = 0; inducementLeft = 0;
+    for (const pv of pivots(b, 3, 3, "low", e)) {
+      if (pv.i < e - 100 || pv.confirmedAt >= e || pv.p <= top) continue;
+      if (b.slice(pv.confirmedAt + 1, e + 1).some((x) => x.low < pv.p)) inducementTaken++;
+      else inducementLeft++;
+    }
+  }
+  // 9. New York session. Bars are labelled by their open time.
+  const clock = b.map((x) => nyClock(x.time));
+  const inOR = (k: number) => clock[k]!.min >= 480 && clock[k]!.min < 570;
+  const inTrade = (k: number) => clock[k]!.min >= 570 && clock[k]!.min < 1020;
+  let start = -1; // first bar of the latest trading session up to the entry
+  for (let k = e; k >= 1 && k > e - 2000; k--) if (inTrade(k) && !(inTrade(k - 1) && clock[k - 1]!.day === clock[k]!.day)) { start = k; break; }
+  const out: Record<string, unknown> = { inducementTaken, inducementLeft, nyInSession: inTrade(e) };
+  const confirm = top !== null ? entry.close > entry.open && entry.close > top && (entry.close - entry.low) / Math.max(entry.high - entry.low, 1e-12) >= 0.57 : null;
+  out.retestConfirmCandle = confirm;
+  if (start < 0) return { ...out, nyReason: "нет сессии" };
+  const day = clock[start]!.day;
+  const orBars = b.map((_, k) => k).filter((k) => k < start && k > start - 40 && clock[k]!.day === day && inOR(k));
+  if (!orBars.length) return { ...out, nyReason: "нет диапазона 8:00–9:30 (таймфрейм крупнее)" };
+  const orHigh = Math.max(...orBars.map((k) => b[k]!.high)), orLow = Math.min(...orBars.map((k) => b[k]!.low));
+  let lowAt = -1, highAt = -1;
+  for (let k = start; k <= e && clock[k]!.day === day && inTrade(k); k++) {
+    if (lowAt < 0 && b[k]!.low < orLow) lowAt = k;
+    if (highAt < 0 && b[k]!.high > orHigh) highAt = k;
+  }
+  const first = lowAt < 0 && highAt < 0 ? null : highAt < 0 || (lowAt >= 0 && lowAt < highAt) ? "low" : lowAt < 0 || highAt < lowAt ? "high" : "both_same_bar";
+  let cisd: boolean | null = null, barsCisdToEntry: number | null = null;
+  if (first === "low") {
+    cisd = false;
+    let level: number | null = null;
+    for (let i = 1; i <= 120 && lowAt - i >= 0; i++) {
+      const x = b[lowAt - i]!;
+      if (x.close > x.open) { level = i > 1 ? Math.max(b[lowAt - i + 1]!.open, b[lowAt - i + 2]!.open) : b[lowAt]!.open; break; }
+    }
+    if (level !== null) for (let k = lowAt; k <= e && k - lowAt <= 120; k++) if (b[k]!.close >= level) { cisd = true; barsCisdToEntry = e - k; break; }
+  }
+  return {
+    ...out,
+    nyReason: null,
+    nySessionHoursBeforeEntry: r2(((entry.time - b[start]!.time) / 3_600_000)),
+    nyOrLowSwept: lowAt >= 0,
+    nyOrHighSwept: highAt >= 0,
+    nyFirstSwept: first,
+    nyEntryVsOrLowPct: r2(pct(entry.close, orLow)),
+    nyCisdAfterLowSweep: cisd,
+    nyBarsCisdToEntry: barsCisdToEntry,
   };
 }
 
