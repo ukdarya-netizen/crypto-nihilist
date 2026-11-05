@@ -15,11 +15,28 @@ import { bingxKlines, mirror, type C } from "./vsa";
 import { computeWyckoff } from "./wyckoff";
 import { colorWindow } from "./volume-colors";
 import { countDeclineWaves } from "./elliott";
+import { liquidityReading } from "./liquidity";
 
 const H1 = 3_600_000;
 const HISTORY_BARS = 450;
 
-export async function computeVolumeStudy(symbol: string, side: string, openedAt: number) {
+const TF_MS: Record<string, number> = { "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000, "4h": 14_400_000 };
+
+/** ICT liquidity around the block on the setup's LTF (owner 2026-11-05). */
+async function computeLiquidity(symbol: string, side: string, openedAt: number, ltf: string, d: Record<string, unknown> | null) {
+  const touch = Number(d?.firstTouchAt), top = Number(d?.blockTop), bottom = Number(d?.blockBottom);
+  const tf = TF_MS[ltf];
+  if (!tf || !Number.isFinite(touch) || !(top > 0) || !(bottom > 0)) return { reason: "нет данных блока" };
+  const bars = Math.min(1500, Math.ceil((openedAt - touch) / tf) + 150);
+  let cs: C[] = await bingxKlines(symbol, ltf, openedAt, bars);
+  if (cs.length < 50) return { reason: "мало свечей LTF" };
+  const short = side === "short";
+  if (short) cs = mirror(cs);
+  const lb = cs.map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v }));
+  return { ltf, ...liquidityReading(lb, touch, openedAt, short ? -bottom : top, short ? -top : bottom) };
+}
+
+export async function computeVolumeStudy(symbol: string, side: string, openedAt: number, ltf = "", details: Record<string, unknown> | null = null) {
   const entry = Math.floor(openedAt / H1) * H1 - H1;
   let cs: C[] = await bingxKlines(symbol, "1h", entry + H1, HISTORY_BARS);
   if (!cs.some((c) => c.t === entry)) return { ok: false as const, reason: "нет свечи входа BingX 1H" };
@@ -34,12 +51,13 @@ export async function computeVolumeStudy(symbol: string, side: string, openedAt:
   const w = computeWyckoff(ohlc, vol, entry);
   const counts: Record<string, number> = {};
   for (const e of w.events) counts[e.type] = (counts[e.type] ?? 0) + 1;
+  const liquidity = await computeLiquidity(symbol, side, openedAt, ltf, details).catch((e) => ({ reason: String(e).slice(0, 80) }));
   const elliott = countDeclineWaves(ohlc, ohlc.findIndex((b) => b.time === entry));
   const colors = colorWindow(cs.map((c) => c.t), (t) => vol.get(t) ?? null, entry, (t) => bars.get(t));
   return {
     ok: true as const,
     study: {
-      version: 2,
+      version: 3,
       entryCandle: new Date(entry).toISOString(),
       mirroredForShort: side === "short",
       wyckoff: {
@@ -51,6 +69,8 @@ export async function computeVolumeStudy(symbol: string, side: string, openedAt:
       colors,
       /** Owner 2026-11-05: waves of the move into the block (3 = A-B-C correction, 5 = impulse). */
       elliott,
+      /** Owner 2026-11-05: ICT liquidity sweep around the block (market/liquidity.ts). */
+      liquidity,
       source: "bingx_1h_price_volume",
     },
   };
@@ -64,9 +84,9 @@ let started = false;
 export async function runVolumeStudyBackfill(limit = 25, gapMs = 1_000): Promise<number> {
   const cooling = [...failures.entries()].filter(([, f]) => Date.now() - f.at < RETRY_MS).map(([id]) => id);
   const { rows } = await pool.query(
-    `SELECT id, symbol, side, opened_at FROM nh_signals
+    `SELECT id, symbol, side, opened_at, ltf, details FROM nh_signals
       WHERE live AND opened_at < now() - interval '5 minutes'
-        AND COALESCE((details->'volumeStudy'->>'version')::int, 0) < 2
+        AND COALESCE((details->'volumeStudy'->>'version')::int, 0) < 3
         AND NOT (id::text = ANY($1::text[]))
       ORDER BY opened_at DESC LIMIT $2`,
     [cooling, limit],
@@ -74,7 +94,7 @@ export async function runVolumeStudyBackfill(limit = 25, gapMs = 1_000): Promise
   let written = 0;
   for (const r of rows) {
     try {
-      const res = await computeVolumeStudy(r.symbol, r.side, new Date(r.opened_at).getTime());
+      const res = await computeVolumeStudy(r.symbol, r.side, new Date(r.opened_at).getTime(), r.ltf, r.details);
       if (!res.ok) failures.set(String(r.id), { at: Date.now(), reason: res.reason });
       else {
         await pool.query(
