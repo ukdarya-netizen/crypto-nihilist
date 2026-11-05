@@ -52,14 +52,23 @@ export const NO_TP_TARGETS_SOURCE = "trailing_only";
 export const ENTRY_FILTER_MIN_RISK_PCT = 7;
 export const ENTRY_FILTER_MAX_BLOCK_AGE_H = 300;
 export const ENTRY_FILTER_MIN_BLOCK_SIZE_PCT = 4;
+/**
+ * Owner 2026-11-05: no long on a quiet coin — ATR(14) of the 1H candles below 1.2% of the price at
+ * the signal. Over the current filter (45 longs since 25.10) it removes BANK 01.11 (stop) and three
+ * flat trades (PUNDIX, KNC, AGLD); on all 275 longs: 98 removed → 4 reached +10%, 75 stopped.
+ * Unknown ATR → not rejected.
+ */
+export const ENTRY_FILTER_MIN_ATR1H_PCT = 1.2;
 
 export type EntryFilterResult = {
   pass: boolean; reason: string | null; riskPct: number; blockAgeH: number | null; blockSizePct: number;
+  atrPct1h?: number | null;
 };
 
 export function entryFilter(input: {
   side: "long" | "short"; riskPct: number; entry: number; blockTop: number; blockBottom: number;
   signalAt: number; blockCreatedAt?: number | null; blockTime?: number | null;
+  atrPct1h?: number | null;
 }): EntryFilterResult {
   const origin = input.blockCreatedAt ?? input.blockTime ?? null;
   const blockAgeH = origin !== null ? (input.signalAt - origin) / 3_600_000 : null;
@@ -70,8 +79,9 @@ export function entryFilter(input: {
     if (blockAgeH === null) reasons.push("block_age_unknown");
     else if (blockAgeH > ENTRY_FILTER_MAX_BLOCK_AGE_H) reasons.push("block_older_300h");
     if (!(blockSizePct >= ENTRY_FILTER_MIN_BLOCK_SIZE_PCT)) reasons.push("block_below_4pct");
+    if (input.atrPct1h != null && input.atrPct1h < ENTRY_FILTER_MIN_ATR1H_PCT) reasons.push("atr1h_below_1_2pct");
   }
-  return { pass: reasons.length === 0, reason: reasons.length ? reasons.join(",") : null, riskPct: input.riskPct, blockAgeH, blockSizePct };
+  return { pass: reasons.length === 0, reason: reasons.length ? reasons.join(",") : null, riskPct: input.riskPct, blockAgeH, blockSizePct, atrPct1h: input.atrPct1h ?? null };
 }
 
 /** Open trades are followed on 5-minute candles. */
