@@ -21,7 +21,7 @@ import { removeDuplicateSignals } from "../stats/dedupe";
 import { evaluateSetups, type HtfInterval, type SetupCandidate, type SetupSignal } from "./setups";
 import { trackRejections } from "./rejections";
 import { enqueueSignal, startTradingRelay } from "../lib/trading-relay";
-import { COMBOS, MAX_HOLD_MS, NO_TP_TARGETS_SOURCE, TAKE_PROFIT_ENABLED } from "./config";
+import { COMBOS, MAX_HOLD_MS, NO_TP_TARGETS_SOURCE, TAKE_PROFIT_ENABLED, takeAtPctFor } from "./config";
 import { openTrade } from "./trade";
 import { BREAKEVEN_AT_PCT, LIVE_SETUPS, OB_MIN_DISPLACEMENT_ATR, entryFilter } from "./config";
 import { chochBarMetrics } from "./choch-bar";
@@ -188,7 +188,7 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
   const trade = openTrade({
     side: s.side, entry: s.entry, stop: s.stop, tp1: s.tp1,
     openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf], breakevenAtPct: BREAKEVEN_AT_PCT,
-    takeProfit: TAKE_PROFIT_ENABLED,
+    takeProfit: TAKE_PROFIT_ENABLED, takeAtPct: takeAtPctFor(s.side),
   });
   const targetsSource = TAKE_PROFIT_ENABLED ? s.targetsSource : NO_TP_TARGETS_SOURCE;
   const live = LIVE_SETUPS.has(s.setup);

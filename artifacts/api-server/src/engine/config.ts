@@ -34,6 +34,16 @@ export const BREAKEVEN_AT_PCT: number | null = 5;
  * "trailing_only". Trades opened before keep their TP1.
  */
 export const TAKE_PROFIT_ENABLED = false;
+
+/**
+ * Shorts exit (owner 2026-11-05): break-even at +5% (as before) and the WHOLE short closed at +8%.
+ * Live shorts 26.10-05.11: current management -104% in sum, this one +135%. Applies to open shorts
+ * that have not reached +8% yet and to every new short. Longs unchanged (trailing from +15%).
+ */
+export const SHORT_TAKE_AT_PCT: number | null = 8;
+export function takeAtPctFor(side: "long" | "short", peakPct = 0): number | null {
+  return side === "short" && SHORT_TAKE_AT_PCT !== null && peakPct < SHORT_TAKE_AT_PCT ? SHORT_TAKE_AT_PCT : null;
+}
 export const NO_TP_TARGETS_SOURCE = "trailing_only";
 
 /**

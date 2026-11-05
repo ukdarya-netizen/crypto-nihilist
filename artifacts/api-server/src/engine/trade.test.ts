@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Candle } from "./candles";
 import { applyCandles, nextMilestone, openTrade, tradeResult } from "./trade";
+import { takeAtPctFor } from "./config";
 
 const M = 5 * 60_000;
 const bar = (i: number, l: number, h: number, c = (l + h) / 2): Candle => ({ t: i * M, o: c, h, l, c });
@@ -71,4 +72,23 @@ test("no take profit (2026-11-02): the TP1 level is passed without a take; break
   assert.equal(state.closeReason, "trailing");
   // the whole position exits at +14%, minus 0.1% fees
   assert.ok(Math.abs(tradeResult(state).pnlPct - 13.9) < 1e-6, String(tradeResult(state).pnlPct));
+});
+
+test("short: break-even at +5%, whole position closed at +8% (owner 2026-11-05)", () => {
+  const s0 = openTrade({ side: "short", entry: 100, stop: 110, tp1: 80, openedAt: 0, maxHoldMs: 7 * 86_400_000, breakevenAtPct: 5, takeProfit: false, takeAtPct: 8 });
+  const c = (t: number, o: number, h: number, l: number, cl: number): Candle => ({ t, o, h, l, c: cl });
+  const a = applyCandles(s0, [c(0, 100, 101, 95, 96)], 300_000);
+  assert.equal(a.state.breakevenMoved, true);
+  assert.equal(a.state.closed, false);
+  const b = applyCandles(a.state, [c(300_000, 96, 97, 91, 93)], 300_000);
+  assert.equal(b.state.closed, true);
+  assert.equal(b.state.closeReason, "take");
+  assert.equal(b.state.exitPrice, 92);
+  assert.ok(Math.abs(tradeResult(b.state).pnlPct - 7.9) < 1e-9);
+});
+
+test("takeAtPctFor: shorts only, not for a short already past +8%", () => {
+  assert.equal(takeAtPctFor("short"), 8);
+  assert.equal(takeAtPctFor("short", 9), null);
+  assert.equal(takeAtPctFor("long"), null);
 });
