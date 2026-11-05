@@ -7,7 +7,7 @@
  */
 import { pool } from "@workspace/db";
 import { INTERVAL_MS } from "./candles";
-import { BREAKEVEN_AT_PCT, NO_TP_TARGETS_SOURCE, TRACK_INTERVAL } from "./config";
+import { BREAKEVEN_AT_PCT, NO_TP_TARGETS_SOURCE, TRACK_INTERVAL, takeAtPctFor } from "./config";
 import type { HtfInterval } from "./setups";
 import { applyCandles, tradeResult, type TradeEvent, type TradeState } from "./trade";
 import { getCandles } from "../market/coinglass";
@@ -29,6 +29,7 @@ export function stateFromRow(row: OpenRow): TradeState {
     side: row.side, entry: row.entry, stop: row.stop, tp1: row.tp1,
     openedAt: row.opened_at.getTime(), expiresAt: row.expires_at.getTime(),
     breakevenAtPct: BREAKEVEN_AT_PCT, breakevenMoved: row.breakeven_moved,
+    takeAtPct: takeAtPctFor(row.side, row.peak_pct),
     tp1Enabled: row.targets_source !== NO_TP_TARGETS_SOURCE,
     tp1Hit: row.tp1_hit, tp1At: row.tp1_at ? row.tp1_at.getTime() : null,
     currentStop: row.current_stop ?? row.stop, trailingActive: row.trailing_active,

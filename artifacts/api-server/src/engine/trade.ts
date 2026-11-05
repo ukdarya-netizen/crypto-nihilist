@@ -5,6 +5,7 @@
  *   - optional break-even at +BE% (AltBullet's +5%; off unless enabled);
  *   - TP1 (nearest unbroken HTF level): 50% closed, stop to entry — only for
  *     trades opened with a take profit (off for new trades since 2026-11-02);
+ *   - full take at +TAKE% (shorts +8% since 2026-11-05; null = none);
  *   - trailing from +15% of favourable move: stop = peak − 10 p.p. (never
  *     looser than the stop already in place), for whatever is still open;
  *   - progress alerts at +5, +8, +10, then every +5% (one per jump, highest);
@@ -43,7 +44,7 @@ export type TradeEvent =
   | { kind: "trailing_on"; at: number; price: number; trailingStop: number; peakPct: number }
   | { kind: "closed"; at: number; price: number; reason: CloseReason };
 
-export type CloseReason = "stop" | "breakeven" | "trailing" | "timeout";
+export type CloseReason = "stop" | "breakeven" | "trailing" | "take" | "timeout";
 
 export type TradeState = {
   side: Side;
@@ -56,6 +57,8 @@ export type TradeState = {
   /** Break-even trigger in % (null = only after TP1). */
   breakevenAtPct: number | null;
   breakevenMoved: boolean;
+  /** Whole position closed at this favourable move, % (null = no fixed take). */
+  takeAtPct?: number | null;
   /** false = no take profit: the trade is managed by break-even and trailing only. */
   tp1Enabled: boolean;
   tp1Hit: boolean;
@@ -78,13 +81,14 @@ export type TradeState = {
 export function openTrade(input: {
   side: Side; entry: number; stop: number; tp1: number; openedAt: number; maxHoldMs: number;
   breakevenAtPct?: number | null;
+  takeAtPct?: number | null;
   /** Default true (trades before 2026-11-02 and the old backtest rules). */
   takeProfit?: boolean;
 }): TradeState {
   return {
     side: input.side, entry: input.entry, stop: input.stop, tp1: input.tp1,
     openedAt: input.openedAt, expiresAt: input.openedAt + input.maxHoldMs,
-    breakevenAtPct: input.breakevenAtPct ?? null, breakevenMoved: false,
+    breakevenAtPct: input.breakevenAtPct ?? null, breakevenMoved: false, takeAtPct: input.takeAtPct ?? null,
     tp1Enabled: input.takeProfit ?? true, tp1Hit: false, tp1At: null, currentStop: input.stop, trailingActive: false,
     peakPct: 0, lastMilestone: 0,
     closed: false, closedAt: null, closeReason: null, exitPrice: null,
@@ -134,6 +138,14 @@ export function applyCandles(state: TradeState, candles: Candle[], spanMs: numbe
       s.breakevenMoved = true;
       s.currentStop = tighter(s, s.currentStop, s.entry);
       events.push({ kind: "breakeven", at, price: priceAtPct(s, s.breakevenAtPct) });
+    }
+    if (s.takeAtPct != null && best >= s.takeAtPct) {
+      s.closed = true;
+      s.closedAt = at;
+      s.exitPrice = priceAtPct(s, s.takeAtPct);
+      s.closeReason = "take";
+      events.push({ kind: "closed", at, price: s.exitPrice, reason: "take" });
+      break;
     }
     if (s.tp1Enabled && !s.tp1Hit && (dir === 1 ? c.h >= s.tp1 : c.l <= s.tp1)) {
       s.tp1Hit = true;

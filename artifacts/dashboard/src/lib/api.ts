@@ -133,7 +133,7 @@ export function setupLabel(setup: string): string {
   return `ОБ ${htf === "1d" ? "1D" : htf} → слом ${ltf} · ${side === "long" ? "лонг" : "шорт"}`;
 }
 export const CLOSE_LABEL: Record<string, string> = {
-  trailing: "трейлинг", breakeven: "безубыток", stop: "стоп", timeout: "время вышло",
+  trailing: "трейлинг", take: "тейк +8%", breakeven: "безубыток", stop: "стоп", timeout: "время вышло",
 };
 export const REASON_LABEL: Record<string, string> = {
   rr_too_low: "первый тейк ближе 1R",

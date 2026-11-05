@@ -2,7 +2,7 @@
  * Telegram texts in the AltBullet layout (POSITION UPDATE / POSITION CLOSED,
  * ticker and setup hashtags). Plain text only: no HTML, no Markdown.
  */
-import { BREAKEVEN_AT_PCT, NO_TP_TARGETS_SOURCE } from "../engine/config";
+import { BREAKEVEN_AT_PCT, NO_TP_TARGETS_SOURCE, SHORT_TAKE_AT_PCT } from "../engine/config";
 
 export type SignalForText = {
   symbol: string; setup: string; htf: string; ltf: string; side: "long" | "short";
@@ -59,7 +59,7 @@ export function formatEvent(s: SignalForText, e: EventForText): string {
       `Стоп: ${fmtP(s.stop)} (${fmtPct(stopPct)})`,
       noTp ? null : `Тейк 1: ${fmtP(s.tp1)} (${fmtPct(tp1Pct)}) — фиксируем 50%, стоп в безубыток`,
       BREAKEVEN_AT_PCT !== null ? `Безубыток: на +${BREAKEVEN_AT_PCT}% стоп переносится на вход` : null,
-      `Трейлинг: с +15%, стоп на 10 п.п. ниже пика`,
+      s.side === "short" && SHORT_TAKE_AT_PCT !== null ? `Тейк: +${SHORT_TAKE_AT_PCT}% — закрываем всю позицию` : `Трейлинг: с +15%, стоп на 10 п.п. ниже пика`,
       ``,
       `Ордер-блок: ${fmtP(s.block_bottom)} – ${fmtP(s.block_top)}`,
       s.targets_source === "r_multiple" ? `Выше нет непробитых уровней ${tf(s.htf)}: тейк 1 = 2R` : null,
@@ -70,6 +70,7 @@ export function formatEvent(s: SignalForText, e: EventForText): string {
   if (e.kind === "closed") {
     const reason = String(d.reason);
     const title = reason === "trailing" ? "🟢 PROFIT (трейлинг)"
+      : reason === "take" ? "🟢 PROFIT (тейк +8%, закрыта вся позиция)"
       : reason === "breakeven" ? (d.tp1Hit ? "🔵 БЕЗУБЫТОК после тейка 1" : "🔵 БЕЗУБЫТОК")
         : reason === "timeout" ? "⏱ Закрыто по времени удержания"
           : "🔴 STOP LOSS";

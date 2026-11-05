@@ -111,7 +111,7 @@ export async function enqueueSignal(s: RelaySignal): Promise<void> {
 
 export type CommandInput =
   | { type: "move_stop"; reason: "breakeven" | "trailing"; stopPrice: number; at: number }
-  | { type: "close"; reason: "stop_loss" | "breakeven_stop" | "trailing_stop" | "expired"; exitPrice: number | null; at: number };
+  | { type: "close"; reason: "stop_loss" | "breakeven_stop" | "trailing_stop" | "profit" | "expired"; exitPrice: number | null; at: number };
 
 /** Queues a command for a signal that was sent to the bot (no signal sent = no command). */
 export async function enqueueCommand(signalId: number, symbol: string, c: CommandInput): Promise<void> {
@@ -211,6 +211,6 @@ export function startTradingRelay(): void {
 }
 
 /** Close reason of the tracker → command reason. */
-export function closeReason(reason: string | null): "stop_loss" | "breakeven_stop" | "trailing_stop" | "expired" {
-  return reason === "trailing" ? "trailing_stop" : reason === "breakeven" ? "breakeven_stop" : reason === "timeout" ? "expired" : "stop_loss";
+export function closeReason(reason: string | null): "stop_loss" | "breakeven_stop" | "trailing_stop" | "profit" | "expired" {
+  return reason === "take" ? "profit" : reason === "trailing" ? "trailing_stop" : reason === "breakeven" ? "breakeven_stop" : reason === "timeout" ? "expired" : "stop_loss";
 }

@@ -11,7 +11,7 @@ export function notificationPhotoKind(
   if (shouldSuppressTelegramEvent(eventKind)) return null;
   if (eventKind === "opened") return "signal";
   if (eventKind === "closed" && eventReason === "stop") return "stopLoss";
-  if (eventKind === "tp1" || (eventKind === "closed" && eventReason === "trailing")) return "takeProfit";
+  if (eventKind === "tp1" || (eventKind === "closed" && (eventReason === "trailing" || eventReason === "take"))) return "takeProfit";
   if (eventKind === "closed" && eventReason === "breakeven") return "beStop";
   if (eventKind === "closed" && eventReason === "timeout") return "expired";
   if (eventKind === "milestone" || eventKind === "breakeven") {
