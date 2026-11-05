@@ -32,6 +32,7 @@ import { getUniverse, setScanBusy, type UniverseSymbol } from "../market/coingla
 import { waitForEngineLease } from "../ops/lease";
 import { logger } from "../lib/logger";
 import { startVolumeStudyBackfill } from "../market/volume-study";
+import { marketMetrics } from "./metrics";
 
 /** LTF bars walked per evaluation (enough for the LTF structure to settle). */
 const LTF_WINDOW = 400;
@@ -176,6 +177,8 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
   const filter = entryFilter({
     side: s.side, riskPct: s.riskPct, entry: s.entry, blockTop: s.block.top, blockBottom: s.block.bottom,
     signalAt: s.signalAt, blockCreatedAt: s.block.createdAt, blockTime: s.block.time,
+    // Same ATR % as the recorded metric atrpct_1h (closed 1H candles at the signal).
+    atrPct1h: s.side === "long" ? (marketMetrics(book(symbol), s.signalAt).atrpct_1h as number | null) ?? null : null,
   });
   if (!filter.pass) {
     await recordDecision(symbol, s.setup, s.barTime, "rejected", `entry_filter:${filter.reason}`, s.block.id,
