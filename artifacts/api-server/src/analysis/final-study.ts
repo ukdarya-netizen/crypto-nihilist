@@ -11,19 +11,24 @@
  *                 AGGREGATED futures volume (all exchanges, CoinGlass), AGGREGATED spot volume, and — separately and
  *                 marked — BingX's own volume. Missing aggregated data → empty (never filled from BingX).
  *   trajectory_long.csv.gz — every recorded point of longs from the block touch to 24 h after the entry (existing table).
- * Read-only on the database. CoinGlass at a gentle pace (the live scan keeps priority); resumable: finished signals are
- * kept in reports/nh-final/mf-cache.jsonl, a restart continues from there.
- *   cd artifacts/api-server && node --import tsx src/analysis/final-study.ts
+ * Read-only on the database. Runs inside the published app (the workspace cannot reach the production database),
+ * started and downloaded through /api/nh-study (token = NIHILIST_TRADING_TOKEN, see routes/final-study.ts).
+ * CoinGlass at a gentle pace behind the live scan; resumable within one process: finished signals are kept in
+ * mf-cache.jsonl next to the files.
  */
 import { createWriteStream, existsSync, mkdirSync, readFileSync, appendFileSync } from "node:fs";
 import { createGzip } from "node:zlib";
 import { pool } from "@workspace/db";
-import { cgRequest } from "../market/coinglass";
+import { cgRequest, waitForScanIdle } from "../market/coinglass";
 import { cgBase } from "../market/derivatives";
 import { bingxKlines, type C } from "../market/vsa";
 
-const OUT = process.env.NH_STUDY_OUT ?? "../../reports/nh-final";
+export const STUDY_DIR = process.env.NH_STUDY_OUT ?? "/tmp/nh-final";
+const OUT = STUDY_DIR;
 const CACHE = `${OUT}/mf-cache.jsonl`;
+export const studyState: { running: boolean; startedAt: string | null; finishedAt: string | null; phase: string; done: number; total: number; error: string | null; log: string[] } =
+  { running: false, startedAt: null, finishedAt: null, phase: "idle", done: 0, total: 0, error: null, log: [] };
+const say = (m: string) => { studyState.log.push(`${new Date().toISOString()} ${m}`); if (studyState.log.length > 50) studyState.log.shift(); };
 const GAP_MS = Number(process.env.NH_STUDY_GAP_MS ?? 700);
 const SPOT_EXCHANGES = "Binance,Bitfinex,Bitget,Bybit,Coinbase,Crypto.com,Gate,Kraken,OKX,Upbit";
 const FUTURES_EXCHANGES = "Binance,BingX,Bitfinex,Bitget,Bybit,Coinbase,Crypto.com,Deribit,Gate,HTX,Hyperliquid,Kraken,KuCoin,LBank,MEXC,OKX,WhiteBIT,dYdX";
@@ -95,6 +100,7 @@ function readings(cs: Bar[], i: number, longN: number): Record<string, number | 
 // ---------------- data ----------------
 async function cgVolume(path: string, params: Record<string, string | number>, interval: string, end: number, limit: number, buyKey: string, sellKey: string): Promise<Map<number, number> | null> {
   await sleep(GAP_MS);
+  await waitForScanIdle(); // the live scan always goes first
   const res = await cgRequest(path, { ...params, interval, limit, end_time: end }, { health: false });
   if (!res.ok || !Array.isArray(res.data) || !res.data.length) return null;
   const m = new Map<number, number>();
@@ -160,10 +166,11 @@ function writeCsv(path: string, rows: Array<Record<string, unknown>>, first: str
   ws.write(cols.join(",") + "\n");
   for (const r of rows) ws.write(cols.map((k) => cell(r[k])).join(",") + "\n");
   ws.end();
-  console.log(`${path}: ${rows.length} rows, ${cols.length} columns`);
+  say(`${path}: ${rows.length} rows, ${cols.length} columns`);
 }
 
 async function main() {
+  studyState.phase = "reading database";
   mkdirSync(OUT, { recursive: true });
   const cache = new Map<string, Record<string, unknown>>();
   if (existsSync(CACHE)) for (const l of readFileSync(CACHE, "utf8").split("\n")) if (l.trim()) { const o = JSON.parse(l); cache.set(o.key, o.mf); }
@@ -180,20 +187,22 @@ async function main() {
             o.first_event, o.first_at, o.same_candle, o.peak_pct, o.low_pct, d.details
        FROM nh_rejection_outcomes o JOIN nh_decisions d ON d.id = o.decision_id
       WHERE o.status <> 'no_data' ORDER BY o.signal_at`)).rows;
-  console.log(`signals ${trades.length} (live ${trades.filter((t) => t.live).length}), rejections followed ${rejects.length}, cached ${cache.size}`);
+  say(`signals ${trades.length} (live ${trades.filter((t) => t.live).length}), rejections followed ${rejects.length}, cached ${cache.size}`);
 
   const todo: Array<{ key: string; symbol: string; at: number }> = [
     ...trades.map((t) => ({ key: `s${t.id}`, symbol: t.symbol, at: new Date(t.opened_at).getTime() })),
     ...rejects.map((r) => ({ key: `r${r.decision_id}`, symbol: r.symbol, at: new Date(r.signal_at).getTime() })),
   ].filter((x) => !cache.has(x.key));
   let n = 0;
+  studyState.phase = "money flow"; studyState.total = todo.length; studyState.done = 0;
   for (const x of todo) {
     const mf = await moneyFlow(x.symbol, x.at).catch((e) => ({ mf_error: String(e).slice(0, 120) }));
     cache.set(x.key, mf);
     appendFileSync(CACHE, JSON.stringify({ key: x.key, mf }) + "\n");
-    if (++n % 25 === 0) console.log(`money flow ${n}/${todo.length}`);
+    studyState.done = ++n;
   }
 
+  studyState.phase = "writing files";
   writeCsv(`${OUT}/trades.csv`, trades.map((t) => {
     const r: Record<string, unknown> = {
       id: t.id, opened_at: t.opened_at, closed_at: t.closed_at, symbol: t.symbol, side: t.side, setup: t.setup, live: t.live,
@@ -231,8 +240,16 @@ async function main() {
   for (const r of traj) gz.write(cols.map((k) => cell(base.includes(k) ? r[k] : (r.metrics ?? {})[k])).join(",") + "\n");
   gz.end();
   await new Promise((r) => ws.on("finish", r));
-  console.log(`${OUT}/trajectory.csv.gz: ${traj.length} rows`);
-  await pool.end();
+  say(`${OUT}/trajectory.csv.gz: ${traj.length} rows`);
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+/** Starts the study in the background (once at a time). */
+export function startFinalStudy(): boolean {
+  if (studyState.running) return false;
+  Object.assign(studyState, { running: true, startedAt: new Date().toISOString(), finishedAt: null, phase: "starting", done: 0, total: 0, error: null });
+  void main()
+    .then(() => { studyState.phase = "done"; })
+    .catch((e) => { studyState.error = String(e).slice(0, 300); studyState.phase = "failed"; })
+    .finally(() => { studyState.running = false; studyState.finishedAt = new Date().toISOString(); });
+  return true;
+}
