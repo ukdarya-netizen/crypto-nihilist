@@ -12,6 +12,9 @@ test("notification photo matches each Telegram event category", () => {
   assert.equal(notificationPhotoKind("trailing_on", null), null);
   assert.equal(notificationPhotoKind("closed", "breakeven"), "beStop");
   assert.equal(notificationPhotoKind("closed", "timeout"), "expired");
+  assert.equal(notificationPhotoKind(null, null, -100_020_000), "dailyReport");
+  assert.equal(notificationPhotoKind(null, null, -200_003_000), null);
+  assert.equal(notificationPhotoKind(null, null, -300_024_000), null);
   assert.equal(notificationPhotoKind(null, null), null);
   assert.equal(shouldSuppressTelegramEvent("trailing_on"), true);
   assert.equal(shouldSuppressTelegramEvent("milestone"), false);
