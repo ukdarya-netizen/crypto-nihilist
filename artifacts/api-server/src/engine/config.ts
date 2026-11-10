@@ -40,17 +40,29 @@ export const TAKE_PROFIT_ENABLED = false;
  * Live shorts 26.10-05.11: current management -104% in sum, this one +135%. Applies to open shorts
  * that have not reached +8% yet and to every new short. Longs unchanged (trailing from +15%).
  */
-export const SHORT_TAKE_AT_PCT: number | null = 8;
+export const SHORT_TAKE_AT_PCT: number | null = null; // off since 2026-11-10 (partial +10% below)
 /**
  * Longs exit (owner 2026-11-10): the WHOLE long closed at +10% (no long take before — only trailing from +15%).
  * Applies to every new long and to open longs that have not reached +10% yet; an open long already past +10%
  * keeps break-even and the trailing stop from +15%.
  */
-export const LONG_TAKE_AT_PCT: number | null = 10;
+export const LONG_TAKE_AT_PCT: number | null = null; // off since 2026-11-10 (partial +10% below)
 export function takeAtPctFor(side: "long" | "short", peakPct = 0): number | null {
   const take = side === "short" ? SHORT_TAKE_AT_PCT : LONG_TAKE_AT_PCT;
   return take !== null && peakPct < take ? take : null;
 }
+
+/**
+ * Trade management (owner 2026-11-10, longs and shorts, as AltBullet): break-even at +5%; at +10% half of the
+ * position is closed (TP 1, the stop is already at entry); from +15% the trailing stop (peak − 10 p.p.) leads the
+ * rest. No full take. Applies to new signals and to every open trade without a structural TP 1 (targets_source
+ * "trailing_only" becomes "pct10"; their TP 1 is the +10% price).
+ */
+export const PARTIAL_AT_PCT = 10;
+export const PCT_TARGETS_SOURCE = "pct10";
+/** TP 1 price at +PARTIAL_AT_PCT% in the trade's direction. */
+export const partialPrice = (side: "long" | "short", entry: number) =>
+  entry * (1 + (side === "long" ? 1 : -1) * PARTIAL_AT_PCT / 100);
 export const NO_TP_TARGETS_SOURCE = "trailing_only";
 
 /**

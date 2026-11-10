@@ -7,7 +7,7 @@
  */
 import { pool } from "@workspace/db";
 import { INTERVAL_MS } from "./candles";
-import { BREAKEVEN_AT_PCT, BTC_TARGETS_SOURCE, NO_TP_TARGETS_SOURCE, TRACK_INTERVAL, takeAtPctFor } from "./config";
+import { BREAKEVEN_AT_PCT, BTC_TARGETS_SOURCE, NO_TP_TARGETS_SOURCE, PCT_TARGETS_SOURCE, TRACK_INTERVAL, partialPrice } from "./config";
 import type { HtfInterval } from "./setups";
 import { TP1_SHARE, applyCandles, tradeResult, type TradeEvent, type TradeState } from "./trade";
 import { getCandles } from "../market/coinglass";
@@ -24,16 +24,21 @@ export type OpenRow = {
   mfe_pct: number; mae_pct: number; last_candle_time: string | null; targets_source?: string | null; live?: boolean;
 };
 
+/** Open trades without a structural TP 1 follow the +10% partial (owner 2026-11-10). */
+export const targetsSourceOf = (row: Pick<OpenRow, "targets_source">) =>
+  row.targets_source === NO_TP_TARGETS_SOURCE ? PCT_TARGETS_SOURCE : row.targets_source ?? null;
+
 export function stateFromRow(row: OpenRow): TradeState {
   // BTC (owner 2026-11-10): TP 1 at 1.5R (50%, stop to entry), TP 2 at 3R; no +5% break-even, take or trailing.
   const btc = row.targets_source === BTC_TARGETS_SOURCE;
+  const pct = targetsSourceOf(row) === PCT_TARGETS_SOURCE;
   return {
-    side: row.side, entry: row.entry, stop: row.stop, tp1: row.tp1,
+    side: row.side, entry: row.entry, stop: row.stop, tp1: pct ? partialPrice(row.side, row.entry) : row.tp1,
     openedAt: row.opened_at.getTime(), expiresAt: row.expires_at.getTime(),
     breakevenAtPct: btc ? null : BREAKEVEN_AT_PCT, breakevenMoved: row.breakeven_moved,
-    takeAtPct: btc ? null : takeAtPctFor(row.side, row.peak_pct),
+    takeAtPct: null,
     takePrice: btc && row.tp2 != null ? Number(row.tp2) : null, trailingEnabled: !btc,
-    tp1Enabled: row.targets_source !== NO_TP_TARGETS_SOURCE,
+    tp1Enabled: true,
     tp1Hit: row.tp1_hit, tp1At: row.tp1_at ? row.tp1_at.getTime() : null,
     currentStop: row.current_stop ?? row.stop, trailingActive: row.trailing_active,
     peakPct: row.peak_pct, lastMilestone: row.last_milestone,
@@ -78,7 +83,7 @@ async function trackRow(row: OpenRow, now: number): Promise<void> {
     `UPDATE nh_signals SET status = $2, tp1_hit = $3, tp1_at = $4, closed_at = $5, close_reason = $6,
        exit_price = $7, pnl_pct = $8, r_multiple = $9, mfe_pct = $10, mae_pct = $11, last_candle_time = $12,
        current_stop = $13, breakeven_moved = $14, trailing_active = $15, peak_pct = $16, last_milestone = $17,
-       last_price = $18
+       last_price = $18, tp1 = $19, targets_source = $20
      WHERE id = $1 AND status = 'open'`,
     [
       row.id, after.closed ? "closed" : "open", after.tp1Hit,
@@ -86,13 +91,13 @@ async function trackRow(row: OpenRow, now: number): Promise<void> {
       after.closedAt ? new Date(after.closedAt) : null, after.closeReason, after.exitPrice,
       result.pnlPct, result.r, after.mfePct, after.maePct, after.lastCandleTime,
       after.currentStop, after.breakevenMoved, after.trailingActive, after.peakPct, after.lastMilestone,
-      mark ?? null,
+      mark ?? null, after.tp1, targetsSourceOf(row),
     ],
   );
   // Trading bot commands (owner 2026-11-02): every stop change and the close of a live trade.
   if (row.live) {
     const at = (after.lastCandleTime ?? now) + SPAN;
-    // TP 1 (BTC, older trades): half of the position closed first — the bot does what the signal says.
+    // TP 1 (50% at +10% since 2026-11-10; BTC 1.5R): half of the position closed first — the bot does what the signal says.
     const tp1 = events.find((e) => e.kind === "tp1");
     if (tp1) {
       await enqueueCommand(row.id, row.symbol, { type: "close", reason: "profit", exitPrice: tp1.price, at: tp1.at, fraction: TP1_SHARE })
@@ -113,6 +118,8 @@ async function trackRow(row: OpenRow, now: number): Promise<void> {
     const detail: Record<string, unknown> = { ...e, currentStop: after.currentStop, peakPct: after.peakPct };
     if (e.kind === "milestone" && e.at === trailingActivationAt) detail.trailingActivated = true;
     if (e.kind === "milestone" && closesNow) detail.mergedIntoClose = true;
+    // The +10% milestone and the 50% partial at +10% are one event: only the partial is announced.
+    if (e.kind === "milestone" && e.milestone <= 10 && events.some((x) => x.kind === "tp1" && x.at === e.at)) detail.mergedIntoClose = true;
     if (e.kind === "closed") Object.assign(detail, { pnlPct: result.pnlPct, r: result.r, tp1Hit: after.tp1Hit });
     await insertEvent(row.id, eventKey(row.id, e), e.kind, e.price, detail, e.at);
   }

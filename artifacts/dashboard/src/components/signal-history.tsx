@@ -5,7 +5,7 @@ import { CoinLink } from "./chart";
 import { SnapshotPanel } from "./snapshot";
 import { metricCols, MetricCell } from "./metric-columns";
 import { Trajectory } from "./trajectory";
-import { coin, exitPlan, LONG_TAKE_PCT, LONG_TAKE_SINCE, get, hasTp1, isOwner, price, SETUPS, setupLabel, signed, tone, usePoll, when, type Signal } from "../lib/api";
+import { coin, exitPlan, get, hasTp1, isOwner, price, SETUPS, setupLabel, signed, tone, usePoll, when, type Signal } from "../lib/api";
 
 export type TradeStatus = "profit" | "be_stop" | "stop_loss" | "expired" | "open";
 export type HistoryRow = Signal & { trade_status: TradeStatus };
@@ -76,9 +76,9 @@ function Details({ s }: { s: HistoryRow }) {
         <dt className="text-muted">Ордер-блок</dt><dd>{price(s.block_bottom)} – {price(s.block_top)} <span className="text-muted">({s.block_scope})</span></dd>
         <dt className="text-muted">Вход</dt><dd>{price(s.entry)}</dd>
         <dt className="text-muted">Стоп</dt><dd className="text-down">{price(s.stop)} ({signed(pct(s.stop), 1, "%")})</dd>
-        <dt className="text-muted">Тейк 1</dt>{hasTp1(s)
+        <dt className="text-muted">{s.targets_source === "pct10" ? "Тейк 50%" : "Тейк 1"}</dt>{hasTp1(s)
           ? <dd className="text-up">{price(s.tp1)} ({signed(pct(s.tp1), 1, "%")}){s.tp1_hit ? " ✓" : ""}</dd>
-          : <dd className="text-muted">нет — безубыток +5%, {s.targets_source === "btc_r" ? exitPlan(s).text : s.side === "short" ? (s.close_reason === "take" || s.status !== "closed" || new Date(s.opened_at) >= SHORT_TAKE_SINCE ? exitPlan(s).text : "трейлинг с +15%") : s.close_reason === "take" || (s.status !== "closed" ? (s.peak_pct ?? 0) < LONG_TAKE_PCT : new Date(s.opened_at) >= LONG_TAKE_SINCE) ? `вся позиция закрывается на +${LONG_TAKE_PCT}%` : "трейлинг с +15%"}</dd>}
+          : <dd className="text-muted">нет — безубыток +5%, {s.targets_source === "btc_r" || s.status !== "closed" ? exitPlan(s).text : s.close_reason === "take" ? `вся позиция закрыта на +${s.side === "short" ? 8 : 10}%` : s.side === "short" && new Date(s.opened_at) >= SHORT_TAKE_SINCE ? "тейк +8%, вся позиция" : "трейлинг с +15%"}</dd>}
         <dt className="text-muted">Стоп сейчас</dt><dd>{s.current_stop !== null ? `${price(s.current_stop)} (${signed(pct(s.current_stop), 1, "%")})` : "—"}</dd>
         <dt className="text-muted">Пик / просадка</dt><dd>{signed(s.peak_pct, 1, "%")} / {signed(s.mae_pct, 1, "%")}</dd>
         <dt className="text-muted">R</dt><dd className={tone(s.r_multiple)}>{signed(s.r_multiple)}</dd>

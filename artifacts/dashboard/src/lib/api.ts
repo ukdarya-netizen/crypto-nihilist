@@ -133,7 +133,7 @@ export function setupLabel(setup: string): string {
   return `ОБ ${htf === "1d" ? "1D" : htf} → слом ${ltf} · ${side === "long" ? "лонг" : "шорт"}`;
 }
 export const CLOSE_LABEL: Record<string, string> = {
-  trailing: "трейлинг", take: "тейк +8%", breakeven: "безубыток", stop: "стоп", timeout: "время вышло",
+  trailing: "трейлинг", take: "тейк", breakeven: "безубыток", stop: "стоп", timeout: "время вышло",
 };
 export const REASON_LABEL: Record<string, string> = {
   rr_too_low: "первый тейк ближе 1R",
@@ -178,13 +178,13 @@ export const coin = (symbol: string) => symbol.replace(/-USDT$/, "");
 export const hasTp1 = (s: { targets_source?: string | null }) => s.targets_source !== "trailing_only";
 
 /**
- * Where an open trade takes its profit (engine/config.ts): shorts — the whole position at +8% (since 05.11.2026,
- * every open short); longs — the whole position at +10% (since 10.11.2026; an open long already past +10% keeps the
- * trailing stop from +15%, peak − 10 p.p.).
+ * Where an open trade takes its profit (engine/config.ts, owner 2026-11-10, longs and shorts): break-even at +5%,
+ * 50% closed at +10%, the rest by the trailing stop from +15% (peak − 10 p.p.). Before: shorts closed whole at +8%
+ * (05.11-10.11), longs trailed from +15% only.
  */
 export const SHORT_TAKE_PCT = 8;
-export const LONG_TAKE_PCT = 10;
-export const LONG_TAKE_SINCE = new Date("2026-11-10T00:00:00Z");
+export const PARTIAL_PCT = 10;
+export const PCT_TARGETS_SOURCE = "pct10";
 export const TRAIL_FROM_PCT = 15;
 /** BTC (owner 2026-11-10, as BTC Bullet): TP 1 at 1.5R — 50%, stop to entry; TP 2 at 3R — the rest. */
 export const BTC_TARGETS_SOURCE = "btc_r";
@@ -197,10 +197,8 @@ export const exitPlan = (s: PlanInput) =>
       const at = ((price - s.entry) / s.entry) * 100 * (s.side === "long" ? 1 : -1);
       return { at, kind: "take" as const, label: second ? "TP 2 · 3R" : "TP 1 · 1.5R", text: "BTC: TP 1 at 1.5R — 50% closed, stop to entry; TP 2 at 3R — the rest" };
     })()
-    : s.side === "short"
-    ? { at: SHORT_TAKE_PCT, kind: "take" as const, label: `тейк +${SHORT_TAKE_PCT}%`, text: `вся позиция закрывается на +${SHORT_TAKE_PCT}%` }
-    : (s.peak_pct ?? 0) < LONG_TAKE_PCT
-    ? { at: LONG_TAKE_PCT, kind: "take" as const, label: `тейк +${LONG_TAKE_PCT}%`, text: `вся позиция закрывается на +${LONG_TAKE_PCT}%` }
+    : !s.tp1_hit && (s.peak_pct ?? 0) < PARTIAL_PCT
+    ? { at: PARTIAL_PCT, kind: "take" as const, label: `50% на +${PARTIAL_PCT}%`, text: `на +${PARTIAL_PCT}% закрывается 50%, остаток — трейлинг с +${TRAIL_FROM_PCT}% (пик − 10 п.п.)` }
     : { at: TRAIL_FROM_PCT, kind: "trail" as const, label: `трейл +${TRAIL_FROM_PCT}%`, text: `трейлинг с +${TRAIL_FROM_PCT}% (пик − 10 п.п.)` };
 
 /** Live result of an open trade in % (no fees), from the last closed 30m price. */

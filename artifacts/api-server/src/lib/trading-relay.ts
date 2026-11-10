@@ -14,7 +14,8 @@
  * it; 400/422 are kept as "quarantined" with the answer, never resent.
  */
 import { pool } from "@workspace/db";
-import { MAX_HOLD_MS, BREAKEVEN_AT_PCT, takeAtPctFor } from "../engine/config";
+import { MAX_HOLD_MS, BREAKEVEN_AT_PCT, PARTIAL_AT_PCT } from "../engine/config";
+import { TP1_SHARE } from "../engine/trade";
 import { TRAILING_ACTIVATION_PCT, TRAILING_GAP_PCT } from "../engine/trade";
 import { logger } from "./logger";
 
@@ -95,9 +96,10 @@ export function signalPayload(s: RelaySignal): Record<string, unknown> {
       maxHoldHours: MAX_HOLD_MS[s.htf] / 3_600_000,
       stopsFollowSourceCommands: true,
     } : {
-      // Whole position closed at +8% (short) / +10% (long, owner 2026-11-10); the close arrives as a command.
-      noFixedTakeProfit: false,
-      closeAllAtPct: takeAtPctFor(s.side),
+      // Owner 2026-11-10: Б.У. +5%, 50% closed at +10%, trailing from +15%; every step arrives as a command.
+      noFixedTakeProfit: true,
+      partialAtPct: PARTIAL_AT_PCT,
+      partialCloseFractionOfInitial: TP1_SHARE,
       breakevenAtPct: BREAKEVEN_AT_PCT,
       trailingActivationPct: TRAILING_ACTIVATION_PCT,
       trailingGapPercentagePoints: TRAILING_GAP_PCT,
