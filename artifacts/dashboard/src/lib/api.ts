@@ -177,6 +177,17 @@ export const coin = (symbol: string) => symbol.replace(/-USDT$/, "");
 /** No take profit (owner 2026-11-02): trades since then are managed by break-even and trailing only. */
 export const hasTp1 = (s: { targets_source?: string | null }) => s.targets_source !== "trailing_only";
 
+/**
+ * Where an open trade takes its profit (engine/config.ts): shorts — the whole position at +8% (since 05.11.2026,
+ * every open short); longs — no take, the trailing stop from +15% (peak − 10 p.p.).
+ */
+export const SHORT_TAKE_PCT = 8;
+export const TRAIL_FROM_PCT = 15;
+export const exitPlan = (s: { side: "long" | "short" }) =>
+  s.side === "short"
+    ? { at: SHORT_TAKE_PCT, kind: "take" as const, label: `тейк +${SHORT_TAKE_PCT}%`, text: `вся позиция закрывается на +${SHORT_TAKE_PCT}%` }
+    : { at: TRAIL_FROM_PCT, kind: "trail" as const, label: `трейл +${TRAIL_FROM_PCT}%`, text: `тейка нет, трейлинг с +${TRAIL_FROM_PCT}% (пик − 10 п.п.)` };
+
 /** Live result of an open trade in % (no fees), from the last closed 30m price. */
 /** Price move of an open trade from entry, % in the trade direction (as in AltBullet). */
 export function livePct(s: Signal): number | null {

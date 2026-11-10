@@ -2,17 +2,15 @@ import { isOwner, compact, metricLabel, type Snapshot } from "../lib/api";
 
 /** Metric columns of the signal lists (as AltBullet's tracker/history). */
 /**
- * Only metrics that separated profits from stops in the 25.10–02.11 analysis
- * (owner 2026-11-02): stop at entry, order-block age and height, volatility,
- * and VSA volume. The rest (OI, L/S, RSI, BTC, OB strength) stays in the card.
+ * Owner 2026-11-10: only what decides a trade — the long entry filter (stop ≥7%, block ≤300 h, block ≥4%,
+ * ATR 1H ≥1.9%) and the stop distance that splits shorts (≥9.5%: stop beyond liquidation at 10x).
+ * The VSA volume columns are gone (no longer recorded); the rest stays in the card.
  */
 export const METRIC_COLUMNS: Array<{ key: string; head: string; suffix?: string; signed?: boolean }> = [
   { key: "risk_pct", head: "Стоп при входе", suffix: "%" },
+  { key: "atrpct_1h", head: "ATR 1h", suffix: "%" },
   { key: "block_age_h", head: "Возраст ОБ", suffix: "ч" },
   { key: "block_size_pct", head: "Высота ОБ", suffix: "%" },
-  { key: "atrpct_30m", head: "ATR 30m", suffix: "%" },
-  { key: "vsa_ext_vol_rel", head: "Объём экстр.", suffix: "×" },
-  { key: "vsa_choch_vol_rel", head: "Объём слома", suffix: "×" },
 ];
 
 export function MetricCell({ snapshot, col }: { snapshot?: Snapshot | null; col: (typeof METRIC_COLUMNS)[number] }) {

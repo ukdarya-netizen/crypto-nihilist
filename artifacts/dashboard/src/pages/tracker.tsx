@@ -5,15 +5,19 @@ import { CoinLink } from "../components/chart";
 import { SnapshotPanel } from "../components/snapshot";
 import { metricCols, MetricCell } from "../components/metric-columns";
 import { Trajectory } from "../components/trajectory";
-import { fmtHours, hasTp1, isOwner, livePct, num, price, setupLabel, signed, tone, usePoll, when, type Signal } from "../lib/api";
+import { exitPlan, fmtHours, hasTp1, isOwner, livePct, num, price, setupLabel, signed, tone, usePoll, when, type Signal } from "../lib/api";
 
-const TRAIL_AT = 15;
 
 /** Distance from the current price to the stop in force, % of price (how close the exit is). */
 function toStopPct(s: Signal): number | null {
   if (s.last_price === null || s.last_price === undefined) return null;
   const stop = s.current_stop ?? s.stop;
   return ((Number(s.last_price) - stop) / Number(s.last_price)) * 100 * (s.side === "long" ? 1 : -1);
+}
+/** How far the price still has to go to the take (shorts) or to the trailing start (longs), p.p. of entry. */
+function toTargetPct(s: Signal): number | null {
+  const live = livePct(s);
+  return live === null ? null : exitPlan(s).at - live;
 }
 /** Which stop is in force: the initial one, break-even or the trailing stop. */
 const stopKind = (s: Signal) => (s.trailing_active ? "трейлинг" : s.breakeven_moved || s.tp1_hit ? "безубыток" : "стоп");
@@ -25,9 +29,10 @@ function Card({ s }: { s: Signal }) {
   const dir = s.side === "long" ? 1 : -1;
   const pct = (p: number) => ((p - s.entry) / s.entry) * 100 * dir;
   const stopNow = s.current_stop ?? s.stop;
-  // Scale in % of entry: from the original stop to the furthest of TP1, +15% (trailing) and the peak.
+  const plan = exitPlan(s);
+  // Scale in % of entry: from the original stop to the furthest of TP1, the take / trailing start and the peak.
   const lo = pct(s.stop);
-  const hi = Math.max(hasTp1(s) ? pct(s.tp1) : 0, TRAIL_AT, s.peak_pct) * 1.08;
+  const hi = Math.max(hasTp1(s) ? pct(s.tp1) : 0, plan.at, s.peak_pct) * 1.08;
   const at = (v: number) => `${Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100))}%`;
   const now = live ?? null;
   return (
@@ -48,7 +53,7 @@ function Card({ s }: { s: Signal }) {
         <div className="absolute inset-y-0 bg-primary/35" style={{ left: 0, width: at(pct(stopNow)) }} />
         <span className="absolute -top-1 h-3.5 w-px bg-foreground/60" style={{ left: at(0) }} title="вход" />
         {hasTp1(s) && <span className={`absolute -top-1 h-3.5 w-px ${s.tp1_hit ? "bg-up" : "bg-up/50"}`} style={{ left: at(pct(s.tp1)) }} title="тейк 1" />}
-        <span className={`absolute -top-1 h-3.5 w-px ${s.trailing_active ? "bg-primary" : "bg-primary/50"}`} style={{ left: at(TRAIL_AT) }} title="трейлинг +15%" />
+        <span className={`absolute -top-1 h-3.5 w-px ${plan.kind === "take" ? "bg-up" : s.trailing_active ? "bg-primary" : "bg-primary/50"}`} style={{ left: at(plan.at) }} title={plan.label} />
         {s.peak_pct > 0 && <span className="absolute top-0 h-1.5 w-0.5 bg-up/80" style={{ left: at(s.peak_pct) }} title="пик" />}
         {now !== null && <span className="absolute -top-1.5 size-4 -translate-x-1/2 rounded-full border-2 border-background bg-foreground" style={{ left: at(now) }} />}
       </div>
@@ -61,7 +66,7 @@ function Card({ s }: { s: Signal }) {
       <p className="mt-3 text-[11px] text-muted">
         Блок {price(s.block_bottom)}–{price(s.block_top)} · стоп при входе {s.risk_pct.toFixed(1)}%
         {s.tp1_hit ? " · половина зафиксирована на тейке 1" : ""}
-        {s.trailing_active ? " · трейлинг идёт: пик − 10 п.п." : " · трейлинг с +15%"} · цена {price(s.last_price)}
+        {s.trailing_active ? " · трейлинг идёт: пик − 10 п.п." : ` · ${plan.text}`} · цена {price(s.last_price)}
         {" · в сделке "}{fmtHours((Date.now() - new Date(s.opened_at).getTime()) / 3_600_000)}
       </p>
       {isOwner() && <button type="button" onClick={() => setMore((v) => !v)} className="mt-2 flex items-center gap-1 font-mono text-[11px] text-muted hover:text-foreground">
@@ -95,12 +100,13 @@ function Row({ s, open, onToggle }: { s: Signal; open: boolean; onToggle: () => 
           <span className="ml-1.5 text-[10px] text-muted">{signed(pct(stopNow), 1, "%")} · {stopKind(s)}</span>
         </td>
         <td className={`pr-3 ${(toStopPct(s) ?? 99) < 2 ? "text-warn" : "text-muted"}`}>{num(toStopPct(s), 1)}%</td>
+        <td className="whitespace-nowrap pr-3 text-muted" title={exitPlan(s).text}>{s.trailing_active ? "трейлинг идёт" : `${num(toTargetPct(s), 1)}% · ${exitPlan(s).label}`}</td>
         <td className="pr-3 text-muted">{fmtHours((Date.now() - new Date(s.opened_at).getTime()) / 3_600_000)}</td>
         {metricCols().map((c) => <MetricCell key={c.key} snapshot={s.snapshot} col={c} />)}
         <td><ChevronDown className={`size-4 text-muted transition ${open ? "rotate-180" : ""}`} /></td>
       </tr>
       {open && (
-        <tr><td colSpan={11 + metricCols().length} className="p-0">
+        <tr><td colSpan={12 + metricCols().length} className="p-0">
           <div className="grid gap-4 border-t border-border bg-black/20 p-4 text-xs lg:grid-cols-2">
             <div><Card s={s} /></div>
             {isOwner() && <div><p className="label mb-2">Траектория: рынок после входа</p><Trajectory id={s.id} /></div>}
@@ -149,7 +155,7 @@ export default function Tracker() {
           <>
             <div className="hidden overflow-x-auto md:block">
               <table className={`w-full text-sm ${isOwner() ? "min-w-[1400px]" : "min-w-[1000px]"}`}>
-                <thead><tr className="text-left">{["Открыта", "Монета", "ОБ → слом", "Вход", "Цена", "Результат", "Пик", "Стоп сейчас", "До стопа", "В сделке", ...metricCols().map((c) => c.head), ""].map((h) => <th key={h} className="label whitespace-nowrap pb-2 pr-3 font-normal">{h}</th>)}</tr></thead>
+                <thead><tr className="text-left">{["Открыта", "Монета", "ОБ → слом", "Вход", "Цена", "Результат", "Пик", "Стоп сейчас", "До стопа", "До цели", "В сделке", ...metricCols().map((c) => c.head), ""].map((h) => <th key={h} className="label whitespace-nowrap pb-2 pr-3 font-normal">{h}</th>)}</tr></thead>
                 <tbody className="tabular">{rows.map((s) => <Row key={s.id} s={s} open={openId === s.id} onToggle={() => setOpenId(openId === s.id ? null : s.id)} />)}</tbody>
               </table>
             </div>

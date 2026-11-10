@@ -90,10 +90,22 @@ function summarize(rows: JournalRow[]) {
 
 export type JournalSummary = ReturnType<typeof summarize>;
 
+/** Holding time of closed trades as a spread (owner: no medians/averages hiding the range). */
+export function holdBuckets(hours: number[]) {
+  const b = { lt6h: 0, h6_24: 0, d1_3: 0, d3_7: 0, gt7d: 0 };
+  for (const h of hours) {
+    if (h < 6) b.lt6h += 1; else if (h < 24) b.h6_24 += 1; else if (h < 72) b.d1_3 += 1; else if (h < 168) b.d3_7 += 1; else b.gt7d += 1;
+  }
+  return { ...b, min: hours.length ? round(Math.min(...hours), 1) : null, max: hours.length ? round(Math.max(...hours), 1) : null };
+}
+
 export function buildJournal(rows: JournalRow[]) {
   const setups = [...new Set(rows.map((r) => r.setup))].sort();
   return {
     summary: summarize(rows),
     bySetup: setups.map((setup) => ({ setup, ...summarize(rows.filter((r) => r.setup === setup)) })),
+    // Owner 2026-11-10: longs and shorts are managed differently (shorts: whole position at +8%), so the
+    // overview shows them apart.
+    bySide: (["long", "short"] as const).map((side) => ({ side, ...summarize(rows.filter((r) => r.setup.endsWith(`_${side}`))) })),
   };
 }
