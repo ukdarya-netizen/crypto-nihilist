@@ -87,3 +87,16 @@ test("sendPhoto sends each image with its caption and keeps separate Telegram fi
   assert.equal(forms[9].get("caption"), "Another daily report");
   assert.equal(forms[9].get("photo"), "telegram-daily-report-id");
 });
+
+test("splitText: long reports go out in parts under the Telegram limit, lines kept whole", async () => {
+  const { splitText, MAX_TEXT } = await import("./transport");
+  const lines = Array.from({ length: 200 }, (_, i) => `  • COIN${i} long | 0.12345 → 0.12399 (+0.44%)`);
+  const text = ["📊 DAILY REPORT — NIHILYST", ...lines].join("\n");
+  const parts = splitText(text);
+  assert.ok(parts.length >= 2);
+  assert.ok(parts.every((p) => p.length <= MAX_TEXT));
+  assert.equal(parts.join("\n"), text);
+  assert.deepEqual(splitText("short"), ["short"]);
+  const one = "x".repeat(MAX_TEXT * 2 + 5);
+  assert.equal(splitText(one).join(""), one);
+});

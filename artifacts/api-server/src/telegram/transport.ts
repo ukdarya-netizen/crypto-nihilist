@@ -66,8 +66,34 @@ export async function telegramCall<T>(method: string, payload: object): Promise<
   return telegramRequest(method, payload);
 }
 
+/** Telegram's limit for one message text. */
+export const MAX_TEXT = 4096;
+
+/**
+ * Splits a long text into messages of at most `max` characters at line breaks (owner 2026-11-10: daily
+ * reports with 100+ open trades were 4.2–6.2 thousand characters and Telegram refused them).
+ */
+export function splitText(text: string, max = MAX_TEXT): string[] {
+  if (text.length <= max) return [text];
+  const parts: string[] = [];
+  let cur = "";
+  for (const line of text.split("\n")) {
+    for (let piece = line; ; ) {
+      const add = cur ? `${cur}\n${piece}` : piece;
+      if (add.length <= max) { cur = add; break; }
+      if (cur) { parts.push(cur); cur = ""; continue; }
+      parts.push(piece.slice(0, max)); piece = piece.slice(max);
+      if (!piece) break;
+    }
+  }
+  if (cur) parts.push(cur);
+  return parts;
+}
+
 export async function sendMessage(chatId: string, text: string): Promise<void> {
-  await telegramCall("sendMessage", { chat_id: chatId, text, disable_web_page_preview: true });
+  for (const part of splitText(text)) {
+    await telegramCall("sendMessage", { chat_id: chatId, text: part, disable_web_page_preview: true });
+  }
 }
 
 async function getPhotoBytes(kind: TelegramPhotoKind): Promise<Buffer> {
@@ -105,7 +131,7 @@ export async function sendPhoto(chatId: string, caption: string, kind: TelegramP
   if (photo?.file_id) asset.fileId = photo.file_id;
 }
 
-export type TelegramUser = { id: number; username?: string; first_name?: string };
+export type TelegramUser = { id: number; username?: string; first_name?: string; language_code?: string };
 export type TelegramMessage = {
   message_id: number; chat: { id: number; type: string }; from?: TelegramUser; text?: string;
 };
@@ -120,10 +146,14 @@ export type InlineKeyboard = InlineButton[][];
 
 /** Plain text with inline buttons (no HTML anywhere). */
 export async function sendMessageKb(chatId: string, text: string, keyboard?: InlineKeyboard): Promise<void> {
-  await telegramCall("sendMessage", {
-    chat_id: chatId, text, disable_web_page_preview: true,
-    ...(keyboard?.length ? { reply_markup: { inline_keyboard: keyboard } } : {}),
-  });
+  const parts = splitText(text);
+  for (const [i, part] of parts.entries()) {
+    const last = i === parts.length - 1;
+    await telegramCall("sendMessage", {
+      chat_id: chatId, text: part, disable_web_page_preview: true,
+      ...(last && keyboard?.length ? { reply_markup: { inline_keyboard: keyboard } } : {}),
+    });
+  }
 }
 
 export async function editMessage(chatId: string, messageId: number, text: string, keyboard?: InlineKeyboard): Promise<void> {

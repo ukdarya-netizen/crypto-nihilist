@@ -115,6 +115,8 @@ async function sendPending(): Promise<void> {
     }
     try {
       const photoKind = notificationPhotoKind(d.event_kind, d.event_reason, d.event_id);
+      // Daily report: a photo caption holds 1024 characters — the title goes with the image, the report follows
+      // as text (split into parts over 4096 by sendMessage, owner 2026-11-10).
       if (photoKind === "dailyReport" && d.text.length > 1024) {
         const [title, ...body] = d.text.split("\n");
         await sendPhoto(d.chat_id, title, photoKind);
