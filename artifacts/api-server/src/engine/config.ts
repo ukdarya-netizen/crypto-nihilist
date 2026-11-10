@@ -63,12 +63,13 @@ export const ENTRY_FILTER_MIN_RISK_PCT = 7;
 export const ENTRY_FILTER_MAX_BLOCK_AGE_H = 300;
 export const ENTRY_FILTER_MIN_BLOCK_SIZE_PCT = 4;
 /**
- * Owner 2026-11-05: no long on a quiet coin — ATR(14) of the 1H candles below 1.2% of the price at
- * the signal. Over the current filter (45 longs since 25.10) it removes BANK 01.11 (stop) and three
- * flat trades (PUNDIX, KNC, AGLD); on all 275 longs: 98 removed → 4 reached +10%, 75 stopped.
- * Unknown ATR → not rejected.
+ * Owner 2026-11-05: no long on a quiet coin — ATR(14) of the 1H candles at the signal.
+ * Owner 2026-11-10 (final study, 293 longs 25.10–09.11): raised from 1.2% to 1.9%. By ATR quartile the
+ * share reaching +10% before the stop goes 4% → 6% → 7% → 32%; ATR ≥ 1.9%: 78 longs, +0.06% a trade
+ * (both halves ≈ 0), 31% stops — every other long variant lost (−2.85% a trade overall).
+ * Unknown ATR → not rejected. The reason code keeps its name (atr1h_below_1_2pct) for the history.
  */
-export const ENTRY_FILTER_MIN_ATR1H_PCT = 1.2;
+export const ENTRY_FILTER_MIN_ATR1H_PCT = 1.9;
 
 export type EntryFilterResult = {
   pass: boolean; reason: string | null; riskPct: number; blockAgeH: number | null; blockSizePct: number;
