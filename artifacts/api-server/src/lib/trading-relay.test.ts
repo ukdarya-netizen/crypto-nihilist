@@ -12,7 +12,7 @@ test("wire format: symbol, decimals without exponent, entry signal without size 
   assert.equal(p.sourceSignalId, "nh-signal-7");
   assert.equal(p.side, "short");
   assert.equal(p.stopLoss, "0.0072");
-  assert.deepEqual(p.exitRules, { noFixedTakeProfit: false, closeAllAtPct: 8, breakevenAtPct: 5, trailingActivationPct: 15, trailingGapPercentagePoints: 10, maxHoldHours: 168, stopsFollowSourceCommands: true });
+  assert.deepEqual(p.exitRules, { noFixedTakeProfit: true, partialAtPct: 10, partialCloseFractionOfInitial: 0.5, breakevenAtPct: 5, trailingActivationPct: 15, trailingGapPercentagePoints: 10, maxHoldHours: 168, stopsFollowSourceCommands: true });
   for (const k of ["quantity", "leverage", "marginMode", "initialMarginUsd"]) assert.equal(k in p, false);
 });
 

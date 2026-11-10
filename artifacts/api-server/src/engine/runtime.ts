@@ -21,7 +21,7 @@ import { removeDuplicateSignals } from "../stats/dedupe";
 import { evaluateSetups, type HtfInterval, type SetupCandidate, type SetupSignal } from "./setups";
 import { trackRejections } from "./rejections";
 import { enqueueSignal, startTradingRelay } from "../lib/trading-relay";
-import { BTC_STOP_EXTRA_PCT, BTC_TARGETS_R, BTC_TARGETS_SOURCE, COMBOS, MAX_HOLD_MS, NO_TP_TARGETS_SOURCE, TAKE_PROFIT_ENABLED, btcTargets, isBtc, takeAtPctFor } from "./config";
+import { BTC_STOP_EXTRA_PCT, BTC_TARGETS_R, BTC_TARGETS_SOURCE, COMBOS, MAX_HOLD_MS, PARTIAL_AT_PCT, PCT_TARGETS_SOURCE, btcTargets, isBtc, partialPrice } from "./config";
 import { openTrade } from "./trade";
 import { BREAKEVEN_AT_PCT, LIVE_SETUPS, OB_MIN_DISPLACEMENT_ATR, entryFilter } from "./config";
 import { chochBarMetrics } from "./choch-bar";
@@ -193,11 +193,12 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
       breakevenAtPct: null, takeProfit: true, takeAtPct: null, takePrice: btcTp2, trailing: false,
     })
     : openTrade({
-      side: s.side, entry: s.entry, stop: s.stop, tp1: s.tp1,
+      // Owner 2026-11-10: Б.У. +5%, TP 1 = 50% at +10%, trailing from +15% (no full take).
+      side: s.side, entry: s.entry, stop: s.stop, tp1: partialPrice(s.side, s.entry),
       openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf], breakevenAtPct: BREAKEVEN_AT_PCT,
-      takeProfit: TAKE_PROFIT_ENABLED, takeAtPct: takeAtPctFor(s.side),
+      takeProfit: true, takeAtPct: null,
     });
-  const targetsSource = btc ? BTC_TARGETS_SOURCE : TAKE_PROFIT_ENABLED ? s.targetsSource : NO_TP_TARGETS_SOURCE;
+  const targetsSource = btc ? BTC_TARGETS_SOURCE : PCT_TARGETS_SOURCE;
   const live = LIVE_SETUPS.has(s.setup);
   const inserted = await pool.query<{ id: number }>(
     `INSERT INTO nh_signals (symbol, setup, htf, ltf, side, block_id, block_top, block_bottom, block_scope,
@@ -207,7 +208,7 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
      ON CONFLICT DO NOTHING RETURNING id`,
     [
       symbol, s.setup, s.htf, s.ltf, s.side, s.block.id, s.block.top, s.block.bottom, s.block.scope,
-      s.barTime, s.entry, s.stop, btc ? btcTp1 : s.tp1, btc ? btcTp2 : s.tp2, s.riskPct, btc ? BTC_TARGETS_R[0] : s.rr1, targetsSource,
+      s.barTime, s.entry, s.stop, btc ? btcTp1 : trade.tp1, btc ? btcTp2 : null, s.riskPct, btc ? BTC_TARGETS_R[0] : PARTIAL_AT_PCT / s.riskPct, targetsSource,
       new Date(trade.openedAt), new Date(trade.expiresAt), JSON.stringify({ ...signalDetails(s), confluenceSetups: confluence, entryFilter: filter, chochBar }),
       live, s.stop,
     ],

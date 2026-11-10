@@ -56,7 +56,8 @@ export function variants(): Mgmt[] {
   // "source" = how Nihilist managed trades until 10.11 (kept for the parity check against live trades).
   const out: Mgmt[] = [
     mk("source", "как вёл Нигилист до 10.11: Б.У. +5%, трейлинг от +15% (пик − 10 п.п.)", { be: 5, trail: { act: 15, gap: 10 } }),
-    mk("now", "как ведёт Нигилист сейчас: Б.У. +5%, тейк шорт +8% / лонг +10%", { be: 5, takeBySide: { long: 10, short: 8 } }),
+    mk("now", "как ведёт Нигилист сейчас: Б.У. +5%, 50% на +10%, трейлинг от +15% (пик − 10 п.п.)", { be: 5, partial: { at: 10, share: 0.5 }, trail: { act: 15, gap: 10 } }),
+    mk("take8_10", "до 10.11: Б.У. +5%, тейк шорт +8% / лонг +10%", { be: 5, takeBySide: { long: 10, short: 8 } }),
   ];
   for (const be of [null, 5] as const) {
     const bu = be ? `Б.У. +${be}%, ` : "";

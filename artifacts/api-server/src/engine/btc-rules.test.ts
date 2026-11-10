@@ -34,7 +34,8 @@ test("an open BTC row is managed by BTC rules; an altcoin row keeps break-even +
   const btc = stateFromRow({ ...base, targets_source: BTC_TARGETS_SOURCE });
   assert.equal(btc.breakevenAtPct, null); assert.equal(btc.takePrice, 106); assert.equal(btc.trailingEnabled, false); assert.equal(btc.tp1Enabled, true);
   const alt = stateFromRow({ ...base, symbol: "SOL-USDT", targets_source: "trailing_only" });
-  assert.equal(alt.breakevenAtPct, 5); assert.equal(alt.takePrice, null); assert.equal(alt.trailingEnabled, true); assert.equal(alt.tp1Enabled, false);
+  assert.equal(alt.breakevenAtPct, 5); assert.equal(alt.takePrice, null); assert.equal(alt.trailingEnabled, true); assert.equal(alt.tp1Enabled, true);
+  assert.ok(Math.abs(alt.tp1 - 110) < 1e-9); assert.equal(alt.takeAtPct, null); // owner 2026-11-10: 50% at +10%
 });
 
 test("BTC signal text: TP 1 1.5R and TP 2 3R, no +5% / +8% / +15% lines", () => {

@@ -13,7 +13,7 @@ test("opened: entry, stop, TP1 with 50%, trailing rule, hashtags; plain text", (
   assert.match(text, /NIHILYST · JCT LONG/);
   assert.match(text, /Order block 4h → change of character 30m/);
   assert.match(text, /TP 1: 0\.002324 \(\+24\.2%\) — close 50%/);
-  assert.match(text, /Take profit: \+10% — the whole position is closed/);
+  assert.match(text, /Trailing: from \+15%, stop 10 pp below the peak/);
   assert.match(text, /#JCT #nh_4h_30m_long/);
   assert.doesNotMatch(text, /<[a-z]/i);
 });
@@ -43,5 +43,18 @@ test("opened without take profit (2026-11-02): no TP line; break-even and traili
   const text = formatEvent({ ...s, targets_source: "trailing_only" }, { kind: "opened", price: s.entry, detail: {}, created_at: s.opened_at });
   assert.doesNotMatch(text, /TP 1/);
   assert.match(text, /Break-even: at \+5% the stop moves to entry/);
-  assert.match(text, /Take profit: \+10% — the whole position is closed/);
+  assert.match(text, /Trailing: from \+15%, stop 10 pp below the peak/);
+});
+
+test("opened with the +10% partial (owner 2026-11-10): break-even +5%, 50% at +10%, trailing from +15%", () => {
+  const p = { ...s, targets_source: "pct10", tp1: 0.0020592 };
+  const text = formatEvent(p, { kind: "opened", price: p.entry, detail: {}, created_at: p.opened_at });
+  assert.match(text, /Break-even: at \+5% the stop moves to entry/);
+  assert.match(text, /Take: 0\.002059 \(\+10%\) — 50% closed/);
+  assert.match(text, /Trailing: from \+15%, stop 10 pp below the peak/);
+  assert.doesNotMatch(text, /TP 1|whole position/);
+  const tp = formatEvent(p, { kind: "tp1", price: p.tp1, detail: { currentStop: p.entry, peakPct: 10 }, created_at: p.opened_at });
+  assert.match(tp, /🎯 TAKE \+10%/);
+  assert.match(tp, /50% closed/);
+  assert.match(tp, /Next: trailing from \+15%/);
 });

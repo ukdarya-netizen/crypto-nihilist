@@ -164,7 +164,7 @@ export default function Overview() {
             <tbody className="tabular">
               {(data?.bySide ?? []).map((r) => (
                 <tr key={r.side} className="border-t border-border font-semibold">
-                  <td className="py-2.5 pr-3 font-sans">{r.side === "long" ? "Все лонги" : "Все шорты"}<span className="ml-2 text-[10px] font-normal text-muted">{r.side === "long" ? "тейк +10%" : "тейк +8%"}</span></td>
+                  <td className="py-2.5 pr-3 font-sans">{r.side === "long" ? "Все лонги" : "Все шорты"}<span className="ml-2 text-[10px] font-normal text-muted">50% на +10%, трейл +15%</span></td>
                   <td className="pr-3">{r.total}</td>
                   <td className="pr-3 text-up">{r.profit}</td>
                   <td className="pr-3 text-sky-300">{r.beStop}</td>
