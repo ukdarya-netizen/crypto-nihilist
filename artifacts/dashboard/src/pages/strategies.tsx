@@ -14,7 +14,7 @@ type Stats = {
   half1: { n: number; avg: number | null }; half2: { n: number; avg: number | null };
   avgHoldH: number; perDay: number; buckets: Array<[string, number]>; hold: Array<[string, number]>;
 };
-type Group = "long_filtered" | "long_all" | "short";
+type Group = "long_filtered" | "long_all" | "short" | "short_risk_hi" | "short_risk_lo";
 type Dataset = {
   name: "live" | "history"; from: string | null; to: string | null; trades: number; symbols: number; skippedSymbols: number;
   groups: Record<Group, Array<{ id: string; label: string; stats: Stats }>>;
@@ -52,7 +52,7 @@ type Report = {
 type Resp = { running: boolean; report: Report | null; historyDays: number };
 
 // Only what is really traded: Nihilist sends longs that pass its entry filter, and shorts.
-const GROUP_LABEL: Partial<Record<Group, string>> = { long_filtered: "Лонги", short: "Шорты" };
+const GROUP_LABEL: Partial<Record<Group, string>> = { long_filtered: "Лонги", short: "Шорты", short_risk_hi: "Шорты, стоп ≥9,5%", short_risk_lo: "Шорты, стоп <9,5%" };
 const DS_LABEL = { history: "Бэктест 60 дней", live: "Реальные сигналы" } as const;
 const TZ = "Asia/Dubai";
 const dt = (s: string | null) => (s ? new Date(s).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short", timeZone: TZ }) : "—");
@@ -82,7 +82,7 @@ export default function Strategies() {
   };
   const dataset = report?.datasets.find((x) => x.name === ds) ?? report?.datasets[0] ?? null;
   const other = report?.datasets.find((x) => x.name !== dataset?.name) ?? null;
-  const rows = dataset ? [...dataset.groups[group]].sort((a, b) => b.stats.sum - a.stats.sum) : [];
+  const rows = dataset ? [...(dataset.groups[group] ?? [])].sort((a, b) => b.stats.sum - a.stats.sum) : [];
 
   const copy = async () => {
     if (!report) return;
@@ -165,7 +165,7 @@ export default function Strategies() {
               </thead>
               <tbody>
                 {rows.map(({ id, label, stats: s }) => {
-                  const o = other?.groups[group].find((x) => x.id === id)?.stats ?? null;
+                  const o = other?.groups[group]?.find((x) => x.id === id)?.stats ?? null;
                   return (
                     <Fragment key={id}>
                       <tr onClick={() => setOpenRow(openRow === id ? null : id)}
@@ -320,7 +320,7 @@ function reportText(r: Report): string {
     out.push("", `=== ${DS_LABEL[ds.name]}: ${d(ds.from)} — ${d(ds.to)}, сделок ${ds.trades}, монет ${ds.symbols}`);
     for (const g of Object.keys(GROUP_LABEL) as Group[]) {
       out.push("", `--- ${GROUP_LABEL[g]}`, "id | n (откр.) | плюс% | стоп% | ≈0% | ср.% | сумма% | PF | просадка | серия | 1-я пол. ср.(n) | 2-я пол. ср.(n) | ср. время ч | %/день | распределение");
-      for (const { id, stats: s } of [...ds.groups[g]].sort((a, b) => b.stats.sum - a.stats.sum)) {
+      for (const { id, stats: s } of [...(ds.groups[g] ?? [])].sort((a, b) => b.stats.sum - a.stats.sum)) {
         out.push([id, `${s.n} (${s.open})`, pct(s.winPct), pct(s.stopPct), pct(s.flatPct), sg(s.avg), sg(s.sum, 0), s.pf ?? "—", `−${s.maxDd.toFixed(0)}`, s.worstStreak,
           `${sg(s.half1.avg)} (${s.half1.n})`, `${sg(s.half2.avg)} (${s.half2.n})`, s.avgHoldH.toFixed(0), sg(s.perDay),
           s.buckets.map(([k, v]) => `${k}:${v}`).join(" ")].join(" | "));

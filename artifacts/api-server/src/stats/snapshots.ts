@@ -14,8 +14,6 @@ import { book } from "../market/candleStore";
 import {
   SNAPSHOT_VERSION, closeContext, closedAsOf, coversAsOf, marketMetrics, signalSnapshot, type Metrics, type SignalLike,
 } from "../engine/metrics";
-import { derivativeMetrics } from "../market/derivatives";
-import { vsaMetrics } from "../market/vsa";
 import { FLOW_VERSION, entryFlowMetrics, fetchFlowSeries, postEntryMetrics, type FlowSignal } from "../market/flow";
 
 import { postBreakevenTrajectoryPoints, trajectoryPoints } from "../engine/trajectory";
@@ -334,34 +332,9 @@ export async function captureSnapshot(signalId: number, sig: SignalLike): Promis
   await runLiveSnapshotCapture(signalId, async () => {
     const btc = sig.symbol === BTC ? null : book(BTC);
     await write(signalId, "ready", false, signalSnapshot(sig, book(sig.symbol), btc));
-    // CoinGlass reads take a few seconds: never hold up the signal for them.
-    void addDerivatives(signalId, sig.symbol, sig.signalAt, "entry").catch(() => undefined);
-    void addVsa(signalId, sig).catch(() => undefined);
+    // Owner 2026-11-10: no CoinGlass derivatives (OI, long/short) and no BingX VSA at the entry any more —
+    // the final study found no effect; the snapshot is built from the candles already in memory only.
   });
-}
-
-/**
- * VSA (volume from BingX) merged into the entry snapshot; vsa_at marks it done
- * (also when BingX had no bars, so it is not retried forever).
- */
-async function addVsa(signalId: number, sig: SignalLike): Promise<void> {
-  const m = await vsaMetrics({ symbol: sig.symbol, side: sig.side, ltf: sig.ltf, signalAt: sig.signalAt, firstTouchAt: sig.firstTouchAt });
-  await pool.query(
-    `UPDATE nh_signal_snapshots SET metrics = coalesce(metrics, '{}'::jsonb) || $2::jsonb WHERE signal_id = $1`,
-    [signalId, JSON.stringify({ ...m, vsa_checked: true })],
-  );
-}
-
-/** Merges CoinGlass metrics at `at` into the entry snapshot or the close context. */
-async function addDerivatives(signalId: number, symbol: string, at: number, which: "entry" | "close"): Promise<void> {
-  const d = await derivativeMetrics(symbol, at);
-  const col = which === "entry" ? "metrics" : "close_context";
-  const mark = which === "entry" ? "deriv_at" : "close_deriv_at";
-  await pool.query(
-    `UPDATE nh_signal_snapshots SET ${col} = coalesce(${col}, '{}'::jsonb) || $2::jsonb, ${mark} = now()
-     WHERE signal_id = $1`,
-    [signalId, JSON.stringify(d)],
-  );
 }
 
 /** Price at a moment: close of the last 30m bar closed by then. */
@@ -416,40 +389,11 @@ export async function backfillSnapshots(limit = 300): Promise<{ entries: number;
     });
   });
 
-  // Derivatives for entry snapshots and closes (CoinGlass budget: bounded per pass).
-  let derivs = 0;
-  await runSnapshotBackfillStage("derivs", async () => {
-    const needDeriv = await pool.query<{ signal_id: number; symbol: string; opened_at: Date; closed_at: Date | null; entry_missing: boolean }>(
-      `SELECT n.signal_id, s.symbol, s.opened_at, s.closed_at, (n.deriv_at IS NULL) AS entry_missing
-       FROM nh_signal_snapshots n JOIN nh_signals s ON s.id = n.signal_id
-       WHERE n.status = 'ready' AND (n.deriv_at IS NULL OR (n.close_context IS NOT NULL AND n.close_deriv_at IS NULL))
-       ORDER BY n.signal_id DESC LIMIT 25`,
-    );
-    await runSnapshotBackfillRows("derivs", needDeriv.rows, (row) => row.signal_id, async (row) => {
-      if (row.entry_missing) await addDerivatives(row.signal_id, row.symbol, new Date(row.opened_at).getTime(), "entry");
-      else if (row.closed_at) await addDerivatives(row.signal_id, row.symbol, new Date(row.closed_at).getTime(), "close");
-      derivs += 1;
-    });
-  });
-
-  // VSA for signals recorded before it existed (BingX, 25 per pass).
-  await runSnapshotBackfillStage("vsa", async () => {
-    const { rows } = await pool.query<SignalRow>(
-      `SELECT s.id, s.symbol, s.side, s.htf, s.ltf, s.entry, s.stop, s.tp1, s.risk_pct, s.rr1, s.block_top, s.block_bottom,
-              s.block_scope, s.targets_source, s.opened_at, s.closed_at, s.details
-       FROM nh_signal_snapshots n JOIN nh_signals s ON s.id = n.signal_id
-       WHERE n.status = 'ready' AND NOT (n.metrics ? 'vsa_checked') ORDER BY s.id DESC LIMIT 25`,
-    );
-    await runSnapshotBackfillRows("vsa", rows, (row) => row.id, async (row) => {
-      await addVsa(row.id, signalLikeFromRow(row));
-      await new Promise((r) => setTimeout(r, 150));
-    });
-  });
-
   const trajectory = await runSnapshotBackfillStage("trajectory", () => backfillTrajectory(200));
-  // Volume / OI / delta on every timeframe (owner 2026-11-03): entry, early post-entry and every trajectory point.
-  await runSnapshotBackfillStage("flow", () => backfillFlow(8));
-  return { entries, closes, unavailable, derivs, trajectory };
+  // Owner 2026-11-10: the CoinGlass flow stage (OI / taker / CVD on 5 timeframes at the entry and +1/2/4h),
+  // the derivatives stage (OI, long/short at entry and close) and the BingX VSA stage are off: no effect in
+  // the final study (25.10–09.11). Already stored values stay; backfillFlow stays for research runs.
+  return { entries, closes, unavailable, derivs: 0, trajectory };
 }
 
 /**
