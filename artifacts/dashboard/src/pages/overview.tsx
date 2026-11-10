@@ -1,9 +1,9 @@
 import { useState, type ReactNode } from "react";
 import { Activity, AlertTriangle, BarChart3, Clock3, Shield, TrendingDown, TrendingUp, Trophy, Zap } from "lucide-react";
 import { Empty, Panel, Segmented } from "../components/ui";
-import { SignalHistory, type TradeStatus } from "../components/signal-history";
+import { type TradeStatus } from "../components/signal-history";
 import { DailyArchive } from "../components/daily-archive";
-import { SETUPS, coin, dur, isOwner, fmtHours, setupLabel, signed, tone, usePoll, type Status } from "../lib/api";
+import { SETUPS, coin, isOwner, fmtHours, setupLabel, signed, tone, usePoll, type Status } from "../lib/api";
 
 type Summary = {
   total: number; open: number; closed: number; profit: number; beStop: number; stopLoss: number; expired: number;
@@ -15,9 +15,11 @@ type Summary = {
   bestTrade: { symbol: string; setup: string; pnlPct: number; id: number } | null;
 };
 type Journal = {
-  counters: { today: number; total: number };
+  counters: { today: number; total: number; openNow: number };
   summary: Summary;
   bySetup: Array<Summary & { setup: string }>;
+  bySide?: Array<Summary & { side: "long" | "short" }>;
+  hold?: { lt6h: number; h6_24: number; d1_3: number; d3_7: number; gt7d: number; min: number | null; max: number | null };
   daily: Array<{ day: string; trades: number; wins: number; pnl: number; r: number }>;
   avgHoldHours?: number | null;
 };
@@ -88,26 +90,25 @@ export default function Overview() {
   const [days, setDays] = useState(30);
   const [live, setLive] = useState(false);
   const [metric, setMetric] = useState<"pnl" | "r">("pnl");
-  const [status, setStatus] = useState<"" | TradeStatus>("");
   const { data } = usePoll<Journal>(`/nh/journal?days=${days}${live ? "&live=1" : ""}`);
   const st = usePoll<Status>("/nh/status", 10_000).data;
   const s = data?.summary;
   const bySetup = new Map((data?.bySetup ?? []).map((r) => [r.setup, r]));
+  // As in CAB: a tile opens the history with that filter (same period and channel switch).
   const focus = (next: "" | TradeStatus) => {
-    setStatus(next);
-    document.getElementById("signal-history")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.location.hash = `/history?status=${next}&days=${days}${live ? "&live=1" : ""}`;
   };
+  const h = data?.hold;
 
   return (
     <div className="space-y-4 md:space-y-6">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         <StatCard title="СИГНАЛОВ СЕГОДНЯ" value={data?.counters.today ?? "—"} icon={Zap} color="text-primary" />
         <StatCard title="ВСЕГО СИГНАЛОВ" value={data?.counters.total ?? "—"} icon={BarChart3} />
         <StatCard title="МОНЕТ СКАНИРУЕТСЯ" value={st ? st.engine.ready : "—"} sub={st ? `из ${st.engine.universe} пар BingX` : undefined} icon={Activity} color="text-up" />
-        <StatCard title="АКТИВНЫХ" value={s?.open ?? "—"} sub="сделок в работе" icon={AlertTriangle} color="text-warn" onClick={() => focus("open")} active={status === "open"} />
-        {isOwner() && <StatCard title="СКАН" value={st?.engine.cycle ? `${st.engine.cycle.done}/${st.engine.cycle.total}` : st?.engine.lastCycleMs != null ? dur(st.engine.lastCycleMs) : "—"}
-          sub={st?.engine.cycle ? `идёт ${dur(Date.now() - st.engine.cycle.startedAt)}` : "длительность прошлого скана"} icon={Activity} />}
-        <StatCard title="СРЕДНЕЕ ВРЕМЯ СДЕЛКИ" value={fmtHours(data?.avgHoldHours)} sub="от сигнала до закрытия" icon={Clock3} />
+        <StatCard title="АКТИВНЫХ" value={data?.counters.openNow ?? "—"} sub="открыто сейчас — все позиции" icon={AlertTriangle} color="text-warn" onClick={() => { window.location.hash = "/tracker"; }} />
+        <StatCard title="ВРЕМЯ СДЕЛКИ" value={h && h.min !== null ? <span className="whitespace-nowrap text-base md:text-lg">{fmtHours(h.min)} – {fmtHours(h.max)}</span> : "—"}
+          sub={h ? `до 6ч ${h.lt6h} · 6–24ч ${h.h6_24} · 1–3д ${h.d1_3} · 3–7д ${h.d3_7} · >7д ${h.gt7d}` : "от сигнала до закрытия"} icon={Clock3} />
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
@@ -123,13 +124,13 @@ export default function Overview() {
           <div>
             <p className="label">Счётчик прибыли — чистый результат</p>
             <p className={`mt-1 font-mono text-4xl font-semibold ${tone(s?.netPnlPct)}`}>{s ? signed(s.netPnlPct, 2, "%") : "—"}</p>
-            <p className="mt-1 text-xs text-muted">{s ? `${signed(s.netR, 2)}R · ${s.closed} закрытых сделок` : ""}</p>
+            <p className="mt-1 text-xs text-muted">{s ? `${signed(s.netR, 2)}R · ${s.closed} закрытых сделок · на марже при 10x ≈ ${signed(s.netPnlPct * 10, 0, "%")}` : ""}</p>
           </div>
           {s && (
             <p className="max-w-xl text-right text-[11px] leading-relaxed text-muted">
               PROFIT {s.profit} ({signed(s.pnlByStatus.profit, 2, "%")}) · BE STOP {s.beStop} ({signed(s.pnlByStatus.beStop, 2, "%")}) ·
               STOP LOSS {s.stopLoss} ({signed(s.pnlByStatus.stopLoss, 2, "%")}) · EXPIRED {s.expired} ({signed(s.pnlByStatus.expired, 2, "%")})
-              <br />Сумма движения цены по всем закрытым сделкам: половина на тейке 1 и комиссии учтены, без плеча.
+              <br />Сумма движения цены по всем закрытым сделкам, комиссии учтены, без плеча (старые сделки — с половиной на тейке 1).
             </p>
           )}
         </div>
@@ -142,8 +143,8 @@ export default function Overview() {
           <StatCard title="BE +5%" value={s.beBuckets.after5} sub="пик +5…<8%" icon={Shield} color="text-sky-300" onClick={() => focus("be_stop")} />
           <StatCard title="BE +8%" value={s.beBuckets.after8} sub="пик +8…<10%" icon={Shield} color="text-sky-300" onClick={() => focus("be_stop")} />
           <StatCard title="BE +10%+" value={s.beBuckets.after10} sub="пик от +10%" icon={Shield} color="text-sky-300" onClick={() => focus("be_stop")} />
-          <StatCard title="AVG PROFIT" value={signed(s.avgProfit, 2, "%")} sub={`${s.profit} PROFIT`} icon={TrendingUp} color="text-up" onClick={() => focus("profit")} active={status === "profit"} />
-          <StatCard title="AVG LOSS" value={signed(s.avgLoss, 2, "%")} sub={`STOP LOSS: ${s.stopLoss}`} icon={TrendingDown} color="text-down" onClick={() => focus("stop_loss")} active={status === "stop_loss"} />
+          <StatCard title="AVG PROFIT" value={signed(s.avgProfit, 2, "%")} sub={`${s.profit} PROFIT`} icon={TrendingUp} color="text-up" onClick={() => focus("profit")} />
+          <StatCard title="AVG LOSS" value={signed(s.avgLoss, 2, "%")} sub={`STOP LOSS: ${s.stopLoss}`} icon={TrendingDown} color="text-down" onClick={() => focus("stop_loss")} />
           <StatCard title="ЛУЧШАЯ СДЕЛКА" value={s.bestTrade ? signed(s.bestTrade.pnlPct, 2, "%") : "—"} sub={s.bestTrade ? `${coin(s.bestTrade.symbol)} · ${setupLabel(s.bestTrade.setup)}` : "—"} icon={Trophy} color="text-up" />
           <StatCard title="СРЕДНИЙ ПИК" value={signed(s.avgPeak, 1, "%")} sub={`до +10%: ${s.reached.p10} · до +15%: ${s.reached.p15} · до +30%: ${s.reached.p30}`} icon={TrendingUp} />
         </div>
@@ -153,15 +154,28 @@ export default function Overview() {
         <DailyChart rows={data?.daily ?? []} metric={metric} />
       </Panel>
 
-      <DailyArchive />
 
-      <Panel title="Результаты по сетапам">
+      <Panel title="Результаты: лонги, шорты и сетапы">
         <div className="-mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
           <table className="w-full min-w-[860px] text-sm">
             <thead>
               <tr className="text-left">{["Сетап", "Всего", "PROFIT", "BE STOP", "STOP", "Win rate", "Результат", "R", "Средний пик", "Откр."].map((h) => <th key={h} className="label pb-2 pr-3 font-normal">{h}</th>)}</tr>
             </thead>
             <tbody className="tabular">
+              {(data?.bySide ?? []).map((r) => (
+                <tr key={r.side} className="border-t border-border font-semibold">
+                  <td className="py-2.5 pr-3 font-sans">{r.side === "long" ? "Все лонги" : "Все шорты"}<span className="ml-2 text-[10px] font-normal text-muted">{r.side === "long" ? "трейлинг с +15%" : "тейк +8%"}</span></td>
+                  <td className="pr-3">{r.total}</td>
+                  <td className="pr-3 text-up">{r.profit}</td>
+                  <td className="pr-3 text-sky-300">{r.beStop}</td>
+                  <td className="pr-3 text-down">{r.stopLoss}</td>
+                  <td className="pr-3">{r.winRate == null ? "—" : `${r.winRate}%`}</td>
+                  <td className={`pr-3 ${tone(r.netPnlPct)}`}>{signed(r.netPnlPct, 2, "%")}</td>
+                  <td className={`pr-3 ${tone(r.netR)}`}>{signed(r.netR)}</td>
+                  <td className="pr-3">{signed(r.avgPeak, 1, "%")}</td>
+                  <td>{r.open}</td>
+                </tr>
+              ))}
               {SETUPS.map((name) => {
                 const r = bySetup.get(name);
                 return (
@@ -182,12 +196,10 @@ export default function Overview() {
             </tbody>
           </table>
         </div>
-        <p className="mt-3 text-xs text-muted">Win rate как в CAB: (PROFIT + BE STOP) / (PROFIT + BE STOP + STOP LOSS). BE STOP — закрытие по стопу на входе после тейка 1; +5/+8/+10 — какого пика сделка успела достичь.</p>
+        <p className="mt-3 text-xs text-muted">Win rate как в CAB: (PROFIT + BE STOP) / (PROFIT + BE STOP + STOP LOSS). BE STOP — закрытие стопом на входе после безубытка +5%; +5/+8/+10 — какого пика сделка успела достичь. «Откр.» — открытые из сигналов этого периода.</p>
       </Panel>
 
-      <div id="signal-history" className="scroll-mt-4">
-        <SignalHistory days={days} live={live} status={status} onStatus={setStatus} />
-      </div>
+      <DailyArchive />
     </div>
   );
 }

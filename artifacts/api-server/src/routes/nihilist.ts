@@ -6,7 +6,7 @@ import { ensureRejectionTable } from "../engine/rejections";
 import { ensureUserTables, isOwnerReq, ownerEmail, publicSignal, recipientSql } from "../lib/users";
 import { cgRequest, coinglassGovernorStats, EXCHANGE } from "../market/coinglass";
 import { apiHealth } from "../lib/apiHealth";
-import { buildJournal, tradeStatus, TRADE_STATUS_SQL, type JournalRow } from "../stats/journal";
+import { buildJournal, holdBuckets, tradeStatus, TRADE_STATUS_SQL, type JournalRow } from "../stats/journal";
 import { ensureSnapshotTable, snapshotBackfillDiagnostics } from "../stats/snapshots";
 import { analyzeMetrics, type AnalysisRow } from "../stats/metricAnalysis";
 import { book } from "../market/candleStore";
@@ -242,7 +242,9 @@ router.get("/nh/journal", async (req, res) => {
   const held = rows.filter((r) => r.status === "closed" && r.closed_at)
     .map((r) => (new Date(r.closed_at as string).getTime() - new Date(r.opened_at).getTime()) / 3_600_000);
   const avgHoldHours = held.length ? Math.round((held.reduce((a, b) => a + b, 0) / held.length) * 10) / 10 : null;
-  res.json({ days: d, live, counters: counters.rows[0], ...buildJournal(rows), daily, avgHoldHours });
+  // Every open trade now (no period cut), as the «Открытые позиции» page counts them.
+  const openNow = await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM nh_signals WHERE status = 'open' AND (NOT $1 OR live)", [live]);
+  res.json({ days: d, live, counters: { ...counters.rows[0], openNow: openNow.rows[0]?.n ?? 0 }, ...buildJournal(rows), daily, avgHoldHours, hold: holdBuckets(held) });
 });
 
 /** Entry metrics vs results (AltBullet indicator relations) over closed trades. */

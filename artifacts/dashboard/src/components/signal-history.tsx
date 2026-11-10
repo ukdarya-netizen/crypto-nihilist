@@ -5,7 +5,7 @@ import { CoinLink } from "./chart";
 import { SnapshotPanel } from "./snapshot";
 import { metricCols, MetricCell } from "./metric-columns";
 import { Trajectory } from "./trajectory";
-import { coin, get, hasTp1, isOwner, price, SETUPS, setupLabel, signed, tone, usePoll, when, type Signal } from "../lib/api";
+import { coin, exitPlan, get, hasTp1, isOwner, price, SETUPS, setupLabel, signed, tone, usePoll, when, type Signal } from "../lib/api";
 
 export type TradeStatus = "profit" | "be_stop" | "stop_loss" | "expired" | "open";
 export type HistoryRow = Signal & { trade_status: TradeStatus };
@@ -49,9 +49,12 @@ function resultPct(s: HistoryRow): number | null {
   return ((Number(s.last_price) - s.entry) / s.entry) * 100 * (s.side === "long" ? 1 : -1);
 }
 
+/** Shorts: the whole position at +8% from 05.11.2026 (also shorts still open then). */
+const SHORT_TAKE_SINCE = new Date("2026-11-05T00:00:00+04:00");
+
 export const STATUS_HELP: Record<TradeStatus, string> = {
   open: "Сделка открыта и сопровождается по 5-минутным свечам.",
-  profit: "Закрыта в плюс: трейлингом или по времени удержания с прибылью.",
+  profit: "Закрыта в плюс: шорт — тейком +8%, лонг — трейлингом; или по времени удержания с прибылью.",
   be_stop: "Закрыта стопом на входе (после тейка 1 или безубытка). +5/+8/+10 — до какого пика дошла.",
   stop_loss: "Сработал структурный стоп (за реакцией от блока, ещё на 3% дальше).",
   expired: "Закрыта по времени удержания в ноль или минус (7 дней для ОБ 4h, 21 день для ОБ 1D).",
@@ -75,7 +78,7 @@ function Details({ s }: { s: HistoryRow }) {
         <dt className="text-muted">Стоп</dt><dd className="text-down">{price(s.stop)} ({signed(pct(s.stop), 1, "%")})</dd>
         <dt className="text-muted">Тейк 1</dt>{hasTp1(s)
           ? <dd className="text-up">{price(s.tp1)} ({signed(pct(s.tp1), 1, "%")}){s.tp1_hit ? " ✓" : ""}</dd>
-          : <dd className="text-muted">нет — безубыток +5%, трейлинг с +15%</dd>}
+          : <dd className="text-muted">нет — безубыток +5%, {s.side === "short" && (s.close_reason === "take" || s.status !== "closed" || new Date(s.opened_at) >= SHORT_TAKE_SINCE) ? exitPlan(s).text : "трейлинг с +15%"}</dd>}
         <dt className="text-muted">Стоп сейчас</dt><dd>{s.current_stop !== null ? `${price(s.current_stop)} (${signed(pct(s.current_stop), 1, "%")})` : "—"}</dd>
         <dt className="text-muted">Пик / просадка</dt><dd>{signed(s.peak_pct, 1, "%")} / {signed(s.mae_pct, 1, "%")}</dd>
         <dt className="text-muted">R</dt><dd className={tone(s.r_multiple)}>{signed(s.r_multiple)}</dd>

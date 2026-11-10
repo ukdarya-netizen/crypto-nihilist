@@ -3,3 +3,4 @@
 - [Trade monitoring windows](trade-monitoring-windows.md) — preserve open-trade and 72-hour post-close observations; inspect current trajectory before adding tables.
 - [Database publish diff](database-publish-diff.md) — an empty diff means dev and prod match; it does not prove source-defined tables exist in either database.
 - [Production database access](prod-db-cli-access.md) — local API scripts use the writable development URL; production reads must use the production-only path.
+- [GitHub main protection](github-main-protection.md) — preserve the user's repeated instruction not to push or merge Crypto Nihilist changes to `main`.

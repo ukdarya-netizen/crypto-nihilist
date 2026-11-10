@@ -58,6 +58,11 @@ function navFor(): typeof NAV {
   return isOwner() ? [...NAV, ...OWNER_NAV] : NAV.filter((n) => !OWNER_ROUTES.includes(n.href));
 }
 
+/** Query of the hash route (#/history?status=profit&days=30). */
+export function hashParams(): URLSearchParams {
+  return new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+}
+
 export function logout(): void {
   saveSession(null);
   window.location.hash = "/login";
@@ -65,7 +70,8 @@ export function logout(): void {
 
 export function useRoute(): Route {
   const read = (): Route => {
-    let hash = window.location.hash.replace(/^#/, "") || "/";
+    // A filter may follow the page: #/history?status=profit (overview tiles open the history, as in CAB).
+    let hash = window.location.hash.replace(/^#/, "").split("?")[0] || "/";
     if (hash === "/users") hash = "/members";
     return ([...NAV, ...OWNER_NAV].some((n) => n.href === hash) || PUBLIC_ROUTES.includes(hash as Route) ? hash : "/") as Route;
   };
