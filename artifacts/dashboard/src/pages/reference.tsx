@@ -118,8 +118,7 @@ export default function Reference() {
 
       {owner && (
         <Section title="Метод — только владелец">
-          <div className="grid gap-3 md:grid-cols-3">
-            <Note title="Индикатор">Smart Money Concepts [LuxAlgo], настройки по умолчанию, только закрытые свечи: swing-структура 50, internal 5, ордер-блоки с фильтром ATR(200), снятие блока по High/Low.</Note>
+          <div className="grid gap-3 md:grid-cols-2">
             <Note title="8 сетапов">{"{ОБ 4h, ОБ 1D} × {слом 30m, слом 1h} × {лонг, шорт}. Статистика по каждому отдельно."}</Note>
             <Note title="Отказ">Стоп дальше 20% · по монете уже открыта сделка в эту сторону · лонг не прошёл фильтр входа. Одна сделка на блок; причина пишется в «Отклонённые сигналы».</Note>
           </div>
