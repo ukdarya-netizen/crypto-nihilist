@@ -1,8 +1,8 @@
 import { getLang, setLang, type Lang } from "../lib/i18n";
 
 const OPTIONS: Array<{ lang: Lang; label: string; title: string }> = [
-  { lang: "ru", label: "RU", title: "Русский" },
   { lang: "en", label: "EN", title: "English" },
+  { lang: "ru", label: "RU", title: "Русский" },
 ];
 
 /** RU / EN switch as in CAB; choosing a language reloads the page. */

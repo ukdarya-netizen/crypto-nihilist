@@ -15,9 +15,10 @@ export function getLang(): Lang {
     const fromUrl = new URLSearchParams(window.location.search).get("lang");
     if (fromUrl === "en" || fromUrl === "ru")
       localStorage.setItem(STORAGE_KEY, fromUrl);
-    return localStorage.getItem(STORAGE_KEY) === "en" ? "en" : "ru";
+    // Owner 2026-11-10: English by default (dashboard and Telegram Mini App); Russian only when chosen.
+    return localStorage.getItem(STORAGE_KEY) === "ru" ? "ru" : "en";
   } catch {
-    return "ru";
+    return "en";
   }
 }
 
@@ -25,7 +26,7 @@ export function setLang(lang: Lang): void {
   try {
     localStorage.setItem(STORAGE_KEY, lang);
   } catch {
-    /* storage unavailable: language stays Russian */
+    /* storage unavailable: the page stays in English */
   }
   window.location.reload();
 }
