@@ -223,6 +223,7 @@ async function liveItems(rows: LiveRow[], smc: Map<string, SmcChecks>): Promise<
 
 // ---------- history ----------
 type Data = Record<Exclude<Interval, "5m">, Candle[]>;
+export type HistoryData = Data;
 
 async function history(symbol: string): Promise<Data | null> {
   const want: Record<Exclude<Interval, "5m">, number> = {
@@ -354,6 +355,8 @@ export async function runStrategyReport(opts: { history?: boolean } = {}): Promi
   }
 }
 export const strategyReportRunning = () => running;
+/** 60-day candle history of a coin (also the SMC study, owner 2026-11-10). */
+export const loadHistory = (symbol: string) => history(symbol);
 
 /**
  * The "source" variant must reproduce Nihilist's own closed live trades
