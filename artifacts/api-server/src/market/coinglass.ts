@@ -35,11 +35,24 @@ const stats = { started: 0, ok: 0, failed: 0, rateLimited: 0 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function admit(): Promise<void> {
+/**
+ * Owner 2026-11-10 (Telegram lag): open-trade tracking goes before everything else. Position updates and closes
+ * waited behind the 30-minute scan (~1,200 coins) and reached Telegram up to 6 min late.
+ */
+let priorityWaiting = 0;
+async function admit(priority = false): Promise<void> {
+  if (priority) priorityWaiting += 1;
+  try {
+    await admitInner(priority);
+  } finally {
+    if (priority) priorityWaiting -= 1;
+  }
+}
+async function admitInner(priority: boolean): Promise<void> {
   for (;;) {
     const now = Date.now();
     const wait = Math.max(nextStartAt - now, cooldownUntil - now, 0);
-    if (wait === 0 && inFlight < MAX_IN_FLIGHT) {
+    if (wait === 0 && inFlight < MAX_IN_FLIGHT && (priority || priorityWaiting === 0)) {
       nextStartAt = now + MIN_GAP_MS;
       inFlight += 1;
       return;
@@ -70,17 +83,17 @@ const MAX_429_RETRIES = 4;
  * other failure is returned at once. Never throws.
  */
 export async function cgRequest(
-  path: string, params: Record<string, string | number>, opts: { health?: boolean } = {},
+  path: string, params: Record<string, string | number>, opts: { health?: boolean; priority?: boolean } = {},
 ): Promise<CgResult> {
   for (let attempt = 0; ; attempt++) {
-    const result = await cgRequestOnce(path, params, opts.health !== false);
+    const result = await cgRequestOnce(path, params, opts.health !== false, opts.priority === true);
     if (result.ok || !result.rateLimited || attempt >= MAX_429_RETRIES) return result;
   }
 }
 
 type CgAttempt = CgResult & { rateLimited?: boolean };
 
-async function cgRequestOnce(path: string, params: Record<string, string | number>, health = true): Promise<CgAttempt> {
+async function cgRequestOnce(path: string, params: Record<string, string | number>, health = true, priority = false): Promise<CgAttempt> {
   // Owner 2026-11-09: dev is not a real environment — no CoinGlass requests from it (the key is shared with CAB).
   if (process.env.NODE_ENV === "development") return { ok: false, error: "CoinGlass disabled in development" };
   const all = keys();
@@ -88,7 +101,7 @@ async function cgRequestOnce(path: string, params: Record<string, string | numbe
     recordFailure("coinglass", "NIHILIST_COINGLASS_API_KEY не задан");
     return { ok: false, error: "no_api_key" };
   }
-  await admit();
+  await admit(priority);
   stats.started += 1;
   const key = all[keyIndex++ % all.length]!;
   try {
@@ -180,13 +193,13 @@ export function parsePriceRows(data: unknown): Candle[] {
 
 /** BingX OHLC from CoinGlass; `null` when the request failed (never a partial substitute). */
 export async function getCandles(
-  instrumentId: string, interval: Interval, limit: number, endTime?: number,
+  instrumentId: string, interval: Interval, limit: number, endTime?: number, opts: { priority?: boolean } = {},
 ): Promise<Candle[] | null> {
   const params: Record<string, string | number> = {
     exchange: EXCHANGE, symbol: instrumentId, interval, limit,
   };
   if (endTime !== undefined) params.end_time = endTime;
-  const result = await cgRequest("/api/futures/price/history", params);
+  const result = await cgRequest("/api/futures/price/history", params, { priority: opts.priority });
   if (!result.ok) return null;
   return parsePriceRows(result.data);
 }

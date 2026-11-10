@@ -64,7 +64,7 @@ async function trackRow(row: OpenRow, now: number): Promise<void> {
   const before = stateFromRow(row);
   const from = before.lastCandleTime ?? before.openedAt - SPAN;
   const limit = Math.min(1000, Math.max(3, Math.ceil((now - from) / SPAN) + 2));
-  const candles = await getCandles(row.symbol, TRACK_INTERVAL, limit);
+  const candles = await getCandles(row.symbol, TRACK_INTERVAL, limit, undefined, { priority: true });
   if (candles === null) return; // no data: wait for the next pass
   const closed = candles.filter((c) => c.t + SPAN <= now);
   const { state: after, events } = applyCandles(before, closed, SPAN);

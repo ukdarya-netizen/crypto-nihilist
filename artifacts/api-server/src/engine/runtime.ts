@@ -311,38 +311,14 @@ async function runCycle(bar: number): Promise<void> {
   const cycle = { bar, startedAt: started, stage: "refresh" as "refresh" | "late_retry" | "evaluate", done: 0, total: symbols.length };
   status.cycle = cycle;
   setScanBusy(true);
-  try {
-    // Requests run in parallel up to the CoinGlass governor's limits.
-    const refreshed = await Promise.all(symbols.map(async (symbol) => {
-      try {
-        return { symbol, ok: (await refresh(symbol)) !== null };
-      } catch (err) {
-        logger.warn({ err, symbol }, "nihilist: refresh failed");
-        return { symbol, ok: false };
-      } finally {
-        cycle.done += 1;
-      }
-    }));
-    // CoinGlass can publish the just-closed bar a little late: retry those symbols.
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const late = refreshed.filter(({ symbol, ok }) => {
-        const s = book(symbol)["30m"];
-        return ok && (!s.length || s[s.length - 1].t + INTERVAL_MS["30m"] < bar);
-      });
-      if (!late.length) break;
-      lateRetries += late.length;
-      cycle.stage = "late_retry";
-      await new Promise((r) => setTimeout(r, 45_000));
-      await Promise.all(late.map(async (item) => {
-        try { item.ok = (await refresh(item.symbol)) !== null; } catch { item.ok = false; }
-      }));
-    }
-    setScanBusy(false);
-    cycle.stage = "evaluate";
-    cycle.done = 0;
-    for (const { symbol, ok } of refreshed) {
-      cycle.done += 1;
-      if (!ok) { failed += 1; candidateMap.forEach((_, k) => { if (k.startsWith(`${symbol}:`)) candidateMap.delete(k); }); continue; } // no data — no signal
+  // Owner 2026-11-10 (Telegram lag): a coin is evaluated as soon as its just-closed bar is in, instead of after
+  // the whole universe and the late-bar retries (new signals went out 4–9 min after the bar close). Evaluations
+  // run one at a time, in the order the coins arrive.
+  const evaluated = new Set<string>();
+  let evalChain: Promise<void> = Promise.resolve();
+  const evaluate = (symbol: string) => {
+    evaluated.add(symbol);
+    evalChain = evalChain.then(async () => {
       try {
         const result = await evaluateSymbol(symbol);
         signals += result.signals;
@@ -352,7 +328,49 @@ async function runCycle(bar: number): Promise<void> {
         status.lastError = error;
         logger.error({ err, symbol }, "nihilist: evaluation failed");
       }
+    });
+  };
+  const hasBar = (symbol: string) => {
+    const s = book(symbol)["30m"];
+    return s.length > 0 && s[s.length - 1].t + INTERVAL_MS["30m"] >= bar;
+  };
+  try {
+    // Requests run in parallel up to the CoinGlass governor's limits.
+    const refreshed = await Promise.all(symbols.map(async (symbol) => {
+      try {
+        const ok = (await refresh(symbol)) !== null;
+        if (ok && hasBar(symbol)) evaluate(symbol);
+        return { symbol, ok };
+      } catch (err) {
+        logger.warn({ err, symbol }, "nihilist: refresh failed");
+        return { symbol, ok: false };
+      } finally {
+        cycle.done += 1;
+      }
+    }));
+    // CoinGlass can publish the just-closed bar a little late: retry those symbols.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const late = refreshed.filter(({ symbol, ok }) => ok && !evaluated.has(symbol) && !hasBar(symbol));
+      if (!late.length) break;
+      lateRetries += late.length;
+      cycle.stage = "late_retry";
+      await new Promise((r) => setTimeout(r, 45_000));
+      await Promise.all(late.map(async (item) => {
+        try {
+          item.ok = (await refresh(item.symbol)) !== null;
+          if (item.ok && hasBar(item.symbol)) evaluate(item.symbol);
+        } catch { item.ok = false; }
+      }));
     }
+    setScanBusy(false);
+    cycle.stage = "evaluate";
+    cycle.done = 0;
+    for (const { symbol, ok } of refreshed) {
+      cycle.done += 1;
+      if (!ok) { failed += 1; candidateMap.forEach((_, k) => { if (k.startsWith(`${symbol}:`)) candidateMap.delete(k); }); continue; } // no data — no signal
+      if (!evaluated.has(symbol)) evaluate(symbol); // still without the new bar after the retries — as before
+    }
+    await evalChain;
   } finally {
     setScanBusy(false);
     status.cycle = null;

@@ -42,3 +42,26 @@ test("CoinGlass scan keeps priority over derivative history lookups", async () =
     setScanBusy(false);
   }
 });
+
+test("tracker requests (priority) start before queued scan requests", async () => {
+  const prevEnv = process.env.NODE_ENV, prevKey = process.env.NIHILIST_COINGLASS_API_KEY, prevFetch = globalThis.fetch;
+  process.env.NODE_ENV = "test"; process.env.NIHILIST_COINGLASS_API_KEY = "k";
+  const order: string[] = [];
+  globalThis.fetch = (async (url: URL) => {
+    order.push(new URL(url).searchParams.get("symbol")!);
+    await new Promise((r) => setTimeout(r, 20));
+    return new Response(JSON.stringify({ code: "0", data: [] }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const { getCandles } = await import("./coinglass");
+    const low = Array.from({ length: 8 }, (_, i) => getCandles(`L${i}`, "30m", 5));
+    await new Promise((r) => setTimeout(r, 5));
+    const high = getCandles("TRACK", "5m", 5, undefined, { priority: true });
+    await Promise.all([...low, high]);
+    // At most the requests already admitted (max 4 in flight, one per gap) go before the tracker.
+    assert.ok(order.indexOf("TRACK") <= 2, `tracker went ${order.indexOf("TRACK")}th: ${order.join(",")}`);
+  } finally {
+    globalThis.fetch = prevFetch; process.env.NODE_ENV = prevEnv;
+    if (prevKey === undefined) delete process.env.NIHILIST_COINGLASS_API_KEY; else process.env.NIHILIST_COINGLASS_API_KEY = prevKey;
+  }
+});

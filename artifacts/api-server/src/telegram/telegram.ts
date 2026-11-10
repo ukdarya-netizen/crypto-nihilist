@@ -16,7 +16,7 @@ import { startReports } from "./reports";
 import { sendMessage, sendPhoto, signalChannel, telegramCall, telegramEnabled, TelegramError, type TelegramUpdate } from "./transport";
 import { ensureUserTables, ownerEmail, recipientSql } from "../lib/users";
 import { handleUpdate, setBotMenu } from "./bot";
-import { MAX_AUTO_DELIVERY_AGE_MS, planEventDelivery, type DeliveryRecipient } from "./delivery-policy";
+import { MAX_AUTO_DELIVERY_AGE_MS, MAX_UPDATE_DELIVERY_AGE_MS, planEventDelivery, type DeliveryRecipient } from "./delivery-policy";
 
 const MAX_ATTEMPTS = 8;
 let delivering = false;
@@ -55,13 +55,13 @@ async function enqueue(): Promise<QueueRow[]> {
             ) AS silent
      FROM nh_signal_events e JOIN nh_signals s ON s.id = e.signal_id
      WHERE e.telegram_sent_at IS NULL AND e.telegram_attempts < $1
-        AND (NOT s.live OR e.created_at >= $2)
+        AND (NOT s.live OR e.created_at >= CASE WHEN e.kind = 'opened' THEN $2 ELSE $5 END)
         AND (NOT s.live OR $3::text IS NOT NULL OR EXISTS (
           SELECT 1 FROM nh_users u
           WHERE ${recipientSql("$4")} AND u.notify_since <= e.created_at
         ))
      ORDER BY e.id LIMIT 20`,
-    [MAX_ATTEMPTS, new Date(now - MAX_AUTO_DELIVERY_AGE_MS), channel, ownerEmail()],
+    [MAX_ATTEMPTS, new Date(now - MAX_AUTO_DELIVERY_AGE_MS), channel, ownerEmail(), new Date(now - MAX_UPDATE_DELIVERY_AGE_MS)],
   );
   for (const row of rows) {
     if (!row.signal_live || row.silent) {
@@ -75,7 +75,7 @@ async function enqueue(): Promise<QueueRow[]> {
       ...(channel ? [{ chat: channel, isChannel: true }] : []),
       ...subs.rows.map((s) => ({ chat: s.chat_id, isChannel: false })),
     ];
-    const plan = planEventDelivery({ signalLive: row.signal_live, createdAt: row.created_at }, recipients, now);
+    const plan = planEventDelivery({ signalLive: row.signal_live, createdAt: row.created_at, kind: row.kind }, recipients, now);
     if (plan.action !== "enqueue") continue;
 
     const text = formatEvent(row, row);
