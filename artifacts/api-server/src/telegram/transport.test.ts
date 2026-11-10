@@ -23,6 +23,8 @@ test("sendPhoto sends each image with its caption and keeps separate Telegram fi
           ? "telegram-take-profit-id"
           : photoName === "position-update.png"
             ? "telegram-position-update-id"
+          : photoName === "daily-report.png"
+            ? "telegram-daily-report-id"
           : "telegram-signal-id";
     return new Response(JSON.stringify({
       ok: true,
@@ -39,13 +41,15 @@ test("sendPhoto sends each image with its caption and keeps separate Telegram fi
     await sendPhoto("@signals", "Trailing profit closed", "takeProfit");
     await sendPhoto("@signals", "Position update", "positionUpdate");
     await sendPhoto("@signals", "Another position update", "positionUpdate");
+    await sendPhoto("@signals", "Daily report", "dailyReport");
+    await sendPhoto("@signals", "Another daily report", "dailyReport");
   } finally {
     globalThis.fetch = previousFetch;
     if (previousToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
     else process.env.TELEGRAM_BOT_TOKEN = previousToken;
   }
 
-  assert.equal(forms.length, 8);
+  assert.equal(forms.length, 10);
   assert.equal(forms[0].get("chat_id"), "@signals");
   assert.equal(forms[0].get("caption"), "First signal");
   const uploaded = forms[0].get("photo");
@@ -75,6 +79,13 @@ test("sendPhoto sends each image with its caption and keeps separate Telegram fi
   assert.ok(positionUpdateUploaded.size > 1_000_000);
   assert.equal(forms[7].get("caption"), "Another position update");
   assert.equal(forms[7].get("photo"), "telegram-position-update-id");
+  assert.equal(forms[8].get("caption"), "Daily report");
+  const dailyReportUploaded = forms[8].get("photo");
+  assert.ok(dailyReportUploaded instanceof Blob);
+  assert.equal((dailyReportUploaded as File).name, "daily-report.png");
+  assert.ok(dailyReportUploaded.size > 1_000_000);
+  assert.equal(forms[9].get("caption"), "Another daily report");
+  assert.equal(forms[9].get("photo"), "telegram-daily-report-id");
 });
 
 test("splitText: long reports go out in parts under the Telegram limit, lines kept whole", async () => {

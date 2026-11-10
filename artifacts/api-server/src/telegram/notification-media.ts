@@ -1,4 +1,4 @@
-export type TelegramPhotoKind = "signal" | "stopLoss" | "takeProfit" | "positionUpdate" | "beStop" | "expired";
+export type TelegramPhotoKind = "signal" | "stopLoss" | "takeProfit" | "positionUpdate" | "beStop" | "expired" | "dailyReport";
 
 export function shouldSuppressTelegramEvent(eventKind: string | null): boolean {
   return eventKind === "trailing_on";
@@ -7,8 +7,10 @@ export function shouldSuppressTelegramEvent(eventKind: string | null): boolean {
 export function notificationPhotoKind(
   eventKind: string | null,
   eventReason: string | null,
+  eventId: number | null = null,
 ): TelegramPhotoKind | null {
   if (shouldSuppressTelegramEvent(eventKind)) return null;
+  if (eventKind === null && eventId !== null && eventId <= -100_000_000 && eventId > -200_000_000) return "dailyReport";
   if (eventKind === "opened") return "signal";
   if (eventKind === "closed" && eventReason === "stop") return "stopLoss";
   if (eventKind === "tp1" || (eventKind === "closed" && (eventReason === "trailing" || eventReason === "take"))) return "takeProfit";

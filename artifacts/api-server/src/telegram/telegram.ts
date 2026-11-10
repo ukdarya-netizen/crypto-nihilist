@@ -92,10 +92,10 @@ async function enqueue(): Promise<QueueRow[]> {
 
 async function sendPending(): Promise<void> {
   const { rows } = await pool.query<{
-    id: number; chat_id: string; channel: boolean; text: string; attempts: number;
+    id: number; event_id: number; chat_id: string; channel: boolean; text: string; attempts: number;
     event_kind: string | null; event_reason: string | null;
   }>(
-    `SELECT d.id, d.chat_id, d.channel, d.text, d.attempts,
+    `SELECT d.id, d.event_id, d.chat_id, d.channel, d.text, d.attempts,
             (SELECT e.kind FROM nh_signal_events e WHERE e.id = d.event_id) AS event_kind,
             (SELECT e.detail->>'reason' FROM nh_signal_events e WHERE e.id = d.event_id) AS event_reason
      FROM nh_telegram_deliveries d
@@ -114,9 +114,18 @@ async function sendPending(): Promise<void> {
       }
     }
     try {
-      const photoKind = notificationPhotoKind(d.event_kind, d.event_reason);
-      if (photoKind) await sendPhoto(d.chat_id, d.text, photoKind);
-      else await sendMessage(d.chat_id, d.text);
+      const photoKind = notificationPhotoKind(d.event_kind, d.event_reason, d.event_id);
+      // Daily report: a photo caption holds 1024 characters — the title goes with the image, the report follows
+      // as text (split into parts over 4096 by sendMessage, owner 2026-11-10).
+      if (photoKind === "dailyReport" && d.text.length > 1024) {
+        const [title, ...body] = d.text.split("\n");
+        await sendPhoto(d.chat_id, title, photoKind);
+        await sendMessage(d.chat_id, body.join("\n"));
+      } else if (photoKind) {
+        await sendPhoto(d.chat_id, d.text, photoKind);
+      } else {
+        await sendMessage(d.chat_id, d.text);
+      }
       await pool.query("UPDATE nh_telegram_deliveries SET status = 'sent', sent_at = now() WHERE id = $1", [d.id]);
     } catch (err) {
       const attempts = d.attempts + 1;

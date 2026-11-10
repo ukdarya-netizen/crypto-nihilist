@@ -17,6 +17,7 @@ const photoAssets: Record<TelegramPhotoKind, PhotoAsset> = {
   positionUpdate: { filename: "position-update.png", bytes: null, fileId: null },
   beStop: { filename: "be-stop.png", bytes: null, fileId: null },
   expired: { filename: "position-expired.png", bytes: null, fileId: null },
+  dailyReport: { filename: "daily-report.png", bytes: null, fileId: null },
 };
 
 export function telegramEnabled(): boolean {
