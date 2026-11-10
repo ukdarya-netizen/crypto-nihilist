@@ -6,7 +6,7 @@ import { ensureRejectionTable } from "../engine/rejections";
 import { ensureUserTables, isOwnerReq, ownerEmail, publicSignal, recipientSql } from "../lib/users";
 import { cgRequest, coinglassGovernorStats, EXCHANGE } from "../market/coinglass";
 import { apiHealth } from "../lib/apiHealth";
-import { buildJournal, tradeStatus, type JournalRow } from "../stats/journal";
+import { buildJournal, tradeStatus, TRADE_STATUS_SQL, type JournalRow } from "../stats/journal";
 import { ensureSnapshotTable, snapshotBackfillDiagnostics } from "../stats/snapshots";
 import { analyzeMetrics, type AnalysisRow } from "../stats/metricAnalysis";
 import { book } from "../market/candleStore";
@@ -299,15 +299,19 @@ router.get("/nh/history", async (req, res) => {
   const setup = typeof req.query.setup === "string" && req.query.setup ? req.query.setup : null;
   const symbol = typeof req.query.q === "string" && req.query.q.trim() ? `%${req.query.q.trim().toUpperCase()}%` : null;
   const exact = typeof req.query.symbol === "string" && req.query.symbol ? req.query.symbol.toUpperCase() : null;
+  // Status filter runs in SQL before LIMIT (2026-11-10): filtering after the
+  // LIMIT hid open trades older than the newest `limit` signals, so the
+  // «В работе» list showed fewer than the «Активных» tile.
+  const status = typeof req.query.status === "string" ? req.query.status : "";
   await ensureSnapshotTable();
   const { rows } = await pool.query(
     `SELECT s.*, n.metrics AS snapshot, n.close_context, n.reconstructed AS snapshot_reconstructed, n.status AS snapshot_status FROM nh_signals s LEFT JOIN nh_signal_snapshots n ON n.signal_id = s.id
      WHERE s.opened_at > now() - make_interval(days => $1) AND ($2::text IS NULL OR s.setup = $2)
        AND ($3::text IS NULL OR s.symbol LIKE $3) AND (NOT $4 OR s.live) AND ($6::text IS NULL OR s.symbol = $6)
+       AND ($7::text = '' OR ${TRADE_STATUS_SQL} = $7)
      ORDER BY s.opened_at DESC LIMIT $5`,
-    [d, setup, symbol, liveOnly(req.query.live) || !isOwnerReq(req), limit, exact],
+    [d, setup, symbol, liveOnly(req.query.live) || !isOwnerReq(req), limit, exact, status],
   );
-  const status = typeof req.query.status === "string" ? req.query.status : "";
   const filtered = status ? rows.filter((r) => tradeStatus(r as JournalRow) === status) : rows;
   const out = filtered.map((r) => ({ ...r, trade_status: tradeStatus(r as JournalRow) }));
   res.json({ signals: isOwnerReq(req) ? out : out.map(publicSignal) });

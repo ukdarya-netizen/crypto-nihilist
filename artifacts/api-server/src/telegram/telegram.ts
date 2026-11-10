@@ -42,6 +42,8 @@ async function enqueue(): Promise<QueueRow[]> {
                   AND b.created_at = e.created_at))
               -- Trailing activation is included in the milestone alert.
               OR e.kind = 'trailing_on'
+              -- A milestone reached in the step that closed the position (short take +8%) is in the close message.
+              OR (e.kind = 'milestone' AND COALESCE((e.detail->>'mergedIntoClose')::boolean, false))
               -- One position per coin and side in Telegram: a signal opened while an
               -- earlier live one on the same coin/side was still open stays silent
               -- (duplicates opened before the one-per-coin rule; stats unchanged).

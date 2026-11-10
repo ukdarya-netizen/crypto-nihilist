@@ -97,9 +97,13 @@ async function trackRow(row: OpenRow, now: number): Promise<void> {
     if (cmd) await enqueueCommand(row.id, row.symbol, cmd).catch((err) => logger.warn({ err, id: row.id }, "nihilist: trading command not queued"));
   }
   const trailingActivationAt = events.find((event) => event.kind === "trailing_on")?.at;
+  // Owner 2026-11-10: a milestone reached in the same step as the close (shorts: +8% = the take) is told in the
+  // close message only — one message, not «+8%» followed by «position closed».
+  const closesNow = events.some((event) => event.kind === "closed");
   for (const e of events) {
     const detail: Record<string, unknown> = { ...e, currentStop: after.currentStop, peakPct: after.peakPct };
     if (e.kind === "milestone" && e.at === trailingActivationAt) detail.trailingActivated = true;
+    if (e.kind === "milestone" && closesNow) detail.mergedIntoClose = true;
     if (e.kind === "closed") Object.assign(detail, { pnlPct: result.pnlPct, r: result.r, tp1Hit: after.tp1Hit });
     await insertEvent(row.id, eventKey(row.id, e), e.kind, e.price, detail, e.at);
   }
