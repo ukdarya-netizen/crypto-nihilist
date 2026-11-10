@@ -1,70 +1,124 @@
 import type { ReactNode } from "react";
-import { Panel } from "../components/ui";
 import { isOwner } from "../lib/api";
 
-const Item = ({ t, children }: { t: string; children: ReactNode }) => (
-  <div className="border-t border-border py-3 first:border-t-0 first:pt-0">
-    <p className="font-semibold">{t}</p>
-    <div className="mt-1 text-sm leading-relaxed text-foreground/75">{children}</div>
-  </div>
+/**
+ * Reference (owner 2026-11-10): one clear page — the idea, how a signal is found (3 steps), and how a trade
+ * is managed, longs and shorts side by side. Users get the same page without the method's settings.
+ */
+
+const Section = ({ title, children }: { title: string; children: ReactNode }) => (
+  <section className="space-y-3">
+    <p className="label">{title}</p>
+    {children}
+  </section>
 );
 
-/** Users: the idea and how a trade is managed, without the method's settings (owner 2026-11-02). */
-function UserReference() {
+function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Panel title="Идея">
-        <Item t="Smart Money: возврат в ордер-блок и слом структуры">
-          Старший таймфрейм (4h или 1D) показывает, где крупный игрок оставил ордер-блок. Младший (30m или 1h) — момент, когда цена в этом блоке развернулась. Вход — по закрытию свечи, сломавшей структуру. Лонги и шорты.
-        </Item>
-        <Item t="Сигналы">Приходят в Telegram-бот подписчикам: вход, стоп и всё сопровождение сделки. Здесь — открытые позиции, история и статистика тех же сигналов.</Item>
-      </Panel>
-      <Panel title="Как ведётся сделка">
-        <Item t="Стоп">Указан в сигнале — за зоной реакции цены в ордер-блоке.</Item>
-        <Item t="Безубыток">На +5% от входа (до тейка 1) стоп переносится на вход.</Item>
-        <Item t="Шорты: тейк +8%">Вся позиция закрывается на +8% от входа.</Item>
-        <Item t="Лонги: трейлинг">Фиксированного тейка нет. С +15% от входа стоп держится на 10 п.п. ниже пика и только подтягивается (пик +24% защищает +14%).</Item>
-        <Item t="Оповещения">+5%, +8%, +10%, дальше каждые +5%; отдельно — безубыток, включение трейлинга и закрытие.</Item>
-        <Item t="Удержание">До 7 дней (ОБ 4h) или 21 дня (ОБ 1D), затем закрытие по цене.</Item>
-      </Panel>
+    <div className="panel relative p-4">
+      <span className="absolute right-4 top-3 font-mono text-3xl font-semibold text-primary/25">{n}</span>
+      <p className="pr-8 font-semibold">{title}</p>
+      <p className="mt-2 text-sm leading-relaxed text-foreground/75">{children}</p>
     </div>
   );
 }
 
-export default function Reference() {
-  if (!isOwner()) return <UserReference />;
+type Row = { k: string; long: ReactNode; short: ReactNode };
+
+function SideTable({ rows }: { rows: Row[] }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Panel title="Идея">
-        <Item t="Smart Money: возврат в ордер-блок и слом структуры">
-          Старший таймфрейм (4h или 1D) показывает, где крупный игрок оставил ордер-блок. Младший (30m или 1h) — момент, когда цена в этом блоке развернулась. Вход — по закрытию свечи, сломавшей структуру.
-        </Item>
-        <Item t="Индикатор">
-          Smart Money Concepts [LuxAlgo] с настройками по умолчанию, только по закрытым свечам: swing-структура 50, internal 5, ордер-блоки с фильтром ATR(200), снятие блока по High/Low.
-        </Item>
-        <Item t="8 сетапов">
-          {"{ОБ 4h, ОБ 1D} × {слом 30m, слом 1h} × {лонг, шорт}. Статистика по каждому отдельно — так видно, какие сочетания работают."}
-        </Item>
-      </Panel>
-      <Panel title="Правила лонга (шорт — зеркально)">
-        <Item t="1. Ордер-блок">Активный бычий блок на 4h или 1D, не снятый на последней закрытой свече старшего ТФ.</Item>
-        <Item t="2. Возврат в блок">Свеча младшего ТФ заходит в блок (low ≤ верха блока). Если цена ушла ниже низа блока, даже только тенью, блок сломан, и сигнала по нему не будет.</Item>
-        <Item t="3. Слом структуры (CHoCH)">Не позже 12 свечей после касания закрытие выше последнего внутреннего хая младшего ТФ — сигнал.</Item>
-        <Item t="Стоп">Под минимумом реакции в блоке минус 0,1 ATR младшего ТФ и ещё на 3% ниже (шорт — выше). Отказ «стоп дальше 20%» считается уже от этого стопа.</Item>
-        <Item t="Безубыток">На +5% от входа стоп переносится на вход, как в AltBullet. Лонги и шорты.</Item>
-        <Item t="Шорты: тейк +8% (с 05.11.2026)">Вся позиция шорта закрывается на +8% от входа — и новые шорты, и те, что были открыты 05.11 и ещё не дошли до +8%. Трейлинг у шортов не включается.</Item>
-        <Item t="Лонги: тейка нет (с 02.11.2026)">Тейков нет: прибыль ведут безубыток на +5% и трейлинг с +15%. Ближайший непробитый хай старшего ТФ по-прежнему считается и записывается (метрика «Тейк 1, %») только для анализа. Сделки, открытые раньше, ведутся со своим Тейком 1 (50%, стоп на вход).</Item>
-        <Item t="Лонги: трейлинг">С +15% от входа стоп держится на 10 п.п. ниже пика и только подтягивается (пик +24% защищает +14%).</Item>
-        <Item t="Оповещения как в AltBullet">+5%, +8%, +10%, дальше каждые +5%; отдельно — безубыток, включение трейлинга и закрытие (у старых сделок — ещё тейк 1). У шорта +8% и закрытие — одно сообщение. Сделки ведутся по 5-минутным свечам.</Item>
-        <Item t="Отказ">Стоп дальше 20% · уже открыта сделка этого сетапа по монете. Одна сделка на блок. Отказ «тейк 1 ближе 1R» снят вместе с тейками (02.11.2026).</Item>
-        <Item t="Фильтр входа (только лонги)">Лонг не открывается, если стоп ближе 7% от входа, ордер-блоку больше 300 ч, высота блока меньше 4% цены (с 02.11.2026) или ATR(14) 1H меньше 1,9% (с 10.11.2026, раньше 1,2%). Отказ пишется в сканер с причиной; берётся следующий сетап того же движения. Шорты не фильтруются.</Item>
-        <Item t="Удержание">До 7 дней (ОБ 4h) или 21 дня (ОБ 1D), затем закрытие по цене.</Item>
-      </Panel>
-      <Panel title="Данные" className="lg:col-span-2">
-        <Item t="Только CoinGlass">Фьючерсы BingX (USDT, без USDC), свечи BingX через CoinGlass. Нет свечи — нет сигнала, запасных источников нет. Решение о входе — только теханализ. С 10.11.2026 при входе пишутся только метрики по свечам (ATR, RSI, изменения цены, BTC); OI, доля лонгов, поток CoinGlass, VSA и объёмное исследование больше не собираются — в финальном исследовании эффекта не дали. Старые значения сохранены.</Item>
-        <Item t="Сигналы">Закрытый бот: сигналы получают только одобренные пользователи с действующей подпиской (регистрация в Dashboard). Все 8 сетапов публикуются; сделки «в тени» — только старые, до полного теста.</Item>
-        <Item t="Что видят пользователи">Открытые позиции, Обзор, Историю сигналов (только опубликованные) и этот справочник без настроек метода. Сканер, Метрики входа, Bot Health, Подписчики, метрики и траектории сделок — только владелец.</Item>
-      </Panel>
+    <div className="panel overflow-hidden">
+      <div className="grid grid-cols-2 border-b border-border text-xs md:grid-cols-[minmax(90px,0.7fr)_1fr_1fr]">
+        <div className="hidden p-3 md:block" />
+        <div className="p-3 md:border-l md:border-border font-mono font-semibold uppercase tracking-wider text-up">Лонг</div>
+        <div className="border-l border-border p-3 font-mono font-semibold uppercase tracking-wider text-down">Шорт</div>
+      </div>
+      {rows.map((r) => (
+        <div key={r.k} className="grid grid-cols-2 border-t border-border text-sm first:border-t-0 md:grid-cols-[minmax(90px,0.7fr)_1fr_1fr]">
+          <div className="col-span-2 px-3 pt-3 text-xs text-muted md:col-span-1 md:pb-3">{r.k}</div>
+          <div className="p-3 leading-relaxed md:border-l md:border-border">{r.long}</div>
+          <div className="border-l border-border p-3 leading-relaxed">{r.short}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const Note = ({ title, children }: { title: string; children: ReactNode }) => (
+  <div className="panel p-4">
+    <p className="font-semibold">{title}</p>
+    <p className="mt-2 text-sm leading-relaxed text-foreground/75">{children}</p>
+  </div>
+);
+
+export default function Reference() {
+  const owner = isOwner();
+  const rows: Row[] = [
+    {
+      k: "Стоп",
+      long: owner ? "Под минимумом реакции в блоке − 0,1 ATR младшего ТФ и ещё 3% ниже" : "Указан в сигнале — за зоной реакции цены в ордер-блоке",
+      short: owner ? "Над максимумом реакции в блоке + 0,1 ATR младшего ТФ и ещё 3% выше" : "Указан в сигнале — за зоной реакции цены в ордер-блоке",
+    },
+    { k: "Безубыток", long: "На +5% стоп переносится на вход", short: "На +5% стоп переносится на вход" },
+    {
+      k: "Фиксация",
+      long: <>Тейка нет. С <b>+15%</b> трейлинг: стоп на 10 п.п. ниже пика, только подтягивается (пик +24% защищает +14%)</>,
+      short: <>Вся позиция закрывается на <b>+8%</b></>,
+    },
+    { k: "Удержание", long: "До 7 дней (ОБ 4h) или 21 дня (ОБ 1D), затем закрытие по цене", short: "До 7 дней (ОБ 4h) или 21 дня (ОБ 1D), затем закрытие по цене" },
+    ...(owner ? [{
+      k: "Фильтр входа",
+      long: "Стоп не ближе 7%, ордер-блоку не больше 300 ч, высота блока от 4% цены, ATR(14) 1H от 1,9%",
+      short: "Нет",
+    }] : []),
+  ];
+
+  return (
+    <div className="mx-auto max-w-5xl space-y-8">
+      <section className="panel border-primary/30 p-5 md:p-6">
+        <p className="label">Идея</p>
+        <p className="mt-2 text-lg font-semibold md:text-xl">Smart Money: возврат в ордер-блок и слом структуры</p>
+        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-foreground/75">
+          Старший таймфрейм (4h или 1D) показывает, где крупный игрок оставил ордер-блок. Младший (30m или 1h) — момент, когда цена в этом блоке развернулась.
+          Вход — по закрытию свечи, сломавшей структуру. Лонги и шорты, фьючерсы BingX.
+        </p>
+      </section>
+
+      <Section title={owner ? "Как находится сигнал (лонг; шорт — зеркально)" : "Как находится сигнал"}>
+        <div className="grid gap-3 md:grid-cols-3">
+          <Step n={1} title="Ордер-блок">
+            {owner ? "Активный блок на 4h или 1D, не снятый на последней закрытой свече старшего ТФ." : "На старшем таймфрейме есть действующий ордер-блок."}
+          </Step>
+          <Step n={2} title="Возврат в блок">
+            {owner ? "Свеча младшего ТФ заходит в блок. Если цена ушла за дальний край блока, даже тенью, блок сломан — сигнала нет." : "Цена возвращается в этот блок и не пробивает его насквозь."}
+          </Step>
+          <Step n={3} title="Слом структуры (CHoCH)">
+            {owner ? "Не позже 12 свечей после касания закрытие за последним внутренним экстремумом младшего ТФ — сигнал." : "На младшем таймфрейме структура ломается в сторону сделки — это сигнал."}
+          </Step>
+        </div>
+      </Section>
+
+      <Section title="Как ведётся сделка">
+        <SideTable rows={rows} />
+        <p className="text-xs text-muted">Сделки ведутся по 5-минутным свечам.</p>
+      </Section>
+
+      <Section title="Оповещения">
+        <div className="grid gap-3 md:grid-cols-2">
+          <Note title="Ход сделки">+5%, +8%, +10%, дальше каждые +5%; отдельно — безубыток, включение трейлинга и закрытие. У шорта +8% и закрытие приходят одним сообщением.</Note>
+          <Note title="Отчёты">Каждый день в 22:00, по воскресеньям в 10:00 и 1-го числа в 11:00 (Дубай) — в Telegram-бот и канал.</Note>
+        </div>
+      </Section>
+
+      {owner && (
+        <Section title="Метод — только владелец">
+          <div className="grid gap-3 md:grid-cols-3">
+            <Note title="Индикатор">Smart Money Concepts [LuxAlgo], настройки по умолчанию, только закрытые свечи: swing-структура 50, internal 5, ордер-блоки с фильтром ATR(200), снятие блока по High/Low.</Note>
+            <Note title="8 сетапов">{"{ОБ 4h, ОБ 1D} × {слом 30m, слом 1h} × {лонг, шорт}. Статистика по каждому отдельно."}</Note>
+            <Note title="Отказ">Стоп дальше 20% · по монете уже открыта сделка в эту сторону · лонг не прошёл фильтр входа. Одна сделка на блок; причина пишется в «Отклонённые сигналы».</Note>
+          </div>
+        </Section>
+      )}
     </div>
   );
 }
