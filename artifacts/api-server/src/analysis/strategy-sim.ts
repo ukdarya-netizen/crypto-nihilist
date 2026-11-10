@@ -26,6 +26,13 @@ export type Mgmt = {
   take: number | null;
   partial: { at: number; share: number } | null;
   trail: { act: number; gap: number } | null;
+  /**
+   * Levels in R instead of % (owner 2026-11-10: fixed % takes against 7-20% stops give ≤ 1:1). 1R = the trade's
+   * own stop distance in %. When set, it replaces be / take / partial.at with R × risk%.
+   */
+  r?: { be?: number; take?: number; partial?: { at: number; share: number } } | null;
+  /** Whole position closed at a side-dependent % (Nihilist today: short +8%, long +10%). Replaces take. */
+  takeBySide?: { long: number; short: number } | null;
 };
 
 export type SimTrade = {
@@ -42,11 +49,15 @@ export type SimResult = {
 };
 
 const mk = (id: string, label: string, p: Partial<Omit<Mgmt, "id" | "label">>): Mgmt =>
-  ({ id, label, be: p.be ?? null, take: p.take ?? null, partial: p.partial ?? null, trail: p.trail ?? null });
+  ({ id, label, be: p.be ?? null, take: p.take ?? null, partial: p.partial ?? null, trail: p.trail ?? null, r: p.r ?? null, takeBySide: p.takeBySide ?? null });
 
 /** The variants compared. "source" is exactly how Nihilist itself manages its trades today. */
 export function variants(): Mgmt[] {
-  const out: Mgmt[] = [mk("source", "как ведёт Нигилист: Б.У. +5%, трейлинг от +15% (пик − 10 п.п.)", { be: 5, trail: { act: 15, gap: 10 } })];
+  // "source" = how Nihilist managed trades until 10.11 (kept for the parity check against live trades).
+  const out: Mgmt[] = [
+    mk("source", "как вёл Нигилист до 10.11: Б.У. +5%, трейлинг от +15% (пик − 10 п.п.)", { be: 5, trail: { act: 15, gap: 10 } }),
+    mk("now", "как ведёт Нигилист сейчас: Б.У. +5%, тейк шорт +8% / лонг +10%", { be: 5, takeBySide: { long: 10, short: 8 } }),
+  ];
   for (const be of [null, 5] as const) {
     const bu = be ? `Б.У. +${be}%, ` : "";
     for (const take of [5, 6, 7, 8, 10, 12, 15, 20, 30]) { // 6, 7, 12: owner 2026-11-10 (shorts' take)
@@ -65,12 +76,26 @@ export function variants(): Mgmt[] {
   out.push(mk("half8_trail15_10", "50% на +8%, Б.У., остаток трейлинг от +15% (пик − 10 п.п.)", { partial: { at: 8, share: 0.5 }, trail: { act: 15, gap: 10 } }));
   out.push(mk("half10_trail20_10", "50% на +10%, Б.У., остаток трейлинг от +20% (пик − 10 п.п.)", { partial: { at: 10, share: 0.5 }, trail: { act: 20, gap: 10 } }));
   out.push(mk("half5_take15", "50% на +5%, Б.У., остаток тейк +15%", { partial: { at: 5, share: 0.5 }, take: 15 }));
+  // In R (1R = the trade's own stop distance), owner 2026-11-10.
+  for (const k of [1, 1.5, 2, 2.5, 3]) out.push(mk(`take${k}R`, `тейк ${k}R`, { r: { take: k } }));
+  for (const k of [2, 3]) out.push(mk(`be1R_take${k}R`, `Б.У. на 1R, тейк ${k}R`, { r: { be: 1, take: k } }));
+  out.push(mk("half1R_take2R", "50% на 1R, Б.У., остаток 2R", { r: { partial: { at: 1, share: 0.5 }, take: 2 } }));
+  out.push(mk("half1.5R_take3R", "50% на 1,5R, Б.У., остаток 3R (как BTC)", { r: { partial: { at: 1.5, share: 0.5 }, take: 3 } }));
+  out.push(mk("half2R_take4R", "50% на 2R, Б.У., остаток 4R", { r: { partial: { at: 2, share: 0.5 }, take: 4 } }));
   return out;
 }
 
 /** Follows one trade on closed candles (any span) with one variant. */
-export function simulate(t: SimTrade, candles: Candle[], spanMs: number, m: Mgmt): SimResult {
+export function simulate(t: SimTrade, candles: Candle[], spanMs: number, mIn: Mgmt): SimResult {
   const dir = t.side === "long" ? 1 : -1;
+  const riskPct = (Math.abs(t.entry - t.stop) / t.entry) * 100;
+  const base: Mgmt = mIn.takeBySide ? { ...mIn, take: mIn.takeBySide[t.side] } : mIn;
+  const m: Mgmt = base.r ? {
+    ...base,
+    be: base.r.be != null ? base.r.be * riskPct : null,
+    take: base.r.take != null ? base.r.take * riskPct : null,
+    partial: base.r.partial ? { at: base.r.partial.at * riskPct, share: base.r.partial.share } : null,
+  } : base;
   const pctOf = (price: number) => ((price - t.entry) / t.entry) * 100 * dir;
   const priceAt = (pct: number) => t.entry * (1 + dir * pct / 100);
   const tighter = (a: number, b: number) => (dir === 1 ? Math.max(a, b) : Math.min(a, b));

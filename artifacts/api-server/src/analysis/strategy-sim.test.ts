@@ -61,3 +61,19 @@ test("stats: buckets, halves, drawdown", () => {
   assert.equal(s.half1.n, 2); assert.equal(s.half2.n, 2); assert.equal(s.pf, 25 / 12 > 0 ? Math.round((25 / 12) * 1000) / 1000 : null);
   assert.deepEqual(s.buckets.slice(0, 2), [["< −10%", 0], ["−10…−5%", 1]]); assert.equal(s.perDay, 3.25);
 });
+
+test("R variants: levels are multiples of the trade's own stop distance; 'now' takes +8% short / +10% long", () => {
+  // Long 100 → stop 90 (1R = 10%): price runs to +25% in one step.
+  const cs: Candle[] = [{ t: 0, o: 100, h: 100, l: 100, c: 100 }, { t: H, o: 100, h: 125, l: 99, c: 124 }];
+  const t = { id: "r", side: "long" as const, entry: 100, stop: 90, openedAt: H, maxHoldMs: 7 * 86_400_000 };
+  const take2R = simulate(t, cs, H, byId("take2R"));
+  assert.equal(take2R.reason, "take");
+  assert.ok(Math.abs(take2R.pnlPct - (20 - 0.1)) < 1e-6);
+  const half = simulate(t, cs, H, byId("half1.5R_take3R")); // 50% at 15%, rest needs 30% — still open
+  assert.equal(half.closed, false);
+  const now = simulate(t, cs, H, byId("now"));
+  assert.equal(now.reason, "take");
+  assert.ok(Math.abs(now.pnlPct - (10 - 0.1)) < 1e-6);
+  const short = simulate({ ...t, side: "short", stop: 110 }, [{ t: 0, o: 100, h: 100, l: 100, c: 100 }, { t: H, o: 100, h: 101, l: 85, c: 86 }], H, byId("now"));
+  assert.ok(Math.abs(short.pnlPct - (8 - 0.1)) < 1e-6);
+});
