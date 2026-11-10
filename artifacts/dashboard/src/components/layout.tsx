@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Activity, Ban, BookOpen, CandlestickChart, FlaskConical, HeartPulse, History, LogOut, MoreHorizontal, ScanSearch, Target, Users, X } from "lucide-react";
+import { LanguageToggle } from "./language-toggle";
 import { BrandLockup, BrandMark, SLOGAN, Wordmark } from "./brand";
 import { STAGE_LABEL, currentSession, dur, get, isOwner, post, saveSession, usePoll, type Status } from "../lib/api";
 
@@ -233,7 +234,10 @@ export function Layout({ route, children }: { route: Route; children: ReactNode 
               <h1 className="truncate text-base font-semibold md:text-xl"><span className="slash relative z-0">{current.label}</span></h1>
             </div>
           </div>
-          <div className="hidden items-center gap-5 font-mono text-xs text-muted md:flex">{isOwner() && <ScanStrip />}<Clock /></div>
+          <div className="flex items-center gap-5 font-mono text-xs text-muted">
+            <span className="hidden items-center gap-5 md:flex">{isOwner() && <ScanStrip />}<Clock /></span>
+            <LanguageToggle />
+          </div>
         </header>
         {isOwner() && <div className="border-b border-border px-4 py-1.5 md:hidden"><ScanStrip compact /></div>}
         <div className="flex-1 overflow-auto p-4 pb-24 md:p-8">{children}</div>
