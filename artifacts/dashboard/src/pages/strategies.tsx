@@ -7,7 +7,7 @@
 import { Fragment, useState } from "react";
 import { Copy, Download, Loader2, Play } from "lucide-react";
 import { get, post, usePoll } from "../lib/api";
-import { SmcStudyPanel } from "../components/smc-study";
+import { BtcStudyPanel, SmcStudyPanel } from "../components/smc-study";
 
 type Stats = {
   n: number; open: number; winPct: number; stopPct: number; flatPct: number; takePct: number; trailPct: number; timeoutPct: number;
@@ -92,6 +92,7 @@ export default function Strategies() {
 
   return (
     <div className="space-y-4">
+      <BtcStudyPanel />
       <SmcStudyPanel />
       <div className="panel space-y-3 p-4 text-sm">
         <p>

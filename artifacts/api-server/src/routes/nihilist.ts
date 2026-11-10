@@ -13,6 +13,7 @@ import { book } from "../market/candleStore";
 import { INTERVAL_MS, type Interval } from "../engine/candles";
 import { HISTORY_DAYS, loadReport, runStrategyReport, strategyReportRunning } from "../analysis/strategy-report";
 import { SMC_STUDY_CSV, loadSmcStudy, runSmcStudy, smcStudyRunning, smcStudyText } from "../analysis/smc-study";
+import { BTC_STUDY_CSV, btcStudyRunning, btcStudyText, loadBtcStudy, runBtcStudy } from "../analysis/btc-study";
 import { createReadStream, existsSync } from "node:fs";
 
 const router: IRouter = Router();
@@ -264,7 +265,7 @@ router.get("/nh/smc-study", async (req, res) => {
 });
 router.post("/nh/smc-study/run", (req, res) => {
   if (!isOwnerReq(req)) { res.status(403).json({ error: "Только владелец" }); return; }
-  if (smcStudyRunning() || strategyReportRunning()) { res.status(409).json({ error: "already_running" }); return; }
+  if (smcStudyRunning() || strategyReportRunning() || btcStudyRunning()) { res.status(409).json({ error: "already_running" }); return; }
   void runSmcStudy();
   res.status(202).json({ started: true });
 });
@@ -275,8 +276,28 @@ router.get("/nh/smc-study/csv", (req, res) => {
   res.setHeader("Content-Disposition", 'attachment; filename="nihilist-smc-study.csv"');
   createReadStream(SMC_STUDY_CSV).pipe(res);
 });
+// BTC study (owner 2026-11-10): BTC's own stop and exit on its long history. Owner only; read-only.
+router.get("/nh/btc-study", async (req, res) => {
+  if (!isOwnerReq(req)) { res.status(403).json({ error: "Только владелец" }); return; }
+  res.setHeader("Cache-Control", "no-store");
+  const report = await loadBtcStudy();
+  res.json({ running: btcStudyRunning(), report, text: report?.status === "done" ? btcStudyText(report) : null });
+});
+router.post("/nh/btc-study/run", (req, res) => {
+  if (!isOwnerReq(req)) { res.status(403).json({ error: "Только владелец" }); return; }
+  if (btcStudyRunning() || smcStudyRunning() || strategyReportRunning()) { res.status(409).json({ error: "already_running" }); return; }
+  void runBtcStudy();
+  res.status(202).json({ started: true });
+});
+router.get("/nh/btc-study/csv", (req, res) => {
+  if (!isOwnerReq(req)) { res.status(403).json({ error: "Только владелец" }); return; }
+  if (!existsSync(BTC_STUDY_CSV)) { res.status(404).json({ error: "not_ready" }); return; }
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", 'attachment; filename="nihilist-btc-study.csv"');
+  createReadStream(BTC_STUDY_CSV).pipe(res);
+});
 router.post("/nh/strategy-report/run", (req, res) => {
-  if (strategyReportRunning() || smcStudyRunning()) { res.status(409).json({ error: "already_running" }); return; }
+  if (strategyReportRunning() || smcStudyRunning() || btcStudyRunning()) { res.status(409).json({ error: "already_running" }); return; }
   void runStrategyReport({ history: req.query.history !== "0" });
   res.status(202).json({ started: true });
 });
