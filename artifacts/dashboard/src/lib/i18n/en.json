@@ -1,4 +1,6 @@
 {
+ "Трейлингом: с": "By trailing stop: from",
+ "стоп идёт на 10 п.п. ниже пика и только подтягивается (пик +24% → зафиксировано +14%). Фиксированного тейка нет": "the stop follows 10 pp below the peak and only moves up (a +24% peak → +14% locked in). No fixed take",
  " Стоп — 0,3% за структурным.": " Stop — 0.3% beyond the structural one.",
  "% / день": "% / day",
  "(без данных: {0})": "(no data: {0})",
