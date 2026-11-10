@@ -81,6 +81,8 @@ export async function cgRequest(
 type CgAttempt = CgResult & { rateLimited?: boolean };
 
 async function cgRequestOnce(path: string, params: Record<string, string | number>, health = true): Promise<CgAttempt> {
+  // Owner 2026-11-09: dev is not a real environment — no CoinGlass requests from it (the key is shared with CAB).
+  if (process.env.NODE_ENV === "development") return { ok: false, error: "CoinGlass disabled in development" };
   const all = keys();
   if (all.length === 0) {
     recordFailure("coinglass", "NIHILIST_COINGLASS_API_KEY не задан");

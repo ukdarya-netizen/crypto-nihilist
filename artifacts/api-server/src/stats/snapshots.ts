@@ -16,7 +16,7 @@ import {
 } from "../engine/metrics";
 import { derivativeMetrics } from "../market/derivatives";
 import { vsaMetrics } from "../market/vsa";
-import { FLOW_VERSION, entryFlowMetrics, fetchFlowSeries, pointFlowMetrics, postEntryMetrics, type FlowSignal } from "../market/flow";
+import { FLOW_VERSION, entryFlowMetrics, fetchFlowSeries, postEntryMetrics, type FlowSignal } from "../market/flow";
 
 import { postBreakevenTrajectoryPoints, trajectoryPoints } from "../engine/trajectory";
 export { trajectoryPoints };
@@ -453,9 +453,10 @@ export async function backfillSnapshots(limit = 300): Promise<{ entries: number;
 }
 
 /**
- * Flow metrics (market/flow.ts) for signals that miss them: the entry
- * snapshot, the post-entry marks (+1h/+2h/+4h) and every trajectory point
- * without them. One fetch per signal covers all its moments. Newest first.
+ * Flow metrics (market/flow.ts) for signals that miss them: the entry snapshot and the post-entry marks
+ * (+1h/+2h/+4h). One fetch per signal covers both. Newest first.
+ * Owner 2026-11-10: trajectory points no longer get CoinGlass flow (OI / taker / CVD on 5 timeframes were
+ * fetched again for every new point and showed no effect in the final study); their price path stays.
  */
 export async function backfillFlow(limit: number, now = Date.now()): Promise<number> {
   const { rows } = await pool.query<SignalRow & { need_entry: boolean; need_post: boolean }>(
@@ -465,8 +466,7 @@ export async function backfillFlow(limit: number, now = Date.now()): Promise<num
      FROM nh_signal_snapshots n JOIN nh_signals s ON s.id = n.signal_id
      WHERE n.status = 'ready' AND (
        NOT (coalesce(n.metrics, '{}'::jsonb) ? 'flow_v')
-       OR (s.opened_at < now() - interval '4 hours' AND NOT (coalesce(n.metrics, '{}'::jsonb) ? 'flow_post_v'))
-       OR EXISTS (SELECT 1 FROM nh_signal_trajectory t WHERE t.signal_id = s.id AND NOT (coalesce(t.metrics, '{}'::jsonb) ? 'flow_v')))
+       OR (s.opened_at < now() - interval '4 hours' AND NOT (coalesce(n.metrics, '{}'::jsonb) ? 'flow_post_v')))
      ORDER BY s.id DESC LIMIT $1`, [limit],
   );
   let done = 0;
@@ -486,13 +486,6 @@ export async function backfillFlow(limit: number, now = Date.now()): Promise<num
     if (row.need_post) {
       await pool.query(`UPDATE nh_signal_snapshots SET metrics = coalesce(metrics, '{}'::jsonb) || $2::jsonb WHERE signal_id = $1`,
         [row.id, JSON.stringify({ ...(empty ? {} : postEntryMetrics(sig, s, now)), flow_post_v: FLOW_VERSION })]);
-    }
-    const pts = await pool.query<{ label: string; at: Date }>(
-      "SELECT label, at FROM nh_signal_trajectory WHERE signal_id = $1 AND NOT (coalesce(metrics, '{}'::jsonb) ? 'flow_v')", [row.id]);
-    for (const p of pts.rows) {
-      const m = empty ? { flow_v: FLOW_VERSION, flow_empty: 1 } : pointFlowMetrics(sig, s, new Date(p.at).getTime());
-      await pool.query(`UPDATE nh_signal_trajectory SET metrics = coalesce(metrics, '{}'::jsonb) || $3::jsonb WHERE signal_id = $1 AND label = $2`,
-        [row.id, p.label, JSON.stringify(m)]);
     }
     done += 1;
   });
@@ -553,7 +546,7 @@ export async function backfillTrajectory(limit: number, now = Date.now()): Promi
     const metrics = {
       ...marketMetrics(coin, at),
       ...(b ? { btc_chg1h: b.btc_chg1h, btc_chg24h: b.btc_chg24h } : {}),
-      ...(await derivativeMetrics(row.symbol, at)),
+      // Owner 2026-11-10: no CoinGlass OI / long-short per trajectory point (no effect in the final study).
     };
     await pool.query(
       `INSERT INTO nh_signal_trajectory (signal_id, label, at, elapsed_ms, price, pct_from_entry, metrics, reconstructed)
