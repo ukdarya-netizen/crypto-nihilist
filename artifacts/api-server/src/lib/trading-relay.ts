@@ -70,6 +70,8 @@ export function ensureRelayTable(): Promise<void> {
 export type RelaySignal = {
   id: number; symbol: string; side: "long" | "short"; setup: string; htf: "4h" | "1d";
   entry: number; stop: number; signalAt: number;
+  /** BTC: [TP 1, TP 2] at 1.5R and 3R. */
+  btcTargets?: [number, number] | null;
 };
 
 export function signalPayload(s: RelaySignal): Record<string, unknown> {
@@ -85,7 +87,14 @@ export function signalPayload(s: RelaySignal): Record<string, unknown> {
     entryPrice: decimal(s.entry),
     stopLoss: decimal(s.stop),
     // How Nihilist manages the trade; every change also arrives as a command.
-    exitRules: {
+    exitRules: s.btcTargets ? {
+      // BTC (owner 2026-11-10, as BTC Bullet): TP 1 at 1.5R — 50% and stop to entry; TP 2 at 3R — the rest.
+      noFixedTakeProfit: false,
+      takeProfits: [{ price: decimal(s.btcTargets[0]), closeFractionOfInitial: 0.5 }, { price: decimal(s.btcTargets[1]), closeFractionOfInitial: 0.5 }],
+      breakevenAfterFirstTake: true,
+      maxHoldHours: MAX_HOLD_MS[s.htf] / 3_600_000,
+      stopsFollowSourceCommands: true,
+    } : {
       noFixedTakeProfit: true,
       breakevenAtPct: BREAKEVEN_AT_PCT,
       trailingActivationPct: TRAILING_ACTIVATION_PCT,
@@ -111,7 +120,9 @@ export async function enqueueSignal(s: RelaySignal): Promise<void> {
 
 export type CommandInput =
   | { type: "move_stop"; reason: "breakeven" | "trailing"; stopPrice: number; at: number }
-  | { type: "close"; reason: "stop_loss" | "breakeven_stop" | "trailing_stop" | "profit" | "expired"; exitPrice: number | null; at: number };
+  | { type: "close"; reason: "stop_loss" | "breakeven_stop" | "trailing_stop" | "profit" | "expired"; exitPrice: number | null; at: number;
+      /** Partial close, share of the initial position (TP 1: 0.5). */
+      fraction?: number };
 
 /** Queues a command for a signal that was sent to the bot (no signal sent = no command). */
 export async function enqueueCommand(signalId: number, symbol: string, c: CommandInput): Promise<void> {
@@ -128,6 +139,7 @@ export async function enqueueCommand(signalId: number, symbol: string, c: Comman
     commandId, sourceSignalId: sourceSignalId(signalId), symbol: wireSymbol(symbol), type: c.type, sequence,
     occurredAt: new Date(c.at).toISOString(), reason: c.reason,
     ...(c.type === "move_stop" ? { stopPrice: decimal(c.stopPrice) } : {}),
+    ...(c.type === "close" && c.fraction !== undefined && c.fraction < 1 ? { partial: true, closeFractionOfInitial: c.fraction } : {}),
   };
   await pool.query(
     `INSERT INTO nh_trading_outbox (kind, signal_id, message_id, payload) VALUES ('command', $1, $2, $3)

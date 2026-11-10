@@ -101,6 +101,12 @@ export default function Reference() {
       <Section title="Как ведётся сделка">
         <SideTable rows={rows} />
         <p className="text-xs text-muted">Сделки ведутся по 5-минутным свечам.</p>
+        <div className="panel border-primary/30 p-4 text-sm leading-relaxed">
+          <p className="font-semibold">BTC — свои правила</p>
+          <p className="mt-2 text-foreground/75">
+            BTC движется в разы меньше альтов, поэтому проценты альтов к нему не применяются.{owner ? " Стоп — 0,3% за структурным." : ""} Тейк 1 — 1,5R: закрывается 50%, стоп переносится на вход. Тейк 2 — 3R: закрывается остаток. Без безубытка на +5%, без тейка +8% и без трейлинга.
+          </p>
+        </div>
       </Section>
 
       <Section title="Оповещения">

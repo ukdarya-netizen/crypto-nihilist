@@ -28,7 +28,7 @@ async function enqueue(): Promise<QueueRow[]> {
   const now = Date.now();
   const { rows } = await pool.query<QueueRow>(
     `SELECT e.id AS event_id, e.kind, e.price, e.detail, e.created_at, s.live AS signal_live,
-            s.symbol, s.setup, s.htf, s.ltf, s.side, s.entry, s.stop, s.tp1, s.block_top, s.block_bottom,
+            s.symbol, s.setup, s.htf, s.ltf, s.side, s.entry, s.stop, s.tp1, s.tp2, s.block_top, s.block_bottom,
             s.block_scope, s.opened_at, s.targets_source,
             (
               -- One message per candle: a progress alert in the same candle as

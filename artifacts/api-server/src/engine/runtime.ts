@@ -21,7 +21,7 @@ import { removeDuplicateSignals } from "../stats/dedupe";
 import { evaluateSetups, type HtfInterval, type SetupCandidate, type SetupSignal } from "./setups";
 import { trackRejections } from "./rejections";
 import { enqueueSignal, startTradingRelay } from "../lib/trading-relay";
-import { COMBOS, MAX_HOLD_MS, NO_TP_TARGETS_SOURCE, TAKE_PROFIT_ENABLED, takeAtPctFor } from "./config";
+import { BTC_STOP_EXTRA_PCT, BTC_TARGETS_R, BTC_TARGETS_SOURCE, COMBOS, MAX_HOLD_MS, NO_TP_TARGETS_SOURCE, TAKE_PROFIT_ENABLED, btcTargets, isBtc, takeAtPctFor } from "./config";
 import { openTrade } from "./trade";
 import { BREAKEVEN_AT_PCT, LIVE_SETUPS, OB_MIN_DISPLACEMENT_ATR, entryFilter } from "./config";
 import { chochBarMetrics } from "./choch-bar";
@@ -184,12 +184,20 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
       { ...signalDetails(s), entryFilter: filter, chochBar });
     return "filtered";
   }
-  const trade = openTrade({
-    side: s.side, entry: s.entry, stop: s.stop, tp1: s.tp1,
-    openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf], breakevenAtPct: BREAKEVEN_AT_PCT,
-    takeProfit: TAKE_PROFIT_ENABLED, takeAtPct: takeAtPctFor(s.side),
-  });
-  const targetsSource = TAKE_PROFIT_ENABLED ? s.targetsSource : NO_TP_TARGETS_SOURCE;
+  // BTC (owner 2026-11-10): BTC Bullet's management — TP 1 at 1.5R (50%, stop to entry), TP 2 at 3R.
+  const btc = isBtc(symbol);
+  const [btcTp1, btcTp2] = btcTargets(s.side, s.entry, s.stop);
+  const trade = btc
+    ? openTrade({
+      side: s.side, entry: s.entry, stop: s.stop, tp1: btcTp1, openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf],
+      breakevenAtPct: null, takeProfit: true, takeAtPct: null, takePrice: btcTp2, trailing: false,
+    })
+    : openTrade({
+      side: s.side, entry: s.entry, stop: s.stop, tp1: s.tp1,
+      openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf], breakevenAtPct: BREAKEVEN_AT_PCT,
+      takeProfit: TAKE_PROFIT_ENABLED, takeAtPct: takeAtPctFor(s.side),
+    });
+  const targetsSource = btc ? BTC_TARGETS_SOURCE : TAKE_PROFIT_ENABLED ? s.targetsSource : NO_TP_TARGETS_SOURCE;
   const live = LIVE_SETUPS.has(s.setup);
   const inserted = await pool.query<{ id: number }>(
     `INSERT INTO nh_signals (symbol, setup, htf, ltf, side, block_id, block_top, block_bottom, block_scope,
@@ -199,7 +207,7 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
      ON CONFLICT DO NOTHING RETURNING id`,
     [
       symbol, s.setup, s.htf, s.ltf, s.side, s.block.id, s.block.top, s.block.bottom, s.block.scope,
-      s.barTime, s.entry, s.stop, s.tp1, s.tp2, s.riskPct, s.rr1, targetsSource,
+      s.barTime, s.entry, s.stop, btc ? btcTp1 : s.tp1, btc ? btcTp2 : s.tp2, s.riskPct, btc ? BTC_TARGETS_R[0] : s.rr1, targetsSource,
       new Date(trade.openedAt), new Date(trade.expiresAt), JSON.stringify({ ...signalDetails(s), confluenceSetups: confluence, entryFilter: filter, chochBar }),
       live, s.stop,
     ],
@@ -209,7 +217,7 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
   if (id === undefined) return "conflict";
   // Trading bot (owner 2026-11-02): live signals only; never blocks the signal.
   if (live) {
-    void enqueueSignal({ id, symbol, side: s.side, setup: s.setup, htf: s.htf, entry: s.entry, stop: s.stop, signalAt: s.signalAt })
+    void enqueueSignal({ id, symbol, side: s.side, setup: s.setup, htf: s.htf, entry: s.entry, stop: s.stop, signalAt: s.signalAt, btcTargets: btc ? [btcTp1, btcTp2] : null })
       .catch((err) => logger.warn({ err, id }, "nihilist: trading signal not queued"));
   }
   await captureSnapshot(id, {
@@ -262,7 +270,7 @@ export async function evaluateSymbol(symbol: string, now = Date.now()): Promise<
     const { signals: found, rejections, candidates } = evaluateSetups({
       htf: combo.htf, ltf: combo.ltf,
       htfCandles: b[combo.htf], ltfCandles: ltfSeries.slice(-LTF_WINDOW),
-      options: { minObDisplacementAtr: OB_MIN_DISPLACEMENT_ATR },
+      options: { minObDisplacementAtr: OB_MIN_DISPLACEMENT_ATR, ...(isBtc(symbol) ? { stopExtraPct: BTC_STOP_EXTRA_PCT } : {}) },
     });
     candidateMap.set(key, candidates.map((c) => ({ ...c, symbol, htf: combo.htf, ltf: combo.ltf, updatedAt: now })));
     for (const r of rejections) {

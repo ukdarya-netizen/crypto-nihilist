@@ -183,8 +183,18 @@ export const hasTp1 = (s: { targets_source?: string | null }) => s.targets_sourc
  */
 export const SHORT_TAKE_PCT = 8;
 export const TRAIL_FROM_PCT = 15;
-export const exitPlan = (s: { side: "long" | "short" }) =>
-  s.side === "short"
+/** BTC (owner 2026-11-10, as BTC Bullet): TP 1 at 1.5R — 50%, stop to entry; TP 2 at 3R — the rest. */
+export const BTC_TARGETS_SOURCE = "btc_r";
+type PlanInput = { side: "long" | "short"; targets_source?: string | null; entry?: number; tp1?: number; tp2?: number; tp1_hit?: boolean };
+export const exitPlan = (s: PlanInput) =>
+  s.targets_source === BTC_TARGETS_SOURCE && s.entry
+    ? (() => {
+      const second = Boolean(s.tp1_hit);
+      const price = Number(second ? s.tp2 : s.tp1);
+      const at = ((price - s.entry) / s.entry) * 100 * (s.side === "long" ? 1 : -1);
+      return { at, kind: "take" as const, label: second ? "TP 2 · 3R" : "TP 1 · 1.5R", text: "BTC: TP 1 at 1.5R — 50% closed, stop to entry; TP 2 at 3R — the rest" };
+    })()
+    : s.side === "short"
     ? { at: SHORT_TAKE_PCT, kind: "take" as const, label: `тейк +${SHORT_TAKE_PCT}%`, text: `вся позиция закрывается на +${SHORT_TAKE_PCT}%` }
     : { at: TRAIL_FROM_PCT, kind: "trail" as const, label: `трейл +${TRAIL_FROM_PCT}%`, text: `тейка нет, трейлинг с +${TRAIL_FROM_PCT}% (пик − 10 п.п.)` };
 
