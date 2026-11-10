@@ -1,8 +1,15 @@
+/** A new signal older than this is not sent: the entry has passed (unchanged). */
 export const MAX_AUTO_DELIVERY_AGE_MS = 15 * 60 * 1000;
+/**
+ * Owner 2026-11-10: position updates and closes are still sent up to 6 h late — before, a late tracker pass
+ * (CoinGlass queue, restart) dropped them for good, and subscribers never learned that a trade closed.
+ */
+export const MAX_UPDATE_DELIVERY_AGE_MS = 6 * 60 * 60 * 1000;
+export const maxDeliveryAgeMs = (kind: string | null | undefined) => (!kind || kind === "opened" ? MAX_AUTO_DELIVERY_AGE_MS : MAX_UPDATE_DELIVERY_AGE_MS);
 
 export type DeliveryRecipient = { chat: string; isChannel: boolean };
 
-type EventForDelivery = { signalLive: boolean; createdAt: Date | number | string };
+type EventForDelivery = { signalLive: boolean; createdAt: Date | number | string; kind?: string | null };
 
 export type DeliveryPlan =
   | { action: "mark_suppressed" }
@@ -29,7 +36,7 @@ export function planEventDelivery(
       ? Date.parse(event.createdAt)
       : event.createdAt;
   const age = now - createdAt;
-  if (!Number.isFinite(createdAt) || age < 0 || age > MAX_AUTO_DELIVERY_AGE_MS) {
+  if (!Number.isFinite(createdAt) || age < 0 || age > maxDeliveryAgeMs(event.kind)) {
     return { action: "skip_stale" };
   }
 
