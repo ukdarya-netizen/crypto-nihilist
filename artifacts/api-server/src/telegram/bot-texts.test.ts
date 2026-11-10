@@ -6,9 +6,8 @@ import {
 import { COMMANDS, welcomeKeyboard } from "./bot";
 import { formatPeriodReport } from "./report-format";
 
-test("language follows the Telegram app: ru/uk/be/kk → Russian, anything else → English", () => {
-  for (const c of ["ru", "ru-RU", "uk", "be", "kk"]) assert.equal(langOf(c), "ru");
-  for (const c of ["en", "de", "es", "tr", undefined, null, ""]) assert.equal(langOf(c), "en");
+test("the bot is English for everyone, also for Russian-language Telegram apps", () => {
+  for (const c of ["ru", "ru-RU", "uk", "en", "de", undefined, null, ""]) assert.equal(langOf(c), "en");
 });
 
 test("bot profile fits Telegram limits in both languages; every menu command has both texts", () => {

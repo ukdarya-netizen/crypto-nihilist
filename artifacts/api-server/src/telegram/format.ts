@@ -1,6 +1,7 @@
 /**
  * Telegram texts in the AltBullet layout (POSITION UPDATE / POSITION CLOSED,
  * ticker and setup hashtags). Plain text only: no HTML, no Markdown.
+ * English only (owner 2026-11-10: the channel and the bot are fully English).
  */
 import { BREAKEVEN_AT_PCT, NO_TP_TARGETS_SOURCE, SHORT_TAKE_AT_PCT } from "../engine/config";
 
@@ -21,7 +22,7 @@ export const fmtPct = (v: number) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.
 
 const coin = (s: string) => s.replace(/-USDT$/, "");
 const tag = (s: SignalForText) => `#${coin(s.symbol).replace(/[^A-Za-z0-9]/g, "")} #nh_${s.setup}`;
-const sideRu = (side: string) => (side === "long" ? "ЛОНГ" : "ШОРТ");
+const sideEn = (side: string) => (side === "long" ? "LONG" : "SHORT");
 const tf = (v: string) => (v === "1d" ? "1D" : v);
 const dir = (s: SignalForText) => (s.side === "long" ? 1 : -1);
 const pctFrom = (s: SignalForText, price: number) => ((price - s.entry) / s.entry) * 100 * dir(s);
@@ -30,17 +31,17 @@ export function duration(from: Date | string, to: Date | string): string {
   const ms = Math.max(0, new Date(to).getTime() - new Date(from).getTime());
   const h = Math.floor(ms / 3_600_000);
   const d = Math.floor(h / 24);
-  return d ? `${d}д ${h % 24}ч` : h ? `${h}ч` : `${Math.max(1, Math.round(ms / 60_000))}м`;
+  return d ? `${d}d ${h % 24}h` : h ? `${h}h` : `${Math.max(1, Math.round(ms / 60_000))}m`;
 }
 
 function stopLine(s: SignalForText, stop: number, trailing: boolean): string {
   const p = pctFrom(s, stop);
-  const label = trailing ? "Трейлинг-стоп" : Math.abs(p) < 1e-9 ? "Стоп в безубытке" : "Стоп";
-  return `🛡 ${label}: ${fmtP(stop)} (${fmtPct(p)} от входа)`;
+  const label = trailing ? "Trailing stop" : Math.abs(p) < 1e-9 ? "Stop at break-even" : "Stop";
+  return `🛡 ${label}: ${fmtP(stop)} (${fmtPct(p)} from entry)`;
 }
 
 export function formatEvent(s: SignalForText, e: EventForText): string {
-  const sym = `${coin(s.symbol)} ${sideRu(s.side)}`;
+  const sym = `${coin(s.symbol)} ${sideEn(s.side)}`;
   const d = e.detail;
   const price = e.price ?? s.entry;
   const priceLine = `${fmtP(s.entry)} → ${fmtP(price)} (${fmtPct(pctFrom(s, price))}) | ${duration(s.opened_at, e.created_at)}`;
@@ -53,26 +54,26 @@ export function formatEvent(s: SignalForText, e: EventForText): string {
     const noTp = s.targets_source === NO_TP_TARGETS_SOURCE;
     return [
       `🟣 NIHILYST · ${sym}`,
-      `Ордер-блок ${tf(s.htf)} → слом структуры ${tf(s.ltf)}`,
+      `Order block ${tf(s.htf)} → change of character ${tf(s.ltf)}`,
       ``,
-      `Вход: ${fmtP(s.entry)}`,
-      `Стоп: ${fmtP(s.stop)} (${fmtPct(stopPct)})`,
-      noTp ? null : `Тейк 1: ${fmtP(s.tp1)} (${fmtPct(tp1Pct)}) — фиксируем 50%, стоп в безубыток`,
-      BREAKEVEN_AT_PCT !== null ? `Безубыток: на +${BREAKEVEN_AT_PCT}% стоп переносится на вход` : null,
-      s.side === "short" && SHORT_TAKE_AT_PCT !== null ? `Тейк: +${SHORT_TAKE_AT_PCT}% — закрываем всю позицию` : `Трейлинг: с +15%, стоп на 10 п.п. ниже пика`,
+      `Entry: ${fmtP(s.entry)}`,
+      `Stop: ${fmtP(s.stop)} (${fmtPct(stopPct)})`,
+      noTp ? null : `TP 1: ${fmtP(s.tp1)} (${fmtPct(tp1Pct)}) — close 50%, stop to break-even`,
+      BREAKEVEN_AT_PCT !== null ? `Break-even: at +${BREAKEVEN_AT_PCT}% the stop moves to entry` : null,
+      s.side === "short" && SHORT_TAKE_AT_PCT !== null ? `Take profit: +${SHORT_TAKE_AT_PCT}% — the whole position is closed` : `Trailing: from +15%, stop 10 pp below the peak`,
       ``,
-      `Ордер-блок: ${fmtP(s.block_bottom)} – ${fmtP(s.block_top)}`,
-      s.targets_source === "r_multiple" ? `Выше нет непробитых уровней ${tf(s.htf)}: тейк 1 = 2R` : null,
+      `Order block: ${fmtP(s.block_bottom)} – ${fmtP(s.block_top)}`,
+      s.targets_source === "r_multiple" ? `No unbroken ${tf(s.htf)} levels beyond: TP 1 = 2R` : null,
       ``,
       tag(s),
     ].filter((line) => line !== null).join("\n");
   }
   if (e.kind === "closed") {
     const reason = String(d.reason);
-    const title = reason === "trailing" ? "🟢 PROFIT (трейлинг)"
-      : reason === "take" ? "🟢 PROFIT (тейк +8%, закрыта вся позиция)"
-      : reason === "breakeven" ? (d.tp1Hit ? "🔵 БЕЗУБЫТОК после тейка 1" : "🔵 БЕЗУБЫТОК")
-        : reason === "timeout" ? "⏱ Закрыто по времени удержания"
+    const title = reason === "trailing" ? "🟢 PROFIT (trailing stop)"
+      : reason === "take" ? `🟢 PROFIT (take +${SHORT_TAKE_AT_PCT ?? 8}%, whole position closed)`
+      : reason === "breakeven" ? (d.tp1Hit ? "🔵 BREAK-EVEN after TP 1" : "🔵 BREAK-EVEN")
+        : reason === "timeout" ? "⏱ Closed by holding time"
           : "🔴 STOP LOSS";
     const total = Number(d.pnlPct);
     return [
@@ -80,9 +81,9 @@ export function formatEvent(s: SignalForText, e: EventForText): string {
       title,
       priceLine,
       ``,
-      `📈 Пик позиции: ${fmtPct(Number(d.peakPct ?? 0))}`,
-      d.tp1Hit ? `🎯 Тейк 1 был взят: ${fmtP(s.tp1)} (${fmtPct(pctFrom(s, s.tp1))}, 50%)` : null,
-      Number.isFinite(total) ? `Итог сделки: ${fmtPct(total)} цены с комиссиями · ${Number(d.r).toFixed(2)}R` : null,
+      `📈 Position peak: ${fmtPct(Number(d.peakPct ?? 0))}`,
+      d.tp1Hit ? `🎯 TP 1 was hit: ${fmtP(s.tp1)} (${fmtPct(pctFrom(s, s.tp1))}, 50%)` : null,
+      Number.isFinite(total) ? `Trade result: ${fmtPct(total)} of price after fees · ${Number(d.r).toFixed(2)}R` : null,
       ``,
       tag(s),
     ].filter((line) => line !== null).join("\n");
@@ -92,7 +93,7 @@ export function formatEvent(s: SignalForText, e: EventForText): string {
     return [
       head,
       `🚀 ${fmtPct(Number(d.milestone))}`,
-      Boolean(d.trailingActivated) ? `📈 Трейлинг активирован с +15%: стоп на 10 п.п. ниже пика` : null,
+      Boolean(d.trailingActivated) ? `📈 Trailing on from +15%: stop 10 pp below the peak` : null,
       priceLine,
       ``,
       stopLine(s, currentStop, trailing),
@@ -101,13 +102,13 @@ export function formatEvent(s: SignalForText, e: EventForText): string {
     ].filter((line) => line !== null).join("\n");
   }
   if (e.kind === "tp1") {
-    return [head, `🎯 ТЕЙК 1 ${fmtPct(pctFrom(s, s.tp1))}`, priceLine, ``, `✂️ Фиксируем 50%`, stopLine(s, currentStop, trailing), `⏳ Дальше: трейлинг с +15%`, ``, tag(s)].join("\n");
+    return [head, `🎯 TP 1 ${fmtPct(pctFrom(s, s.tp1))}`, priceLine, ``, `✂️ 50% closed`, stopLine(s, currentStop, trailing), `⏳ Next: trailing from +15%`, ``, tag(s)].join("\n");
   }
   if (e.kind === "breakeven") {
-    return [head, `🛡 Стоп в безубыток`, priceLine, ``, stopLine(s, currentStop, false), ``, tag(s)].join("\n");
+    return [head, `🛡 Stop to break-even`, priceLine, ``, stopLine(s, currentStop, false), ``, tag(s)].join("\n");
   }
   if (e.kind === "trailing_on") {
-    return [head, `📈 ТРЕЙЛИНГ +15%`, priceLine, ``, stopLine(s, Number(d.trailingStop ?? currentStop), true), `Стоп держится на 10 п.п. ниже пика и подтягивается за ценой`, ``, tag(s)].join("\n");
+    return [head, `📈 TRAILING +15%`, priceLine, ``, stopLine(s, Number(d.trailingStop ?? currentStop), true), `The stop stays 10 pp below the peak and follows the price`, ``, tag(s)].join("\n");
   }
   return [head, priceLine, ``, tag(s)].join("\n");
 }

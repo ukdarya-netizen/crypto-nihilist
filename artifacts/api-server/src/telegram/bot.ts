@@ -39,16 +39,16 @@ type Access = "public" | "subscriber";
 type Command = { command: string; aliases?: string[]; access: Access; privateOnly?: boolean; menu?: string };
 
 export const COMMANDS: Command[] = [
-  { command: "/start", access: "public", menu: "Начать работу с ботом" },
-  { command: "/myid", access: "public", menu: "Показать Chat ID" },
+  { command: "/start", access: "public", menu: "Start the bot" },
+  { command: "/myid", access: "public", menu: "Show Chat ID" },
   { command: "/menu", access: "subscriber" },
-  { command: "/daily", access: "subscriber", menu: "Дневной отчёт" },
-  { command: "/weekly", access: "subscriber", menu: "Недельный отчёт" },
-  { command: "/monthly", access: "subscriber", menu: "Месячный дайджест" },
-  { command: "/prices", aliases: ["/pricing"], access: "public", menu: "Тарифы" },
-  { command: "/subscription", aliases: ["/sub", "/expiry"], access: "public", menu: "Статус и даты подписки" },
-  { command: "/unsubscribe", aliases: ["/stop"], access: "subscriber", privateOnly: true, menu: "Отписаться от сигналов" },
-  { command: "/resetpassword", access: "public", privateOnly: true, menu: "Сбросить пароль Dashboard" },
+  { command: "/daily", access: "subscriber", menu: "Daily report" },
+  { command: "/weekly", access: "subscriber", menu: "Weekly report" },
+  { command: "/monthly", access: "subscriber", menu: "Monthly digest" },
+  { command: "/prices", aliases: ["/pricing"], access: "public", menu: "Pricing" },
+  { command: "/subscription", aliases: ["/sub", "/expiry"], access: "public", menu: "Subscription status and dates" },
+  { command: "/unsubscribe", aliases: ["/stop"], access: "subscriber", privateOnly: true, menu: "Unsubscribe from signals" },
+  { command: "/resetpassword", access: "public", privateOnly: true, menu: "Reset Dashboard password" },
 ];
 
 export const BOT_MENU = COMMANDS.flatMap((c) => (c.menu ? [{ command: c.command.slice(1), description: c.menu }] : []));
@@ -81,14 +81,9 @@ async function rememberLang(chatId: string, code: string | undefined): Promise<L
   }
   return lang;
 }
-/** Stored language of a chat; Russian when the user never wrote to the bot since 2026-11-10. */
-export async function langOfChat(chatId: string): Promise<Lang> {
-  const known = chatLang.get(chatId);
-  if (known) return known;
-  const { rows } = await pool.query<{ value: unknown }>("SELECT value FROM nh_state WHERE key = $1", [`tg_lang:${chatId}`]).catch(() => ({ rows: [] as Array<{ value: unknown }> }));
-  const lang: Lang = rows[0]?.value === "en" ? "en" : "ru";
-  chatLang.set(chatId, lang);
-  return lang;
+/** Language of messages outside a reply: English for everyone (owner 2026-11-10). */
+export async function langOfChat(_chatId: string): Promise<Lang> {
+  return "en";
 }
 
 export function subscriptionStatus(user: UserRow | null, now = Date.now()) {
@@ -127,13 +122,13 @@ export async function notifyOwnerRegistration(
   const owner = await ownerChatId();
   if (!owner) { logger.warn("nihilist: new registration, owner chat unknown (NIHILIST_OWNER_EMAIL / Chat ID)"); return; }
   const tg = u.telegramUsername ? `@${u.telegramUsername} · ID: ${u.chatId}` : `ID: ${u.chatId}`;
-  const head = resubmitted ? "🔐 Повторный запрос доступа к Dashboard" : "🔐 Новый запрос доступа к Dashboard";
+  const head = resubmitted ? "🔐 Repeat Dashboard access request" : "🔐 New Dashboard access request";
   const reason = resubmitted === "blocked"
-    ? ["", "Аккаунт был заблокирован — пользователь повторно запросил доступ."]
-    : resubmitted === "expired" ? ["", "Подписка истекла — пользователь повторно запросил доступ."] : [];
+    ? ["", "The account was blocked — the user asked for access again."]
+    : resubmitted === "expired" ? ["", "The subscription expired — the user asked for access again."] : [];
   await sendMessageKb(owner, [head, "", `👤 ${u.name}`, `📧 ${u.email}`, `💬 ${tg}`, ...reason].join("\n"), [[
-    { text: "✅ Одобрить", callback_data: `approve_user:${u.id}` },
-    { text: "❌ Заблокировать", callback_data: `block_user:${u.id}` },
+    { text: "✅ Approve", callback_data: `approve_user:${u.id}` },
+    { text: "❌ Block", callback_data: `block_user:${u.id}` },
   ]]);
 }
 
@@ -244,7 +239,7 @@ async function handleMessage(m: TelegramMessage): Promise<void> {
   }
 }
 
-const ownerDate = (d: Date) => d.toLocaleDateString("ru-RU", { timeZone: TZ, day: "numeric", month: "long", year: "numeric" });
+const ownerDate = (d: Date) => d.toLocaleDateString("en-GB", { timeZone: TZ, day: "numeric", month: "long", year: "numeric" });
 const monthLater = (from: Date) => { const d = new Date(from); d.setMonth(d.getMonth() + 1); return d; };
 
 async function handleCallback(cq: NonNullable<TelegramUpdate["callback_query"]>): Promise<void> {
@@ -261,10 +256,10 @@ async function handleCallback(cq: NonNullable<TelegramUpdate["callback_query"]>)
   }
 
   if (data.startsWith("approve_user:") || data.startsWith("block_user:")) {
-    if (!await isOwnerChat(cq.from.id)) { await sendMessageKb(chatId, "⛔ Только владелец может выполнять это действие."); return; }
+    if (!await isOwnerChat(cq.from.id)) { await sendMessageKb(chatId, "⛔ Only the owner can do this."); return; }
     const id = Number(data.slice(data.indexOf(":") + 1));
     const before = Number.isSafeInteger(id) && id > 0 ? await userById(id) : null;
-    if (!before) { await editMessage(chatId, msg.message_id, "❌ Пользователь не найден в базе."); return; }
+    if (!before) { await editMessage(chatId, msg.message_id, "❌ User not found."); return; }
     if (data.startsWith("approve_user:")) {
       const now = new Date();
       const until = monthLater(now);
@@ -274,11 +269,11 @@ async function handleCallback(cq: NonNullable<TelegramUpdate["callback_query"]>)
            notify = true, notify_since = COALESCE(CASE WHEN $3 THEN notify_since END, now()) WHERE id = $1`,
         [id, until, wasActive],
       );
-      await editMessage(chatId, msg.message_id, `✅ ${before.name} одобрен\n📧 ${before.email}\n📅 до ${ownerDate(until)}`);
+      await editMessage(chatId, msg.message_id, `✅ ${before.name} approved\n📧 ${before.email}\n📅 until ${ownerDate(until)}`);
       sendQuiet(before.chat_id, wasActive ? subscriptionRenewedText(until) : subscriptionStartedText(until));
     } else {
       await pool.query("UPDATE nh_users SET status = 'blocked', approved_at = NULL WHERE id = $1", [id]);
-      await editMessage(chatId, msg.message_id, `❌ ${before.name} заблокирован\n📧 ${before.email}`);
+      await editMessage(chatId, msg.message_id, `❌ ${before.name} blocked\n📧 ${before.email}`);
       if (before.status !== "blocked") sendQuiet(before.chat_id, BLOCKED_TEXT);
     }
     logger.info({ id, data }, "nihilist: user status changed from Telegram");
@@ -311,15 +306,18 @@ export async function handleUpdate(update: TelegramUpdate): Promise<void> {
   }
 }
 
-/** Menu and profile texts: English by default, Russian for Russian-language apps (owner 2026-11-10). */
+/**
+ * Menu and profile texts — English for everyone (owner 2026-11-10). The Russian-language versions set earlier
+ * for ru apps are removed, so Russian-language apps also get the English menu and description.
+ */
 export async function setBotMenu(): Promise<void> {
   const warn = (what: string) => (err: unknown) => logger.warn({ err }, `nihilist: ${what} failed`);
-  for (const [lang, code] of [["en", undefined], ["ru", "ru"]] as const) {
-    const scope = code ? { language_code: code } : {};
-    await telegramCall("setMyCommands", { commands: botMenu(lang), ...scope }).catch(warn("setMyCommands"));
-    await telegramCall("setMyDescription", { description: BOT_DESCRIPTION[lang], ...scope }).catch(warn("setMyDescription"));
-    await telegramCall("setMyShortDescription", { short_description: BOT_SHORT_DESCRIPTION[lang], ...scope }).catch(warn("setMyShortDescription"));
-  }
+  await telegramCall("setMyCommands", { commands: botMenu("en") }).catch(warn("setMyCommands"));
+  await telegramCall("setMyDescription", { description: BOT_DESCRIPTION.en }).catch(warn("setMyDescription"));
+  await telegramCall("setMyShortDescription", { short_description: BOT_SHORT_DESCRIPTION.en }).catch(warn("setMyShortDescription"));
+  await telegramCall("deleteMyCommands", { language_code: "ru" }).catch(warn("deleteMyCommands ru"));
+  await telegramCall("setMyDescription", { description: "", language_code: "ru" }).catch(warn("setMyDescription ru"));
+  await telegramCall("setMyShortDescription", { short_description: "", language_code: "ru" }).catch(warn("setMyShortDescription ru"));
 }
 
 let botUsername: string | null = null;
