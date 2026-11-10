@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactElement } from "react";
+import { LanguageToggle } from "./components/language-toggle";
 import { Layout, OWNER_ROUTES, PUBLIC_ROUTES, useRoute, type Route } from "./components/layout";
 import { AuthError, currentSession, get, onAuthError, saveSession } from "./lib/api";
 import { Login, Register, ResetPassword } from "./pages/auth";
@@ -31,14 +32,15 @@ export default function App() {
     return () => { off(); };
   }, []);
 
-  if (route === "/register") return <Register />;
-  if (route === "/reset-password") return <ResetPassword />;
+  const lang = <LanguageToggle className="fixed right-3 top-3 z-50" />;
+  if (route === "/register") return <>{lang}<Register /></>;
+  if (route === "/reset-password") return <>{lang}<ResetPassword /></>;
   if (state === "checking") return <div className="flex min-h-[100dvh] items-center justify-center text-sm text-muted">Загрузка…</div>;
   if (state === "out" || route === "/login") {
-    return <Login notice={notice} onLogin={() => {
+    return <>{lang}<Login notice={notice} onLogin={() => {
       setNotice(null); setState("ok");
       if (PUBLIC_ROUTES.includes(route)) window.location.hash = window.innerWidth < 768 ? "/tracker" : "/";
-    }} />;
+    }} /></>;
   }
   const owner = currentSession()?.role === "owner";
   const pages: Partial<Record<Route, ReactElement>> = {
