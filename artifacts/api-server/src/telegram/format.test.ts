@@ -13,7 +13,7 @@ test("opened: entry, stop, TP1 with 50%, trailing rule, hashtags; plain text", (
   assert.match(text, /NIHILYST · JCT LONG/);
   assert.match(text, /Order block 4h → change of character 30m/);
   assert.match(text, /TP 1: 0\.002324 \(\+24\.2%\) — close 50%/);
-  assert.match(text, /Trailing: from \+15%/);
+  assert.match(text, /Take profit: \+10% — the whole position is closed/);
   assert.match(text, /#JCT #nh_4h_30m_long/);
   assert.doesNotMatch(text, /<[a-z]/i);
 });
@@ -41,7 +41,7 @@ test("the 15% milestone includes trailing activation instead of a separate messa
 
 test("opened without take profit (2026-11-02): no TP line; break-even and trailing rules stay", () => {
   const text = formatEvent({ ...s, targets_source: "trailing_only" }, { kind: "opened", price: s.entry, detail: {}, created_at: s.opened_at });
-  assert.doesNotMatch(text, /TP 1|Take profit/);
+  assert.doesNotMatch(text, /TP 1/);
   assert.match(text, /Break-even: at \+5% the stop moves to entry/);
-  assert.match(text, /Trailing: from \+15%, stop 10 pp below the peak/);
+  assert.match(text, /Take profit: \+10% — the whole position is closed/);
 });

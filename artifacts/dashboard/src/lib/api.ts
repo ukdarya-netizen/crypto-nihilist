@@ -179,13 +179,16 @@ export const hasTp1 = (s: { targets_source?: string | null }) => s.targets_sourc
 
 /**
  * Where an open trade takes its profit (engine/config.ts): shorts — the whole position at +8% (since 05.11.2026,
- * every open short); longs — no take, the trailing stop from +15% (peak − 10 p.p.).
+ * every open short); longs — the whole position at +10% (since 10.11.2026; an open long already past +10% keeps the
+ * trailing stop from +15%, peak − 10 p.p.).
  */
 export const SHORT_TAKE_PCT = 8;
+export const LONG_TAKE_PCT = 10;
+export const LONG_TAKE_SINCE = new Date("2026-11-10T00:00:00Z");
 export const TRAIL_FROM_PCT = 15;
 /** BTC (owner 2026-11-10, as BTC Bullet): TP 1 at 1.5R — 50%, stop to entry; TP 2 at 3R — the rest. */
 export const BTC_TARGETS_SOURCE = "btc_r";
-type PlanInput = { side: "long" | "short"; targets_source?: string | null; entry?: number; tp1?: number; tp2?: number; tp1_hit?: boolean };
+type PlanInput = { side: "long" | "short"; targets_source?: string | null; entry?: number; tp1?: number; tp2?: number; tp1_hit?: boolean; peak_pct?: number | null };
 export const exitPlan = (s: PlanInput) =>
   s.targets_source === BTC_TARGETS_SOURCE && s.entry
     ? (() => {
@@ -196,7 +199,9 @@ export const exitPlan = (s: PlanInput) =>
     })()
     : s.side === "short"
     ? { at: SHORT_TAKE_PCT, kind: "take" as const, label: `тейк +${SHORT_TAKE_PCT}%`, text: `вся позиция закрывается на +${SHORT_TAKE_PCT}%` }
-    : { at: TRAIL_FROM_PCT, kind: "trail" as const, label: `трейл +${TRAIL_FROM_PCT}%`, text: `тейка нет, трейлинг с +${TRAIL_FROM_PCT}% (пик − 10 п.п.)` };
+    : (s.peak_pct ?? 0) < LONG_TAKE_PCT
+    ? { at: LONG_TAKE_PCT, kind: "take" as const, label: `тейк +${LONG_TAKE_PCT}%`, text: `вся позиция закрывается на +${LONG_TAKE_PCT}%` }
+    : { at: TRAIL_FROM_PCT, kind: "trail" as const, label: `трейл +${TRAIL_FROM_PCT}%`, text: `трейлинг с +${TRAIL_FROM_PCT}% (пик − 10 п.п.)` };
 
 /** Live result of an open trade in % (no fees), from the last closed 30m price. */
 /** Price move of an open trade from entry, % in the trade direction (as in AltBullet). */

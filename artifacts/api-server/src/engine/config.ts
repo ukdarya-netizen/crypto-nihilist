@@ -41,8 +41,15 @@ export const TAKE_PROFIT_ENABLED = false;
  * that have not reached +8% yet and to every new short. Longs unchanged (trailing from +15%).
  */
 export const SHORT_TAKE_AT_PCT: number | null = 8;
+/**
+ * Longs exit (owner 2026-11-10): the WHOLE long closed at +10% (no long take before — only trailing from +15%).
+ * Applies to every new long and to open longs that have not reached +10% yet; an open long already past +10%
+ * keeps break-even and the trailing stop from +15%.
+ */
+export const LONG_TAKE_AT_PCT: number | null = 10;
 export function takeAtPctFor(side: "long" | "short", peakPct = 0): number | null {
-  return side === "short" && SHORT_TAKE_AT_PCT !== null && peakPct < SHORT_TAKE_AT_PCT ? SHORT_TAKE_AT_PCT : null;
+  const take = side === "short" ? SHORT_TAKE_AT_PCT : LONG_TAKE_AT_PCT;
+  return take !== null && peakPct < take ? take : null;
 }
 export const NO_TP_TARGETS_SOURCE = "trailing_only";
 

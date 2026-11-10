@@ -3,7 +3,7 @@
  * ticker and setup hashtags). Plain text only: no HTML, no Markdown.
  * English only (owner 2026-11-10: the channel and the bot are fully English).
  */
-import { BREAKEVEN_AT_PCT, BTC_TARGETS_R, BTC_TARGETS_SOURCE, NO_TP_TARGETS_SOURCE, SHORT_TAKE_AT_PCT } from "../engine/config";
+import { BREAKEVEN_AT_PCT, BTC_TARGETS_R, BTC_TARGETS_SOURCE, LONG_TAKE_AT_PCT, NO_TP_TARGETS_SOURCE, SHORT_TAKE_AT_PCT } from "../engine/config";
 
 export type SignalForText = {
   symbol: string; setup: string; htf: string; ltf: string; side: "long" | "short";
@@ -66,7 +66,7 @@ export function formatEvent(s: SignalForText, e: EventForText): string {
       ] : [
         noTp ? null : `TP 1: ${fmtP(s.tp1)} (${fmtPct(tp1Pct)}) — close 50%, stop to break-even`,
         BREAKEVEN_AT_PCT !== null ? `Break-even: at +${BREAKEVEN_AT_PCT}% the stop moves to entry` : null,
-        s.side === "short" && SHORT_TAKE_AT_PCT !== null ? `Take profit: +${SHORT_TAKE_AT_PCT}% — the whole position is closed` : `Trailing: from +15%, stop 10 pp below the peak`,
+        (s.side === "short" ? SHORT_TAKE_AT_PCT : LONG_TAKE_AT_PCT) !== null ? `Take profit: +${s.side === "short" ? SHORT_TAKE_AT_PCT : LONG_TAKE_AT_PCT}% — the whole position is closed` : `Trailing: from +15%, stop 10 pp below the peak`,
       ]),
       ``,
       `Order block: ${fmtP(s.block_bottom)} – ${fmtP(s.block_top)}`,
@@ -78,7 +78,7 @@ export function formatEvent(s: SignalForText, e: EventForText): string {
   if (e.kind === "closed") {
     const reason = String(d.reason);
     const title = reason === "trailing" ? "🟢 PROFIT (trailing stop)"
-      : reason === "take" ? (s.targets_source === BTC_TARGETS_SOURCE ? `🟢 PROFIT (TP 2 — ${BTC_TARGETS_R[1]}R)` : `🟢 PROFIT (take +${SHORT_TAKE_AT_PCT ?? 8}%, whole position closed)`)
+      : reason === "take" ? (s.targets_source === BTC_TARGETS_SOURCE ? `🟢 PROFIT (TP 2 — ${BTC_TARGETS_R[1]}R)` : `🟢 PROFIT (take +${s.side === "short" ? SHORT_TAKE_AT_PCT ?? 8 : LONG_TAKE_AT_PCT ?? 10}%, whole position closed)`)
       : reason === "breakeven" ? (d.tp1Hit ? "🔵 BREAK-EVEN after TP 1" : "🔵 BREAK-EVEN")
         : reason === "timeout" ? "⏱ Closed by holding time"
           : "🔴 STOP LOSS";

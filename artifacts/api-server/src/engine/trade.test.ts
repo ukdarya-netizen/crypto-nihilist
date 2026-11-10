@@ -87,8 +87,10 @@ test("short: break-even at +5%, whole position closed at +8% (owner 2026-11-05)"
   assert.ok(Math.abs(tradeResult(b.state).pnlPct - 7.9) < 1e-9);
 });
 
-test("takeAtPctFor: shorts only, not for a short already past +8%", () => {
+test("takeAtPctFor: shorts +8%, longs +10% (owner 2026-11-10), none for a trade already past its take", () => {
   assert.equal(takeAtPctFor("short"), 8);
   assert.equal(takeAtPctFor("short", 9), null);
-  assert.equal(takeAtPctFor("long"), null);
+  assert.equal(takeAtPctFor("long"), 10);
+  assert.equal(takeAtPctFor("long", 9.9), 10);
+  assert.equal(takeAtPctFor("long", 12), null);
 });
