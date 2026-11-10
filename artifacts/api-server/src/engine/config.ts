@@ -47,6 +47,23 @@ export function takeAtPctFor(side: "long" | "short", peakPct = 0): number | null
 export const NO_TP_TARGETS_SOURCE = "trailing_only";
 
 /**
+ * BTC (owner 2026-11-10): the altcoin percentages (stop +3% beyond the structure, break-even +5%, short take +8%,
+ * long trailing from +15%) do not fit BTC — an 8% BTC move is huge. BTC is managed as in BTC Bullet:
+ * stop 0.3% beyond the structural stop; TP 1 at 1.5R — 50% closed, stop to entry; TP 2 at 3R — the rest closed.
+ * No +5% break-even, no +8% take, no trailing. Applies to new BTC signals.
+ */
+export const BTC_SYMBOLS = new Set(["BTC-USDT"]);
+export const BTC_STOP_EXTRA_PCT = 0.3;
+export const BTC_TARGETS_R = [1.5, 3] as const;
+export const BTC_TARGETS_SOURCE = "btc_r";
+export const isBtc = (symbol: string) => BTC_SYMBOLS.has(symbol);
+/** BTC targets from the entry and the stop: [TP 1, TP 2] at 1.5R and 3R. */
+export function btcTargets(side: "long" | "short", entry: number, stop: number): [number, number] {
+  const r = Math.abs(entry - stop) * (side === "long" ? 1 : -1);
+  return [entry + BTC_TARGETS_R[0] * r, entry + BTC_TARGETS_R[1] * r];
+}
+
+/**
  * Entry filter for LONGS (owner 2026-11-02). A long is opened only when:
  *   - the stop is at least 7% from the entry (TA stop + 3%);
  *   - the order block is at most 300 hours old at the signal;

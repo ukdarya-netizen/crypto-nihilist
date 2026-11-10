@@ -59,6 +59,10 @@ export type TradeState = {
   breakevenMoved: boolean;
   /** Whole position closed at this favourable move, % (null = no fixed take). */
   takeAtPct?: number | null;
+  /** Whatever is still open is closed at this price (BTC: TP 2 at 3R, owner 2026-11-10). */
+  takePrice?: number | null;
+  /** false = no trailing stop (BTC). Default true. */
+  trailingEnabled?: boolean;
   /** false = no take profit: the trade is managed by break-even and trailing only. */
   tp1Enabled: boolean;
   tp1Hit: boolean;
@@ -84,11 +88,14 @@ export function openTrade(input: {
   takeAtPct?: number | null;
   /** Default true (trades before 2026-11-02 and the old backtest rules). */
   takeProfit?: boolean;
+  takePrice?: number | null;
+  trailing?: boolean;
 }): TradeState {
   return {
     side: input.side, entry: input.entry, stop: input.stop, tp1: input.tp1,
     openedAt: input.openedAt, expiresAt: input.openedAt + input.maxHoldMs,
     breakevenAtPct: input.breakevenAtPct ?? null, breakevenMoved: false, takeAtPct: input.takeAtPct ?? null,
+    takePrice: input.takePrice ?? null, trailingEnabled: input.trailing ?? true,
     tp1Enabled: input.takeProfit ?? true, tp1Hit: false, tp1At: null, currentStop: input.stop, trailingActive: false,
     peakPct: 0, lastMilestone: 0,
     closed: false, closedAt: null, closeReason: null, exitPrice: null,
@@ -154,7 +161,15 @@ export function applyCandles(state: TradeState, candles: Candle[], spanMs: numbe
       s.currentStop = tighter(s, s.currentStop, s.entry);
       events.push({ kind: "tp1", at, price: s.tp1, pct: pctOf(s.tp1) });
     }
-    if (s.peakPct >= TRAILING_ACTIVATION_PCT) {
+    if (s.takePrice != null && (dir === 1 ? c.h >= s.takePrice : c.l <= s.takePrice)) {
+      s.closed = true;
+      s.closedAt = at;
+      s.exitPrice = s.takePrice;
+      s.closeReason = "take";
+      events.push({ kind: "closed", at, price: s.exitPrice, reason: "take" });
+      break;
+    }
+    if (s.trailingEnabled !== false && s.peakPct >= TRAILING_ACTIVATION_PCT) {
       const trail = priceAtPct(s, s.peakPct - TRAILING_GAP_PCT);
       const next = tighter(s, s.currentStop, trail);
       if (!s.trailingActive) {

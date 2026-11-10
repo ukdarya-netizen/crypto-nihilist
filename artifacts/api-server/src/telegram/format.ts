@@ -3,11 +3,11 @@
  * ticker and setup hashtags). Plain text only: no HTML, no Markdown.
  * English only (owner 2026-11-10: the channel and the bot are fully English).
  */
-import { BREAKEVEN_AT_PCT, NO_TP_TARGETS_SOURCE, SHORT_TAKE_AT_PCT } from "../engine/config";
+import { BREAKEVEN_AT_PCT, BTC_TARGETS_R, BTC_TARGETS_SOURCE, NO_TP_TARGETS_SOURCE, SHORT_TAKE_AT_PCT } from "../engine/config";
 
 export type SignalForText = {
   symbol: string; setup: string; htf: string; ltf: string; side: "long" | "short";
-  entry: number; stop: number; tp1: number; block_top: number; block_bottom: number; block_scope: string;
+  entry: number; stop: number; tp1: number; tp2?: number | null; block_top: number; block_bottom: number; block_scope: string;
   opened_at: Date | string; targets_source: string;
 };
 export type EventForText = { kind: string; price: number | null; detail: Record<string, unknown>; created_at: Date | string };
@@ -52,15 +52,22 @@ export function formatEvent(s: SignalForText, e: EventForText): string {
     const stopPct = pctFrom(s, s.stop);
     const tp1Pct = pctFrom(s, s.tp1);
     const noTp = s.targets_source === NO_TP_TARGETS_SOURCE;
+    const btc = s.targets_source === BTC_TARGETS_SOURCE;
     return [
       `🟣 NIHILYST · ${sym}`,
       `Order block ${tf(s.htf)} → change of character ${tf(s.ltf)}`,
       ``,
       `Entry: ${fmtP(s.entry)}`,
       `Stop: ${fmtP(s.stop)} (${fmtPct(stopPct)})`,
-      noTp ? null : `TP 1: ${fmtP(s.tp1)} (${fmtPct(tp1Pct)}) — close 50%, stop to break-even`,
-      BREAKEVEN_AT_PCT !== null ? `Break-even: at +${BREAKEVEN_AT_PCT}% the stop moves to entry` : null,
-      s.side === "short" && SHORT_TAKE_AT_PCT !== null ? `Take profit: +${SHORT_TAKE_AT_PCT}% — the whole position is closed` : `Trailing: from +15%, stop 10 pp below the peak`,
+      ...(btc ? [
+        // BTC (owner 2026-11-10, as BTC Bullet): targets in R, no +5% / +8% / +15% rules.
+        `TP 1: ${fmtP(s.tp1)} (${fmtPct(tp1Pct)}, ${BTC_TARGETS_R[0]}R) — close 50%, stop to break-even`,
+        s.tp2 != null ? `TP 2: ${fmtP(Number(s.tp2))} (${fmtPct(pctFrom(s, Number(s.tp2)))}, ${BTC_TARGETS_R[1]}R) — close the rest` : null,
+      ] : [
+        noTp ? null : `TP 1: ${fmtP(s.tp1)} (${fmtPct(tp1Pct)}) — close 50%, stop to break-even`,
+        BREAKEVEN_AT_PCT !== null ? `Break-even: at +${BREAKEVEN_AT_PCT}% the stop moves to entry` : null,
+        s.side === "short" && SHORT_TAKE_AT_PCT !== null ? `Take profit: +${SHORT_TAKE_AT_PCT}% — the whole position is closed` : `Trailing: from +15%, stop 10 pp below the peak`,
+      ]),
       ``,
       `Order block: ${fmtP(s.block_bottom)} – ${fmtP(s.block_top)}`,
       s.targets_source === "r_multiple" ? `No unbroken ${tf(s.htf)} levels beyond: TP 1 = 2R` : null,
@@ -71,7 +78,7 @@ export function formatEvent(s: SignalForText, e: EventForText): string {
   if (e.kind === "closed") {
     const reason = String(d.reason);
     const title = reason === "trailing" ? "🟢 PROFIT (trailing stop)"
-      : reason === "take" ? `🟢 PROFIT (take +${SHORT_TAKE_AT_PCT ?? 8}%, whole position closed)`
+      : reason === "take" ? (s.targets_source === BTC_TARGETS_SOURCE ? `🟢 PROFIT (TP 2 — ${BTC_TARGETS_R[1]}R)` : `🟢 PROFIT (take +${SHORT_TAKE_AT_PCT ?? 8}%, whole position closed)`)
       : reason === "breakeven" ? (d.tp1Hit ? "🔵 BREAK-EVEN after TP 1" : "🔵 BREAK-EVEN")
         : reason === "timeout" ? "⏱ Closed by holding time"
           : "🔴 STOP LOSS";
@@ -102,7 +109,7 @@ export function formatEvent(s: SignalForText, e: EventForText): string {
     ].filter((line) => line !== null).join("\n");
   }
   if (e.kind === "tp1") {
-    return [head, `🎯 TP 1 ${fmtPct(pctFrom(s, s.tp1))}`, priceLine, ``, `✂️ 50% closed`, stopLine(s, currentStop, trailing), `⏳ Next: trailing from +15%`, ``, tag(s)].join("\n");
+    return [head, `🎯 TP 1 ${fmtPct(pctFrom(s, s.tp1))}`, priceLine, ``, `✂️ 50% closed`, stopLine(s, currentStop, trailing), s.targets_source === BTC_TARGETS_SOURCE && s.tp2 != null ? `⏳ Next: TP 2 at ${fmtP(Number(s.tp2))} (${BTC_TARGETS_R[1]}R)` : `⏳ Next: trailing from +15%`, ``, tag(s)].join("\n");
   }
   if (e.kind === "breakeven") {
     return [head, `🛡 Stop to break-even`, priceLine, ``, stopLine(s, currentStop, false), ``, tag(s)].join("\n");

@@ -7,9 +7,9 @@
  */
 import { pool } from "@workspace/db";
 import { INTERVAL_MS } from "./candles";
-import { BREAKEVEN_AT_PCT, NO_TP_TARGETS_SOURCE, TRACK_INTERVAL, takeAtPctFor } from "./config";
+import { BREAKEVEN_AT_PCT, BTC_TARGETS_SOURCE, NO_TP_TARGETS_SOURCE, TRACK_INTERVAL, takeAtPctFor } from "./config";
 import type { HtfInterval } from "./setups";
-import { applyCandles, tradeResult, type TradeEvent, type TradeState } from "./trade";
+import { TP1_SHARE, applyCandles, tradeResult, type TradeEvent, type TradeState } from "./trade";
 import { getCandles } from "../market/coinglass";
 import { logger } from "../lib/logger";
 import { closeReason, enqueueCommand } from "../lib/trading-relay";
@@ -18,18 +18,21 @@ const SPAN = INTERVAL_MS[TRACK_INTERVAL];
 
 export type OpenRow = {
   id: number; symbol: string; setup: string; htf: HtfInterval; side: "long" | "short";
-  entry: number; stop: number; tp1: number; current_stop: number | null;
+  entry: number; stop: number; tp1: number; tp2?: number | null; current_stop: number | null;
   opened_at: Date; expires_at: Date; tp1_hit: boolean; tp1_at: Date | null;
   breakeven_moved: boolean; trailing_active: boolean; peak_pct: number; last_milestone: number;
   mfe_pct: number; mae_pct: number; last_candle_time: string | null; targets_source?: string | null; live?: boolean;
 };
 
 export function stateFromRow(row: OpenRow): TradeState {
+  // BTC (owner 2026-11-10): TP 1 at 1.5R (50%, stop to entry), TP 2 at 3R; no +5% break-even, take or trailing.
+  const btc = row.targets_source === BTC_TARGETS_SOURCE;
   return {
     side: row.side, entry: row.entry, stop: row.stop, tp1: row.tp1,
     openedAt: row.opened_at.getTime(), expiresAt: row.expires_at.getTime(),
-    breakevenAtPct: BREAKEVEN_AT_PCT, breakevenMoved: row.breakeven_moved,
-    takeAtPct: takeAtPctFor(row.side, row.peak_pct),
+    breakevenAtPct: btc ? null : BREAKEVEN_AT_PCT, breakevenMoved: row.breakeven_moved,
+    takeAtPct: btc ? null : takeAtPctFor(row.side, row.peak_pct),
+    takePrice: btc && row.tp2 != null ? Number(row.tp2) : null, trailingEnabled: !btc,
     tp1Enabled: row.targets_source !== NO_TP_TARGETS_SOURCE,
     tp1Hit: row.tp1_hit, tp1At: row.tp1_at ? row.tp1_at.getTime() : null,
     currentStop: row.current_stop ?? row.stop, trailingActive: row.trailing_active,
@@ -89,6 +92,12 @@ async function trackRow(row: OpenRow, now: number): Promise<void> {
   // Trading bot commands (owner 2026-11-02): every stop change and the close of a live trade.
   if (row.live) {
     const at = (after.lastCandleTime ?? now) + SPAN;
+    // TP 1 (BTC, older trades): half of the position closed first — the bot does what the signal says.
+    const tp1 = events.find((e) => e.kind === "tp1");
+    if (tp1) {
+      await enqueueCommand(row.id, row.symbol, { type: "close", reason: "profit", exitPrice: tp1.price, at: tp1.at, fraction: TP1_SHARE })
+        .catch((err) => logger.warn({ err, id: row.id }, "nihilist: trading command not queued"));
+    }
     const cmd = after.closed
       ? { type: "close" as const, reason: closeReason(after.closeReason), exitPrice: after.exitPrice, at }
       : after.currentStop !== before.currentStop

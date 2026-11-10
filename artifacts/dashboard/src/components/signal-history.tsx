@@ -78,7 +78,7 @@ function Details({ s }: { s: HistoryRow }) {
         <dt className="text-muted">Стоп</dt><dd className="text-down">{price(s.stop)} ({signed(pct(s.stop), 1, "%")})</dd>
         <dt className="text-muted">Тейк 1</dt>{hasTp1(s)
           ? <dd className="text-up">{price(s.tp1)} ({signed(pct(s.tp1), 1, "%")}){s.tp1_hit ? " ✓" : ""}</dd>
-          : <dd className="text-muted">нет — безубыток +5%, {s.side === "short" && (s.close_reason === "take" || s.status !== "closed" || new Date(s.opened_at) >= SHORT_TAKE_SINCE) ? exitPlan(s).text : "трейлинг с +15%"}</dd>}
+          : <dd className="text-muted">нет — безубыток +5%, {s.targets_source === "btc_r" ? exitPlan(s).text : s.side === "short" && (s.close_reason === "take" || s.status !== "closed" || new Date(s.opened_at) >= SHORT_TAKE_SINCE) ? exitPlan(s).text : "трейлинг с +15%"}</dd>}
         <dt className="text-muted">Стоп сейчас</dt><dd>{s.current_stop !== null ? `${price(s.current_stop)} (${signed(pct(s.current_stop), 1, "%")})` : "—"}</dd>
         <dt className="text-muted">Пик / просадка</dt><dd>{signed(s.peak_pct, 1, "%")} / {signed(s.mae_pct, 1, "%")}</dd>
         <dt className="text-muted">R</dt><dd className={tone(s.r_multiple)}>{signed(s.r_multiple)}</dd>
