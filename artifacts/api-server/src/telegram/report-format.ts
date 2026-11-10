@@ -74,7 +74,7 @@ const T = {
     noWeek: "No closed trades in the last 7 days.", noMonth: "No closed trades this month.", top3: "Top 3 by profit:" },
 } as const;
 
-function outcomeBlock(closed: ReportRow[], withList: boolean, lang: Lang = "ru"): string[] {
+function outcomeBlock(closed: ReportRow[], withList: boolean, lang: Lang = "en"): string[] {
   const t = T[lang]; const side = sideOf(lang);
   const by = (s: string) => closed.filter((r) => tradeStatus(r) === s);
   const profit = by("profit");
@@ -100,7 +100,7 @@ function outcomeBlock(closed: ReportRow[], withList: boolean, lang: Lang = "ru")
   return lines;
 }
 
-export function formatDailyReport(closed: ReportRow[], open: ReportRow[], at: number, lang: Lang = "ru"): string {
+export function formatDailyReport(closed: ReportRow[], open: ReportRow[], at: number, lang: Lang = "en"): string {
   const t = T[lang]; const side = sideOf(lang); const dateRu = dateOf(lang);
   const lines = [`📊 DAILY REPORT — NIHILYST`, dateRu(at, { day: "2-digit", month: "long", year: "numeric" }), ``];
   if (open.length) {
@@ -122,7 +122,7 @@ export function formatDailyReport(closed: ReportRow[], open: ReportRow[], at: nu
   return lines.join("\n");
 }
 
-export function formatPeriodReport(kind: "weekly" | "monthly", closed: ReportRow[], from: number, to: number, lang: Lang = "ru"): string {
+export function formatPeriodReport(kind: "weekly" | "monthly", closed: ReportRow[], from: number, to: number, lang: Lang = "en"): string {
   const t = T[lang]; const side = sideOf(lang); const dateRu = dateOf(lang);
   const title = kind === "weekly" ? t.weekly : t.monthly;
   const period = kind === "weekly"

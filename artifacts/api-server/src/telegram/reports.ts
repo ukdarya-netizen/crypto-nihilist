@@ -23,8 +23,8 @@ async function closedBetween(from: number, to: number): Promise<ReportRow[]> {
   return rows;
 }
 
-/** Scheduled reports (channel and subscribers) are Russian; a report asked by a command follows the user's language. */
-export async function buildReport(s: Schedule, lang: "ru" | "en" = "ru"): Promise<string> {
+/** Reports are English (owner 2026-11-10: the channel and the bot are fully English). */
+export async function buildReport(s: Schedule, lang: "ru" | "en" = "en"): Promise<string> {
   const closed = await closedBetween(s.from, s.to);
   if (s.kind !== "daily") return formatPeriodReport(s.kind, closed, s.from, s.to, lang);
   const { rows: open } = await pool.query<ReportRow>(

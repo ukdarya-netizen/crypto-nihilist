@@ -53,23 +53,24 @@ test("daily text: open, profit list, BE 5/8/10, stop, win rate; plain text", () 
   ], [row({ id: 4, symbol: "OPN-USDT", status: "open", close_reason: null, pnl_pct: null, entry: 2, last_price: 2.2 })],
   at("2026-10-25T18:00:00Z"));
   assert.match(text, /DAILY REPORT — NIHILYST/);
-  assert.match(text, /OPN лонг \| 2 → 2\.2 \(\+10\.0%\)/);
-  assert.match(text, /✅ Профит: 1 \| PnL: \+20\.0%/);
-  assert.match(text, /JCT лонг \+20\.0% \| пик \+30\.0%/);
-  assert.match(text, /после \+8%: 1 \| PnL: \+4\.0%/);
-  assert.match(text, /❌ Стоп-лосс: 1 \| PnL: −6\.0%/);
-  assert.match(text, /Общий PnL: \+18\.0%/);
+  assert.match(text, /OPN long \| 2 → 2\.2 \(\+10\.0%\)/);
+  assert.match(text, /✅ Profit: 1 \| PnL: \+20\.0%/);
+  assert.match(text, /JCT long \+20\.0% \| peak \+30\.0%/);
+  assert.match(text, /after \+8%: 1 \| PnL: \+4\.0%/);
+  assert.match(text, /❌ Stop loss: 1 \| PnL: −6\.0%/);
+  assert.match(text, /Total PnL: \+18\.0%/);
   assert.match(text, /Win rate: 67%/);
   assert.doesNotMatch(text, /<\/?[a-z]+>/);
+  assert.doesNotMatch(text, /[А-Яа-яЁё]/);
 });
 
 test("weekly and monthly: top-3 and empty texts", () => {
   const w = formatPeriodReport("weekly", [row({}), row({ id: 2, symbol: "B-USDT", pnl_pct: 30 })],
     at("2026-10-18T06:00:00Z"), at("2026-10-25T06:00:00Z"));
-  assert.match(w, /Недельный отчёт — NIHILYST/);
-  assert.match(w, /🥇 B лонг \+30\.0%\n🥈 JCT лонг \+20\.0%/);
-  assert.match(w, /#еженедельный_отчет/);
+  assert.match(w, /Weekly report — NIHILYST/);
+  assert.match(w, /🥇 B long \+30\.0%\n🥈 JCT long \+20\.0%/);
+  assert.match(w, /#weekly_report/);
   const m = formatPeriodReport("monthly", [], at("2026-09-30T20:00:00Z"), at("2026-10-31T20:00:00Z"));
-  assert.match(m, /октябрь 2026/);
-  assert.match(m, /В этом месяце закрытых сделок не было\./);
+  assert.match(m, /October 2026/);
+  assert.match(m, /No closed trades this month\./);
 });

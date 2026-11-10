@@ -1,14 +1,11 @@
 /**
- * Bot texts in Russian and English (owner 2026-11-10). The language is the one of the user's Telegram app:
- * Russian for ru / uk / be / kk, English for every other language. Signals and the scheduled reports to the
- * channel stay Russian; replies to commands, buttons, the menu and the bot description follow the user.
- * Plain text only (no HTML).
+ * Bot texts (owner 2026-11-10: the bot and the channel are fully English). The Russian variants stay in the
+ * code but are not used: langOf() always answers English. Plain text only (no HTML).
  */
 export type Lang = "ru" | "en";
 
-const RU_CODES = ["ru", "uk", "be", "kk"];
-export const langOf = (code: string | null | undefined): Lang =>
-  RU_CODES.includes((code ?? "").slice(0, 2).toLowerCase()) ? "ru" : "en";
+/** Always English (owner 2026-11-10), whatever the language of the user's Telegram app. */
+export const langOf = (_code?: string | null): Lang => "en";
 
 export const CONTACT = "@The_Lucy_x";
 const TZ = "Asia/Dubai";
