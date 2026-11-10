@@ -84,7 +84,7 @@ export function Login({ onLogin, notice }: { onLogin: (s: Session) => void; noti
     setLoading(false);
   };
   return (
-    <Shell title="Вход" sub="Войдите в свой аккаунт">
+    <Shell title="Вход в аккаунт" sub="Войдите в свой аккаунт">
       <form onSubmit={submit} className="space-y-4">
         <Field label="Email"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required autoComplete="email" autoFocus className={inputCls} /></Field>
         <Field label="Пароль"><Password value={password} onChange={setPassword} placeholder="••••••••" show={show} toggle={() => setShow((v) => !v)} auto="current-password" /></Field>
