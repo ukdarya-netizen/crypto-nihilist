@@ -26,6 +26,13 @@ export function tradeStatus(row: JournalRow): TradeStatus {
   return "profit";
 }
 
+/** SQL twin of tradeStatus() — keep the two in step. */
+export const TRADE_STATUS_SQL = `(CASE WHEN s.status::text <> 'closed' THEN 'open'
+  WHEN s.close_reason = 'stop' THEN 'stop_loss'
+  WHEN s.close_reason = 'breakeven' THEN 'be_stop'
+  WHEN s.close_reason = 'timeout' THEN CASE WHEN COALESCE(s.pnl_pct, 0) > 0 THEN 'profit' ELSE 'expired' END
+  ELSE 'profit' END)`;
+
 const peakOf = (row: JournalRow) => Number(row.peak_pct ?? row.mfe_pct ?? 0);
 
 export function beBucket(row: JournalRow): "lt5" | "5" | "8" | "10" {
