@@ -104,7 +104,7 @@ export async function sendPhoto(chatId: string, caption: string, kind: TelegramP
   if (photo?.file_id) asset.fileId = photo.file_id;
 }
 
-export type TelegramUser = { id: number; username?: string; first_name?: string };
+export type TelegramUser = { id: number; username?: string; first_name?: string; language_code?: string };
 export type TelegramMessage = {
   message_id: number; chat: { id: number; type: string }; from?: TelegramUser; text?: string;
 };

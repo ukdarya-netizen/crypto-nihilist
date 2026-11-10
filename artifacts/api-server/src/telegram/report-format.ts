@@ -56,44 +56,55 @@ export function reportEventId(s: Schedule): number {
 
 export type ReportRow = JournalRow & { entry: number; last_price: number | null };
 
+type Lang = "ru" | "en";
 const coin = (s: string) => s.replace(/-USDT$/, "");
-const side = (s: string) => (s === "long" ? "лонг" : "шорт");
+const sideOf = (lang: Lang) => (s: string) => (lang === "en" ? (s === "long" ? "long" : "short") : s === "long" ? "лонг" : "шорт");
 const pnl = (r: ReportRow) => Number(r.pnl_pct ?? 0);
 const net = (rows: ReportRow[]) => fmtPct(rows.reduce((a, r) => a + pnl(r), 0));
 const livePct = (r: ReportRow) =>
   r.last_price === null ? null : ((Number(r.last_price) - r.entry) / r.entry) * 100 * (r.side === "long" ? 1 : -1);
-const dateRu = (ms: number, opts: Intl.DateTimeFormatOptions) =>
-  new Date(ms).toLocaleString("ru-RU", { timeZone: "Europe/Samara", ...opts });
+const dateOf = (lang: Lang) => (ms: number, opts: Intl.DateTimeFormatOptions) =>
+  new Date(ms).toLocaleString(lang === "en" ? "en-GB" : "ru-RU", { timeZone: "Europe/Samara", ...opts });
+const T = {
+  ru: { profit: "Профит", stop: "Стоп-лосс", peak: "пик", upTo5: "до +5%", after: "после", total: "Общий PnL", closed: "закрыто", open: "Открыто",
+    noTradesToday: "Сегодня сделок не было.", noClosedToday: "Сегодня закрытых сделок нет.", weekly: "Недельный отчёт", monthly: "Месячный отчёт",
+    noWeek: "За последние 7 дней закрытых сделок не было.", noMonth: "В этом месяце закрытых сделок не было.", top3: "Топ-3 по профиту:" },
+  en: { profit: "Profit", stop: "Stop loss", peak: "peak", upTo5: "under +5%", after: "after", total: "Total PnL", closed: "closed", open: "Open",
+    noTradesToday: "No trades today.", noClosedToday: "No closed trades today.", weekly: "Weekly report", monthly: "Monthly report",
+    noWeek: "No closed trades in the last 7 days.", noMonth: "No closed trades this month.", top3: "Top 3 by profit:" },
+} as const;
 
-function outcomeBlock(closed: ReportRow[], withList: boolean): string[] {
+function outcomeBlock(closed: ReportRow[], withList: boolean, lang: Lang = "ru"): string[] {
+  const t = T[lang]; const side = sideOf(lang);
   const by = (s: string) => closed.filter((r) => tradeStatus(r) === s);
   const profit = by("profit");
   const be = by("be_stop");
   const stop = by("stop_loss");
   const expired = by("expired");
   const lines: string[] = [];
-  lines.push(`✅ Профит: ${profit.length} | PnL: ${net(profit)}`);
-  if (withList) for (const r of profit) lines.push(`  • ${coin(r.symbol)} ${side(r.side)} ${fmtPct(pnl(r))} | пик ${fmtPct(Number(r.peak_pct ?? 0))}`);
-  lines.push(`❌ Стоп-лосс: ${stop.length} | PnL: ${net(stop)}`);
+  lines.push(`✅ ${t.profit}: ${profit.length} | PnL: ${net(profit)}`);
+  if (withList) for (const r of profit) lines.push(`  • ${coin(r.symbol)} ${side(r.side)} ${fmtPct(pnl(r))} | ${t.peak} ${fmtPct(Number(r.peak_pct ?? 0))}`);
+  lines.push(`❌ ${t.stop}: ${stop.length} | PnL: ${net(stop)}`);
   lines.push(`🛡 BE: ${be.length} | PnL: ${net(be)}`);
   const lt5 = be.filter((r) => beBucket(r) === "lt5");
-  if (lt5.length) lines.push(`  • до +5%: ${lt5.length} | PnL: ${net(lt5)}`);
+  if (lt5.length) lines.push(`  • ${t.upTo5}: ${lt5.length} | PnL: ${net(lt5)}`);
   for (const g of ["5", "8", "10"] as const) {
     const grp = be.filter((r) => beBucket(r) === g);
-    lines.push(`  • после +${g}%: ${grp.length} | PnL: ${net(grp)}`);
+    lines.push(`  • ${t.after} +${g}%: ${grp.length} | PnL: ${net(grp)}`);
   }
   lines.push(`⏳ Expired: ${expired.length} | PnL: ${net(expired)}`);
   const wins = profit.length + be.length;
   const denom = wins + stop.length;
-  lines.push(``, `💰 Общий PnL: ${net(closed)}`);
-  lines.push(`Win rate: ${denom ? `${Math.round((wins / denom) * 100)}%` : "—"} · закрыто: ${closed.length}`);
+  lines.push(``, `💰 ${t.total}: ${net(closed)}`);
+  lines.push(`Win rate: ${denom ? `${Math.round((wins / denom) * 100)}%` : "—"} · ${t.closed}: ${closed.length}`);
   return lines;
 }
 
-export function formatDailyReport(closed: ReportRow[], open: ReportRow[], at: number): string {
+export function formatDailyReport(closed: ReportRow[], open: ReportRow[], at: number, lang: Lang = "ru"): string {
+  const t = T[lang]; const side = sideOf(lang); const dateRu = dateOf(lang);
   const lines = [`📊 DAILY REPORT — NIHILYST`, dateRu(at, { day: "2-digit", month: "long", year: "numeric" }), ``];
   if (open.length) {
-    lines.push(`📂 Открыто: ${open.length}`);
+    lines.push(`📂 ${t.open}: ${open.length}`);
     for (const r of open) {
       const p = livePct(r);
       lines.push(`  • ${coin(r.symbol)} ${side(r.side)} | ${fmtP(r.entry)} → ${r.last_price === null ? "—" : fmtP(Number(r.last_price))}${p === null ? "" : ` (${fmtPct(p)})`}`);
@@ -101,35 +112,37 @@ export function formatDailyReport(closed: ReportRow[], open: ReportRow[], at: nu
     lines.push(``);
   }
   if (!closed.length && !open.length) {
-    lines.push(`Сегодня сделок не было.`);
+    lines.push(t.noTradesToday);
   } else if (!closed.length) {
-    lines.push(`Сегодня закрытых сделок нет.`);
+    lines.push(t.noClosedToday);
   } else {
-    lines.push(...outcomeBlock(closed, true));
+    lines.push(...outcomeBlock(closed, true, lang));
   }
-  lines.push(``, `#ежедневный_отчет #daily_report`);
+  lines.push(``, lang === "en" ? "#daily_report" : `#ежедневный_отчет #daily_report`);
   return lines.join("\n");
 }
 
-export function formatPeriodReport(kind: "weekly" | "monthly", closed: ReportRow[], from: number, to: number): string {
-  const title = kind === "weekly" ? "Недельный отчёт" : "Месячный отчёт";
+export function formatPeriodReport(kind: "weekly" | "monthly", closed: ReportRow[], from: number, to: number, lang: Lang = "ru"): string {
+  const t = T[lang]; const side = sideOf(lang); const dateRu = dateOf(lang);
+  const title = kind === "weekly" ? t.weekly : t.monthly;
   const period = kind === "weekly"
     ? `${dateRu(from, { day: "2-digit", month: "2-digit" })} – ${dateRu(to - 1, { day: "2-digit", month: "2-digit", year: "numeric" })}`
     : dateRu(from, { month: "long", year: "numeric" });
   const lines = [`📊 ${title} — NIHILYST`, period, ``];
   if (!closed.length) {
-    lines.push(kind === "weekly" ? "За последние 7 дней закрытых сделок не было." : "В этом месяце закрытых сделок не было.");
+    lines.push(kind === "weekly" ? t.noWeek : t.noMonth);
   } else {
     const top = closed.filter((r) => pnl(r) > 0).sort((a, b) => pnl(b) - pnl(a)).slice(0, 3);
     if (top.length) {
       const medals = ["🥇", "🥈", "🥉"];
-      lines.push(`🏆 Топ-3 по профиту:`);
+      lines.push(`🏆 ${t.top3}`);
       top.forEach((r, i) => lines.push(`${medals[i]} ${coin(r.symbol)} ${side(r.side)} ${fmtPct(pnl(r))}`));
       lines.push(``);
     }
-    lines.push(...outcomeBlock(closed, false));
+    lines.push(...outcomeBlock(closed, false, lang));
   }
-  lines.push(``, kind === "weekly" ? "#еженедельный_отчет #weekly_report" : "#ежемесячный_отчет #monthly_report");
+  lines.push(``, lang === "en" ? (kind === "weekly" ? "#weekly_report" : "#monthly_report")
+    : kind === "weekly" ? "#еженедельный_отчет #weekly_report" : "#ежемесячный_отчет #monthly_report");
   return lines.join("\n");
 }
 
