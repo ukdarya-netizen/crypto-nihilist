@@ -31,7 +31,6 @@ import { backfill, book, loadFromDb, needsBackfill, pruneDb, refresh } from "../
 import { getUniverse, setScanBusy, type UniverseSymbol } from "../market/coinglass";
 import { waitForEngineLease } from "../ops/lease";
 import { logger } from "../lib/logger";
-import { startVolumeStudyBackfill } from "../market/volume-study";
 import { marketMetrics } from "./metrics";
 
 /** LTF bars walked per evaluation (enough for the LTF structure to settle). */
@@ -418,7 +417,8 @@ export async function startEngine(): Promise<void> {
   startTelegram();
   startTradingRelay();
   // Owner 2026-11-05: Wyckoff + owner's volume indicators at the entry of every published signal.
-  startVolumeStudyBackfill();
+  // Owner 2026-11-10: the volume study at the entry (BingX: Wyckoff, VSA colours, Elliott, ICT, liquidity) is off —
+  // observation only, no effect in the final study. Stored readings stay.
   let lastBar = Math.floor(Date.now() / INTERVAL_MS["30m"]) * INTERVAL_MS["30m"];
   let lastPrune = 0;
   const tick = async () => {

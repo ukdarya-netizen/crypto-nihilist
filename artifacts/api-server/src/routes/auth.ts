@@ -57,6 +57,11 @@ router.post("/auth/register", async (req, res) => {
     if (existing && prev !== "blocked" && prev !== "expired" && prev !== "inactive") {
       res.status(409).json({ error: "Этот email уже зарегистрирован" }); return;
     }
+    // Security (owner 2026-11-10): a repeat request overwrites the password, so it is accepted only from the
+    // Telegram Chat ID the account already has — knowing someone's email is not enough to take the account.
+    if (existing?.chat_id && existing.chat_id !== chatId) {
+      res.status(409).json({ error: "Этот email уже зарегистрирован с другим Telegram Chat ID. Напишите администратору." }); return;
+    }
     const byChat = await userByChatId(chatId);
     if (byChat && byChat.id !== existing?.id) {
       res.status(409).json({ error: "Этот Telegram Chat ID уже зарегистрирован" }); return;
@@ -136,7 +141,11 @@ router.post("/auth/reset-confirm", async (req, res) => {
       "SELECT id FROM nh_password_resets WHERE user_id = $1 AND code = $2 AND NOT used AND expires_at > now() LIMIT 1",
       [user.id, code],
     );
-    if (!rows[0]) { res.status(400).json({ error: "Неверный или устаревший код" }); return; }
+    if (!rows[0]) {
+      // Security (owner 2026-11-10): 5 wrong codes for one account burn its active code (no guessing from many addresses).
+      if (limited(`reset-user:${user.id}`, 5, 15 * 60_000)) await pool.query("DELETE FROM nh_password_resets WHERE user_id = $1", [user.id]);
+      res.status(400).json({ error: "Неверный или устаревший код" }); return;
+    }
     await pool.query("UPDATE nh_users SET password_hash = $2 WHERE id = $1", [user.id, await hashPassword(newPassword)]);
     await pool.query("UPDATE nh_password_resets SET used = true WHERE id = $1", [rows[0].id]);
     res.json({ ok: true });

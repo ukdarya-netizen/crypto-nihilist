@@ -49,7 +49,7 @@ export function variants(): Mgmt[] {
   const out: Mgmt[] = [mk("source", "как ведёт Нигилист: Б.У. +5%, трейлинг от +15% (пик − 10 п.п.)", { be: 5, trail: { act: 15, gap: 10 } })];
   for (const be of [null, 5] as const) {
     const bu = be ? `Б.У. +${be}%, ` : "";
-    for (const take of [5, 8, 10, 15, 20, 30]) {
+    for (const take of [5, 6, 7, 8, 10, 12, 15, 20, 30]) { // 6, 7, 12: owner 2026-11-10 (shorts' take)
       if (be !== null && take <= be) continue;
       out.push(mk(`${be ? `be${be}_` : ""}take${take}`, `${bu}тейк +${take}%`, { be, take }));
     }

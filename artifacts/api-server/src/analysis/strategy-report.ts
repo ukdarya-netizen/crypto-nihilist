@@ -23,7 +23,15 @@ const SPAN = INTERVAL_MS["30m"];
 export const HISTORY_DAYS = 60;
 const WARMUP = 400;
 
-export type Group = "long_filtered" | "long_all" | "short";
+export type Group = "long_filtered" | "long_all" | "short" | "short_risk_hi" | "short_risk_lo";
+/**
+ * Owner 2026-11-10: shorts are also reported apart by the stop distance — in the final study (315 shorts
+ * 26.10–09.11) shorts with risk ≥ 9.5% did better with an earlier take (+5/+6%) and the rest with +8%; at 10x
+ * such a stop is also beyond the liquidation price. Each group is its own stream (one trade per coin).
+ */
+export const SHORT_RISK_SPLIT_PCT = 9.5;
+export const GROUPS: Group[] = ["long_filtered", "long_all", "short", "short_risk_hi", "short_risk_lo"];
+const emptyGroups = <T,>(v: () => T) => Object.fromEntries(GROUPS.map((g) => [g, v()])) as Record<Group, T>;
 export type DatasetReport = {
   name: "live" | "history";
   from: string | null; to: string | null; trades: number; symbols: number; skippedSymbols: number;
@@ -106,8 +114,9 @@ export async function loadReport(): Promise<Report | null> {
   return r;
 }
 
-const groupsOf = (side: "long" | "short", passes: boolean): Group[] =>
-  side === "short" ? ["short"] : passes ? ["long_filtered", "long_all"] : ["long_all"];
+const groupsOf = (side: "long" | "short", passes: boolean, riskPct: number): Group[] =>
+  side === "short" ? ["short", riskPct >= SHORT_RISK_SPLIT_PCT ? "short_risk_hi" : "short_risk_lo"]
+    : passes ? ["long_filtered", "long_all"] : ["long_all"];
 
 /** Results of every variant, filled trade by trade (candles are not kept). */
 class Acc {
@@ -118,8 +127,8 @@ class Acc {
   private fOpen = new Map<string, Record<string, number>>();
   constructor(private readonly ms: Mgmt[] = variants()) {
     for (const m of ms) {
-      this.rows.set(m.id, { long_filtered: [], long_all: [], short: [] });
-      this.open.set(m.id, { long_filtered: 0, long_all: 0, short: 0 });
+      this.rows.set(m.id, emptyGroups<Row[]>(() => []));
+      this.open.set(m.id, emptyGroups(() => 0));
     }
     for (const f of FILTER_SETS) {
       this.fRows.set(f.id, Object.fromEntries(TRADED.map((id) => [id, []])));
@@ -145,7 +154,7 @@ class Acc {
     }
   }
   report(name: DatasetReport["name"], symbols: number, skipped: number, smcUnknown?: number): DatasetReport {
-    const groups = { long_filtered: [], long_all: [], short: [] } as DatasetReport["groups"];
+    const groups = emptyGroups(() => []) as DatasetReport["groups"];
     for (const m of this.ms) for (const g of Object.keys(groups) as Group[]) {
       groups[g].push({ id: m.id, label: m.label, stats: stats(this.rows.get(m.id)![g], this.open.get(m.id)![g]) });
     }
@@ -204,7 +213,7 @@ async function liveItems(rows: LiveRow[], smc: Map<string, SmcChecks>): Promise<
       if (!checks) smcUnknown += 1;
       items.push({
         trade: { id: `nh-${r.id}`, side: r.side, entry: r.entry, stop: r.stop, openedAt, maxHoldMs: MAX_HOLD_MS[r.htf] },
-        group: groupsOf(r.side, passes), sets: setsOf(r.side, passes, checks), candles,
+        group: groupsOf(r.side, passes, r.risk_pct), sets: setsOf(r.side, passes, checks), candles,
         row: { symbol, side: r.side, setup: r.setup, openedAt: r.opened_at.toISOString(), today: r.side === "long" ? passes : null, smc: checks },
       });
     }
@@ -264,7 +273,7 @@ export function historySignals(symbol: string, data: Data, all: SetupSignal[] = 
   // One open trade per coin and side. Longs are followed twice: every long ("long_all") and only the
   // longs that pass today's filter ("long_filtered") — a failed long never blocks a filtered one.
   // Each SMC rule set is its own stream too.
-  const busy: Record<string, number> = { long_all: 0, long_filtered: 0, short: 0 };
+  const busy: Record<string, number> = emptyGroups(() => 0);
   for (const f of FILTER_SETS) busy[`f:${f.id}`] = 0;
   const items: Item[] = [];
   for (const s of all) {
@@ -272,7 +281,7 @@ export function historySignals(symbol: string, data: Data, all: SetupSignal[] = 
       side: s.side, riskPct: s.riskPct, entry: s.entry, blockTop: s.block.top, blockBottom: s.block.bottom,
       signalAt: s.signalAt, blockCreatedAt: s.block.createdAt ?? null, blockTime: s.block.time ?? null,
     }).pass;
-    const group = groupsOf(s.side, passes).filter((g) => s.signalAt >= busy[g]!);
+    const group = groupsOf(s.side, passes, s.riskPct).filter((g) => s.signalAt >= busy[g]!);
     const sets = setsOf(s.side, passes, s.smc).filter((f) => s.signalAt >= busy[`f:${f}`]!);
     if (!group.length && !sets.length) continue;
     const trade: SimTrade = { id: `${symbol}:${s.setup}:${s.signalAt}`, side: s.side, entry: s.entry, stop: s.stop, openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf] };
