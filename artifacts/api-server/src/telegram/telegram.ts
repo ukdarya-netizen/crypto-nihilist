@@ -55,7 +55,7 @@ async function enqueue(): Promise<QueueRow[]> {
             ) AS silent
      FROM nh_signal_events e JOIN nh_signals s ON s.id = e.signal_id
      WHERE e.telegram_sent_at IS NULL AND e.telegram_attempts < $1
-        AND (NOT s.live OR e.created_at >= CASE WHEN e.kind = 'opened' THEN $2 ELSE $5 END)
+        AND (NOT s.live OR e.created_at >= CASE WHEN e.kind = 'opened' THEN $2::timestamptz ELSE $5::timestamptz END)
         AND (NOT s.live OR $3::text IS NOT NULL OR EXISTS (
           SELECT 1 FROM nh_users u
           WHERE ${recipientSql("$4")} AND u.notify_since <= e.created_at
