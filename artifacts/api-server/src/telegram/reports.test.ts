@@ -45,30 +45,33 @@ const row = (over: Partial<ReportRow>): ReportRow => ({
   opened_at: "2026-10-25T01:00:00Z", closed_at: "2026-10-25T12:00:00Z", entry: 1, last_price: 1.2, ...over,
 });
 
-test("daily text: open, profit list, BE 5/8/10, stop, win rate; plain text", () => {
+test("daily text: closed trades only, each with its active time; no open positions; plain text", () => {
   const text = formatDailyReport([
     row({}),
-    row({ id: 2, symbol: "ABC-USDT", close_reason: "breakeven", pnl_pct: 4, peak_pct: 8.5 }),
-    row({ id: 3, symbol: "XYZ-USDT", side: "short", close_reason: "stop", pnl_pct: -6, peak_pct: 1 }),
-  ], [row({ id: 4, symbol: "OPN-USDT", status: "open", close_reason: null, pnl_pct: null, entry: 2, last_price: 2.2 })],
-  at("2026-10-25T18:00:00Z"));
+    row({ id: 2, symbol: "ABC-USDT", close_reason: "breakeven", pnl_pct: 4, peak_pct: 8.5, closed_at: "2026-10-27T03:30:00Z" }),
+    row({ id: 3, symbol: "XYZ-USDT", side: "short", close_reason: "stop", pnl_pct: -6, peak_pct: 1, closed_at: "2026-10-25T01:45:00Z" }),
+  ], at("2026-10-25T18:00:00Z"));
   assert.match(text, /DAILY REPORT — NIHILYST/);
-  assert.match(text, /OPN long \| 2 → 2\.2 \(\+10\.0%\)/);
+  assert.doesNotMatch(text, /Open/);
   assert.match(text, /✅ Profit: 1 \| PnL: \+20\.0%/);
-  assert.match(text, /JCT long \+20\.0% \| peak \+30\.0%/);
+  assert.match(text, /JCT long \+20\.0% \| peak \+30\.0% \| active 11h 0m/);
+  assert.match(text, /ABC long \+4\.0% \| peak \+8\.5% \| active 2d 2h/);
+  assert.match(text, /XYZ short −6\.0% \| peak \+1\.0% \| active 45m/);
   assert.match(text, /after \+8%: 1 \| PnL: \+4\.0%/);
   assert.match(text, /❌ Stop loss: 1 \| PnL: −6\.0%/);
   assert.match(text, /Total PnL: \+18\.0%/);
   assert.match(text, /Win rate: 67%/);
   assert.doesNotMatch(text, /<\/?[a-z]+>/);
   assert.doesNotMatch(text, /[А-Яа-яЁё]/);
+  assert.match(formatDailyReport([], at("2026-10-25T18:00:00Z")), /No closed trades today\./);
 });
 
 test("weekly and monthly: top-3 and empty texts", () => {
   const w = formatPeriodReport("weekly", [row({}), row({ id: 2, symbol: "B-USDT", pnl_pct: 30 })],
     at("2026-10-18T06:00:00Z"), at("2026-10-25T06:00:00Z"));
   assert.match(w, /Weekly report — NIHILYST/);
-  assert.match(w, /🥇 B long \+30\.0%\n🥈 JCT long \+20\.0%/);
+  assert.match(w, /🥇 B long \+30\.0% \| active 11h 0m\n🥈 JCT long \+20\.0% \| active 11h 0m/);
+  assert.match(w, /• active: 11h 0m/);
   assert.match(w, /#weekly_report/);
   const m = formatPeriodReport("monthly", [], at("2026-09-30T20:00:00Z"), at("2026-10-31T20:00:00Z"));
   assert.match(m, /October 2026/);

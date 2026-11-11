@@ -27,10 +27,8 @@ async function closedBetween(from: number, to: number): Promise<ReportRow[]> {
 export async function buildReport(s: Schedule, lang: "ru" | "en" = "en"): Promise<string> {
   const closed = await closedBetween(s.from, s.to);
   if (s.kind !== "daily") return formatPeriodReport(s.kind, closed, s.from, s.to, lang);
-  const { rows: open } = await pool.query<ReportRow>(
-    `SELECT ${COLUMNS} FROM nh_signals WHERE live AND status = 'open' ORDER BY opened_at`,
-  );
-  return formatDailyReport(closed, open, s.at, lang);
+  // Owner 2026-11-11: open positions are never put into reports.
+  return formatDailyReport(closed, s.at, lang);
 }
 
 /** Claims the period once (atomic); false when it was already claimed. */

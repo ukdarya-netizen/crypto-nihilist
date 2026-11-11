@@ -4,15 +4,17 @@
  * channel and every /start subscriber through the same delivery queue as
  * signals (reports use negative event ids, so they never collide).
  * Schedule (Samara/Dubai, UTC+4, as AltBullet):
- *   daily   — every day 22:00, trades closed since local midnight + open ones;
+ *   daily   — every day 22:00, trades closed since local midnight;
  *   weekly  — Sunday 10:00, trades closed in the last 7 days;
  *   monthly — 1st day 11:00, trades closed in the previous calendar month.
  * A report missed by a restart is sent late, within 24 h of its time; each
  * period is claimed once in nh_state, so it is never sent twice.
  * Only live trades (sent to Telegram) are counted. Plain text, no HTML.
+ * Owner 2026-11-11: reports carry CLOSED trades only, each with how long it was active — open positions are
+ * never listed, so nobody outside the subscription can follow live signals by coin from the reports.
  */
 import { beBucket, tradeStatus, type JournalRow } from "../stats/journal";
-import { fmtP, fmtPct } from "./format";
+import { fmtPct } from "./format";
 
 const TZ_MS = 4 * 3_600_000;
 const DAY = 86_400_000;
@@ -61,15 +63,36 @@ const coin = (s: string) => s.replace(/-USDT$/, "");
 const sideOf = (lang: Lang) => (s: string) => (lang === "en" ? (s === "long" ? "long" : "short") : s === "long" ? "лонг" : "шорт");
 const pnl = (r: ReportRow) => Number(r.pnl_pct ?? 0);
 const net = (rows: ReportRow[]) => fmtPct(rows.reduce((a, r) => a + pnl(r), 0));
-const livePct = (r: ReportRow) =>
-  r.last_price === null ? null : ((Number(r.last_price) - r.entry) / r.entry) * 100 * (r.side === "long" ? 1 : -1);
+/** How long a closed trade was active (opened → closed), e.g. "2d 5h", "3h 20m", "45m". */
+export function activeFor(r: ReportRow, lang: Lang = "en"): string {
+  const ms = new Date(r.closed_at ?? r.opened_at).getTime() - new Date(r.opened_at).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  return durationText(ms, lang);
+}
+function durationText(ms: number, lang: Lang): string {
+  const [d, h, m] = lang === "en" ? ["d", "h", "m"] : ["д", "ч", "м"];
+  const mins = Math.round(ms / 60_000);
+  const days = Math.floor(mins / 1440), hours = Math.floor((mins % 1440) / 60), rest = mins % 60;
+  if (days > 0) return `${days}${d} ${hours}${h}`;
+  if (hours > 0) return `${hours}${h} ${rest}${m}`;
+  return `${rest}${m}`;
+}
+/** Shortest … longest active time of a group (ranges, never a median). */
+function activeRange(rows: ReportRow[], lang: Lang): string | null {
+  const ms = rows
+    .map((r) => new Date(r.closed_at ?? r.opened_at).getTime() - new Date(r.opened_at).getTime())
+    .filter((v) => Number.isFinite(v) && v >= 0);
+  if (!ms.length) return null;
+  const lo = durationText(Math.min(...ms), lang), hi = durationText(Math.max(...ms), lang);
+  return lo === hi ? lo : `${lo} – ${hi}`;
+}
 const dateOf = (lang: Lang) => (ms: number, opts: Intl.DateTimeFormatOptions) =>
   new Date(ms).toLocaleString(lang === "en" ? "en-GB" : "ru-RU", { timeZone: "Europe/Samara", ...opts });
 const T = {
-  ru: { profit: "Профит", stop: "Стоп-лосс", peak: "пик", upTo5: "до +5%", after: "после", total: "Общий PnL", closed: "закрыто", open: "Открыто",
+  ru: { active: "активна", activeFor: "в позиции", profit: "Профит", stop: "Стоп-лосс", peak: "пик", upTo5: "до +5%", after: "после", total: "Общий PnL", closed: "закрыто", open: "Открыто",
     noTradesToday: "Сегодня сделок не было.", noClosedToday: "Сегодня закрытых сделок нет.", weekly: "Недельный отчёт", monthly: "Месячный отчёт",
     noWeek: "За последние 7 дней закрытых сделок не было.", noMonth: "В этом месяце закрытых сделок не было.", top3: "Топ-3 по профиту:" },
-  en: { profit: "Profit", stop: "Stop loss", peak: "peak", upTo5: "under +5%", after: "after", total: "Total PnL", closed: "closed", open: "Open",
+  en: { active: "active", activeFor: "active", profit: "Profit", stop: "Stop loss", peak: "peak", upTo5: "under +5%", after: "after", total: "Total PnL", closed: "closed", open: "Open",
     noTradesToday: "No trades today.", noClosedToday: "No closed trades today.", weekly: "Weekly report", monthly: "Monthly report",
     noWeek: "No closed trades in the last 7 days.", noMonth: "No closed trades this month.", top3: "Top 3 by profit:" },
 } as const;
@@ -82,10 +105,22 @@ function outcomeBlock(closed: ReportRow[], withList: boolean, lang: Lang = "en")
   const stop = by("stop_loss");
   const expired = by("expired");
   const lines: string[] = [];
+  // Daily: every closed trade by name with its active time. Weekly / monthly: the active-time range per group.
+  const list = (rows: ReportRow[]) => {
+    if (withList) {
+      for (const r of rows)
+        lines.push(`  • ${coin(r.symbol)} ${side(r.side)} ${fmtPct(pnl(r))} | ${t.peak} ${fmtPct(Number(r.peak_pct ?? 0))} | ${t.active} ${activeFor(r, lang)}`);
+    } else {
+      const range = activeRange(rows, lang);
+      if (range) lines.push(`  • ${t.activeFor}: ${range}`);
+    }
+  };
   lines.push(`✅ ${t.profit}: ${profit.length} | PnL: ${net(profit)}`);
-  if (withList) for (const r of profit) lines.push(`  • ${coin(r.symbol)} ${side(r.side)} ${fmtPct(pnl(r))} | ${t.peak} ${fmtPct(Number(r.peak_pct ?? 0))}`);
+  list(profit);
   lines.push(`❌ ${t.stop}: ${stop.length} | PnL: ${net(stop)}`);
+  list(stop);
   lines.push(`🛡 BE: ${be.length} | PnL: ${net(be)}`);
+  list(be);
   const lt5 = be.filter((r) => beBucket(r) === "lt5");
   if (lt5.length) lines.push(`  • ${t.upTo5}: ${lt5.length} | PnL: ${net(lt5)}`);
   for (const g of ["5", "8", "10"] as const) {
@@ -93,6 +128,7 @@ function outcomeBlock(closed: ReportRow[], withList: boolean, lang: Lang = "en")
     lines.push(`  • ${t.after} +${g}%: ${grp.length} | PnL: ${net(grp)}`);
   }
   lines.push(`⏳ Expired: ${expired.length} | PnL: ${net(expired)}`);
+  list(expired);
   const wins = profit.length + be.length;
   const denom = wins + stop.length;
   lines.push(``, `💰 ${t.total}: ${net(closed)}`);
@@ -100,20 +136,10 @@ function outcomeBlock(closed: ReportRow[], withList: boolean, lang: Lang = "en")
   return lines;
 }
 
-export function formatDailyReport(closed: ReportRow[], open: ReportRow[], at: number, lang: Lang = "en"): string {
-  const t = T[lang]; const side = sideOf(lang); const dateRu = dateOf(lang);
+export function formatDailyReport(closed: ReportRow[], at: number, lang: Lang = "en"): string {
+  const t = T[lang]; const dateRu = dateOf(lang);
   const lines = [`📊 DAILY REPORT — NIHILYST`, dateRu(at, { day: "2-digit", month: "long", year: "numeric" }), ``];
-  if (open.length) {
-    lines.push(`📂 ${t.open}: ${open.length}`);
-    for (const r of open) {
-      const p = livePct(r);
-      lines.push(`  • ${coin(r.symbol)} ${side(r.side)} | ${fmtP(r.entry)} → ${r.last_price === null ? "—" : fmtP(Number(r.last_price))}${p === null ? "" : ` (${fmtPct(p)})`}`);
-    }
-    lines.push(``);
-  }
-  if (!closed.length && !open.length) {
-    lines.push(t.noTradesToday);
-  } else if (!closed.length) {
+  if (!closed.length) {
     lines.push(t.noClosedToday);
   } else {
     lines.push(...outcomeBlock(closed, true, lang));
@@ -136,7 +162,7 @@ export function formatPeriodReport(kind: "weekly" | "monthly", closed: ReportRow
     if (top.length) {
       const medals = ["🥇", "🥈", "🥉"];
       lines.push(`🏆 ${t.top3}`);
-      top.forEach((r, i) => lines.push(`${medals[i]} ${coin(r.symbol)} ${side(r.side)} ${fmtPct(pnl(r))}`));
+      top.forEach((r, i) => lines.push(`${medals[i]} ${coin(r.symbol)} ${side(r.side)} ${fmtPct(pnl(r))} | ${t.active} ${activeFor(r, lang)}`));
       lines.push(``);
     }
     lines.push(...outcomeBlock(closed, false, lang));
