@@ -208,7 +208,7 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
      ON CONFLICT DO NOTHING RETURNING id`,
     [
       symbol, s.setup, s.htf, s.ltf, s.side, s.block.id, s.block.top, s.block.bottom, s.block.scope,
-      s.barTime, s.entry, s.stop, btc ? btcTp1 : trade.tp1, btc ? btcTp2 : null, s.riskPct, btc ? BTC_TARGETS_R[0] : PARTIAL_AT_PCT / s.riskPct, targetsSource,
+      s.barTime, s.entry, s.stop, btc ? btcTp1 : trade.tp1, btc ? btcTp2 : s.tp2, s.riskPct, btc ? BTC_TARGETS_R[0] : PARTIAL_AT_PCT / s.riskPct, targetsSource,
       new Date(trade.openedAt), new Date(trade.expiresAt), JSON.stringify({ ...signalDetails(s), confluenceSetups: confluence, entryFilter: filter, chochBar }),
       live, s.stop,
     ],
