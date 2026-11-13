@@ -24,20 +24,21 @@
  * by month, thirds of the period, symbols. Per-trade CSV for further fitting.
  *
  * Run (from scripts/): npx tsx src/elliott-wave3-backtest.ts --tf 1h --days 100 --out /tmp/ew3_1h
- *   --tf 1h|4h  --days N  --L 3,5,8  --limit N (symbols, for a quick check)
+ *   --tf 1h|4h|1d  --days N  --L 3,5,8  --hbars N (horizon bars on 4h/1d)  --limit N (symbols, for a quick check)
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const args = new Map<string, string>();
 for (let i = 2; i < process.argv.length; i += 2) args.set(process.argv[i]!.replace(/^--/, ""), process.argv[i + 1] ?? "");
-const TF = (args.get("tf") ?? "1h") as "1h" | "4h";
+const TF = (args.get("tf") ?? "1h") as "1h" | "4h" | "1d";
 const DAYS = Number(args.get("days") ?? 100);
 const OUT = args.get("out") ?? `/tmp/ew3_${TF}`;
 const LS = (args.get("L") ?? "3,5,8").split(",").map(Number);
 const LIMIT = Number(args.get("limit") ?? 10_000);
-const BAR = TF === "1h" ? 3_600_000 : 4 * 3_600_000;
-const H = TF === "1h" ? 72 : 30; // 72h on 1H, 5 days on 4H
+const BAR = TF === "1h" ? 3_600_000 : TF === "4h" ? 4 * 3_600_000 : 24 * 3_600_000;
+// Horizon: 72h on 1H; on 4H and 1D configurable with --hbars (default 30 bars = 5 days on 4H, 30 days on 1D).
+const H = TF === "1h" ? 72 : Number(args.get("hbars") ?? 30);
 const FEE = 0.1;
 const HOST = "https://open-api.bingx.com";
 
@@ -165,8 +166,9 @@ async function main() {
   let done = 0;
   for (const symbol of symbols) {
     try {
-      const raw = await klines(symbol, from - 300 * BAR, now);
-      if (raw.length < 300) { errors[symbol] = "short_history"; continue; }
+      const WARM = TF === "1d" ? 60 : 300; // 1D: coins often have < 1 year of history
+      const raw = await klines(symbol, from - WARM * BAR, now);
+      if (raw.length < (TF === "1d" ? 120 : 300)) { errors[symbol] = "short_history"; continue; }
       for (const side of ["long", "short"] as const) {
         const cs = side === "long" ? raw : mirror(raw);
         for (const L of LS) {
