@@ -25,8 +25,8 @@ import { bingxKlines, type C } from "../market/vsa";
 
 export const STUDY_DIR = process.env.NH_STUDY_OUT ?? "/tmp/nh-final";
 const OUT = STUDY_DIR;
-// v2 (owner 2026-11-13): + Lucy's VSA before and after the entry; the v1 cache has no Lucy columns.
-const CACHE = `${OUT}/mf-cache-v2.jsonl`;
+// v3 (owner 2026-11-13): + Lucy's VSA before and after the entry, triangles v1 and v2; older caches lack them.
+const CACHE = `${OUT}/mf-cache-v3.jsonl`;
 export const studyState: { running: boolean; startedAt: string | null; finishedAt: string | null; phase: string; done: number; total: number; error: string | null; log: string[] } =
   { running: false, startedAt: null, finishedAt: null, phase: "idle", done: 0, total: 0, error: null, log: [] };
 const say = (m: string) => { studyState.log.push(`${new Date().toISOString()} ${m}`); if (studyState.log.length > 50) studyState.log.shift(); };
@@ -134,37 +134,63 @@ export function lucyVsa(kl: C[], fut: Map<number, number> | null, spot: Map<numb
     if (pos <= 0.5 && k.h > kl[i - 1]!.h) return "SELL";
     return null;
   });
+  // v2 marks (indicator v2, 2026-11-13): the extreme of the last 20 bars, close strictly beyond the middle, and the
+  // next bar confirms (closes beyond the middle of the volume bar, no new extreme). Stored at the CONFIRMING bar —
+  // the moment the triangle becomes known — so nothing after the signal leaks into the entry columns.
+  const EXT = 20;
+  const raw2 = kl.map((k, i) => {
+    if (i < EXT - 1 || !bright(L[i]!)) return null;
+    const pos = k.h > k.l ? (k.c - k.l) / (k.h - k.l) : 0.5;
+    const win = kl.slice(i - EXT + 1, i + 1);
+    if (pos > 0.5 && k.l <= Math.min(...win.map((x) => x.l))) return "BUY";
+    if (pos < 0.5 && k.h >= Math.max(...win.map((x) => x.h))) return "SELL";
+    return null;
+  });
+  const mark2 = kl.map((k, j) => {
+    const r = j > 0 ? raw2[j - 1] : null;
+    if (!r) return null;
+    const p = kl[j - 1]!, mid = (p.h + p.l) / 2;
+    if (r === "BUY" && k.c > mid && k.l >= p.l) return "BUY";
+    if (r === "SELL" && k.c < mid && k.h <= p.h) return "SELL";
+    return null;
+  });
   const last = Math.floor(signalAt / span) * span - span; // last bar closed by the signal
   const i = kl.findIndex((k) => k.t === last);
   if (i < 0 || L[i] === null) { out[`lv_${tf}`] = "missing"; return out; }
   out[`lv_${tf}`] = "ok";
   out[`lv_${tf}_agg`] = L[i]; out[`lv_${tf}_fut`] = LF[i]; out[`lv_${tf}_spot`] = LS[i];
-  out[`lv_${tf}_mark`] = mark[i] ?? "";
+  const count = (from: number, to: number, f: (k: number) => boolean) => { let n = 0; for (let k = Math.max(0, from); k <= Math.min(kl.length - 1, to); k++) if (f(k)) n++; return n; };
   const la = agg.slice(i - LUCY_LONG + 1, i + 1).reduce((s, y) => s + y, 0) / LUCY_LONG;
   out[`lv_${tf}_vs_long`] = r4(la > 0 ? agg[i]! / la : null);
   out[`lv_${tf}_spot_share`] = r4(agg[i]! > 0 ? spotV[i]! / agg[i]! : null);
-  const count = (from: number, to: number, f: (k: number) => boolean) => { let n = 0; for (let k = Math.max(0, from); k <= Math.min(kl.length - 1, to); k++) if (f(k)) n++; return n; };
   for (const n of [6, 24]) {
     out[`lv_${tf}_b${n}_bright`] = count(i - n + 1, i, (k) => bright(L[k]!));
     out[`lv_${tf}_b${n}_grey`] = count(i - n + 1, i, (k) => L[k] === "N");
-    out[`lv_${tf}_b${n}_buy`] = count(i - n + 1, i, (k) => mark[k] === "BUY");
-    out[`lv_${tf}_b${n}_sell`] = count(i - n + 1, i, (k) => mark[k] === "SELL");
   }
-  const ago = (m: string) => { for (let k = i; k >= Math.max(0, i - 47); k--) if (mark[k] === m) return i - k; return null; };
-  out[`lv_${tf}_last_buy_ago`] = ago("BUY"); out[`lv_${tf}_last_sell_ago`] = ago("SELL");
-  // After the entry (closed bars only): for a short a BUY is volume against it, for a long a SELL.
   const after = kl.length - 1 - i;
   out[`lv_${tf}_after_bars`] = after;
-  for (const n of [3, 6, 12, 24]) {
-    if (after < n) continue;
-    out[`lv_${tf}_a${n}_bright`] = count(i + 1, i + n, (k) => bright(L[k]!));
-    out[`lv_${tf}_a${n}_buy`] = count(i + 1, i + n, (k) => mark[k] === "BUY");
-    out[`lv_${tf}_a${n}_sell`] = count(i + 1, i + n, (k) => mark[k] === "SELL");
+  for (const n of [3, 6, 12, 24]) if (after >= n) out[`lv_${tf}_a${n}_bright`] = count(i + 1, i + n, (k) => bright(L[k]!));
+  // v1 = the indicator as it was (lv_), v2 = the fixed triangles (lv2_), same statistics.
+  for (const [pre, mk] of [["lv", mark], ["lv2", mark2]] as const) {
+    out[`${pre}_${tf}_mark`] = mk[i] ?? "";
+    for (const n of [6, 24]) {
+      out[`${pre}_${tf}_b${n}_buy`] = count(i - n + 1, i, (k) => mk[k] === "BUY");
+      out[`${pre}_${tf}_b${n}_sell`] = count(i - n + 1, i, (k) => mk[k] === "SELL");
+    }
+    const ago = (m: string) => { for (let k = i; k >= Math.max(0, i - 47); k--) if (mk[k] === m) return i - k; return null; };
+    out[`${pre}_${tf}_last_buy_ago`] = ago("BUY"); out[`${pre}_${tf}_last_sell_ago`] = ago("SELL");
+    // After the entry (closed bars only): for a short a BUY is volume against it, for a long a SELL.
+    for (const n of [3, 6, 12, 24]) {
+      if (after < n) continue;
+      out[`${pre}_${tf}_a${n}_buy`] = count(i + 1, i + n, (k) => mk[k] === "BUY");
+      out[`${pre}_${tf}_a${n}_sell`] = count(i + 1, i + n, (k) => mk[k] === "SELL");
+    }
+    const first = (m: string) => { for (let k = i + 1; k < kl.length; k++) if (mk[k] === m) return k - i; return null; };
+    out[`${pre}_${tf}_first_buy_after`] = first("BUY"); out[`${pre}_${tf}_first_sell_after`] = first("SELL");
+    const sym = (k: number) => (mk[k] === "BUY" ? "^" : mk[k] === "SELL" ? "v" : "");
+    out[`${pre}_${tf}_seq`] = L.slice(Math.max(0, i - 11), i + 1).map((l, k) => (l ?? "-") + sym(Math.max(0, i - 11) + k)).join("");
+    out[`${pre}_${tf}_seq_after`] = L.slice(i + 1, i + 13).map((l, k) => (l ?? "-") + sym(i + 1 + k)).join("");
   }
-  const first = (m: string) => { for (let k = i + 1; k < kl.length; k++) if (mark[k] === m) return k - i; return null; };
-  out[`lv_${tf}_first_buy_after`] = first("BUY"); out[`lv_${tf}_first_sell_after`] = first("SELL");
-  out[`lv_${tf}_seq`] = L.slice(Math.max(0, i - 11), i + 1).map((l, k) => (l ?? "-") + (mark[Math.max(0, i - 11) + k] === "BUY" ? "^" : mark[Math.max(0, i - 11) + k] === "SELL" ? "v" : "")).join("");
-  out[`lv_${tf}_seq_after`] = L.slice(i + 1, i + 13).map((l, k) => (l ?? "-") + (mark[i + 1 + k] === "BUY" ? "^" : mark[i + 1 + k] === "SELL" ? "v" : "")).join("");
   return out;
 }
 function sum4h(m: Map<number, number> | null): Map<number, number> | null {

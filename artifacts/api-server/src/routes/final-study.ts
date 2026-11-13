@@ -3,7 +3,7 @@
  * database. Header x-trading-token = NIHILIST_TRADING_TOKEN (the same secret as the trading bot's position sync).
  *   GET /api/nh-study/start            — starts the study in the background (once at a time); returns the state
  *   GET /api/nh-study/status           — progress, last log lines, files ready
- *   GET /api/nh-study/file/:name       — trades.csv | rejects.csv | trajectory.csv.gz | mf-cache-v2.jsonl
+ *   GET /api/nh-study/file/:name       — trades.csv | rejects.csv | trajectory.csv.gz | mf-cache-v3.jsonl
  * Read-only on the database; nothing else in the app changes.
  */
 import { createReadStream, existsSync, statSync } from "node:fs";
@@ -12,7 +12,7 @@ import { tradingToken } from "../lib/trading-relay";
 import { tokenMatches } from "./trading-sync";
 import { STUDY_DIR, startFinalStudy, studyState } from "../analysis/final-study";
 
-const FILES = new Set(["trades.csv", "rejects.csv", "trajectory.csv.gz", "mf-cache-v2.jsonl"]);
+const FILES = new Set(["trades.csv", "rejects.csv", "trajectory.csv.gz", "mf-cache-v3.jsonl"]);
 const router: IRouter = Router();
 
 function allowed(req: Request, res: Response): boolean {

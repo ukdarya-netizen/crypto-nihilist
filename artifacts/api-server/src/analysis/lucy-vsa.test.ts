@@ -26,3 +26,12 @@ test("Lucy's VSA: a bar below the 120-bar average is grey; no futures = missing"
   assert.equal(r.lv_1h_agg, "N");
   assert.equal(lucyVsa(kl, null, spot, H1, 146 * H1, "1h").lv_1h, "missing");
 });
+
+test("Lucy's VSA v2: 20-bar extreme + next-bar confirmation, known only at the confirming bar", () => {
+  const atVolumeBar = lucyVsa(kl, fut, spot, H1, 151 * H1, "1h"); // last closed = 150 (the volume bar)
+  assert.equal(atVolumeBar.lv2_1h_mark, "");
+  assert.equal(atVolumeBar.lv2_1h_first_buy_after, 1);
+  const atConfirm = lucyVsa(kl, fut, spot, H1, 152 * H1, "1h"); // last closed = 151 confirms
+  assert.equal(atConfirm.lv2_1h_mark, "BUY");
+  assert.equal(atConfirm.lv_1h_last_buy_ago, 1);
+});
