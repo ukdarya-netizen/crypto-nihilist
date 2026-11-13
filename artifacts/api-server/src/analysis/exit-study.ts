@@ -8,6 +8,8 @@
  * Owner 2026-11-13, same run: the volumes of the order block itself, of the approach and of the structure break.
  *   ob.csv.gz: signal_id,t,o,h,l,c,v,fut_buy,fut_sell,spot_buy,spot_sell — 1h from 125 days before the block candle
  *     to the signal (4h / 1D are sums of 1h; enough history for the 120-bar long average on 1D);
+ *     + oi, funding (OI-weighted), liq_long / liq_short, Binance long % and long/short ratio (crowding, squeeze);
+ *   path.csv.gz covers open signals too (up to now); btc.csv.gz: BTC 15m and 1h over the whole period;
  *   meta.csv: id,symbol,side,setup,htf,ltf,opened_at,closed_at,block_time,block_created_at,first_touch_at,last_touch_at,
  *     choch_bar_time,block_top,block_bottom,entry,stop — every signal, open ones included.
  */
@@ -75,10 +77,15 @@ async function obOf(sig: { id: number; symbol: string; opened: number; blockTime
   const kl = await bingxKlines(sig.symbol, "1h", end, limit).catch(() => []);
   const fut = await cg("/api/futures/aggregated-taker-buy-sell-volume/history", { symbol: base, exchange_list: FUT }, ["aggregated_buy_volume_usd", "aggregated_sell_volume_usd"], end, limit, "1h");
   const spot = await cg("/api/spot/aggregated-cvd/history", { symbol: base, exchange_list: SPOT }, ["agg_taker_buy_vol", "agg_taker_sell_vol"], end, limit, "1h");
+  // Owner 2026-11-13: crowding and squeeze risk around the block — OI, funding, liquidations, Binance long/short.
+  const oi = await cg("/api/futures/open-interest/aggregated-history", { symbol: base }, ["close"], end, limit, "1h");
+  const fr = await cg("/api/futures/funding-rate/oi-weight-history", { symbol: base }, ["close"], end, limit, "1h");
+  const liq = await cg("/api/futures/liquidation/aggregated-history", { symbol: base, exchange_list: FUT }, ["aggregated_long_liquidation_usd", "aggregated_short_liquidation_usd"], end, limit, "1h");
+  const ls = await cg("/api/futures/global-long-short-account-ratio/history", { exchange: "Binance", symbol: `${base}USDT` }, ["global_account_long_percent", "global_account_long_short_ratio"], end, limit, "1h");
   const f = (v: number | null | undefined) => (v === null || v === undefined ? "" : String(v));
   return kl.filter((k) => k.t >= start).map((k) => {
-    const a = fut?.get(k.t), b = spot?.get(k.t);
-    return [sig.id, k.t, k.o, k.h, k.l, k.c, k.v, f(a?.[0]), f(a?.[1]), f(b?.[0]), f(b?.[1])].join(",");
+    const a = fut?.get(k.t), b = spot?.get(k.t), o = oi?.get(k.t), r = fr?.get(k.t), q = liq?.get(k.t), l = ls?.get(k.t);
+    return [sig.id, k.t, k.o, k.h, k.l, k.c, k.v, f(a?.[0]), f(a?.[1]), f(b?.[0]), f(b?.[1]), f(o?.[0]), f(r?.[0]), f(q?.[0]), f(q?.[1]), f(l?.[0]), f(l?.[1])].join(",");
   });
 }
 const ms = (v: unknown) => { const n = num(v); return n === null ? null : n < 1e12 ? n * 1000 : n; };
@@ -100,17 +107,38 @@ async function run(): Promise<void> {
            details->>'blockTime' AS block_time, details->>'blockCreatedAt' AS block_created_at,
            details->>'firstTouchAt' AS first_touch_at, details->>'lastTouchAt' AS last_touch_at,
            coalesce(details->'chochBar'->>'t', details->'chochBar'->>'time', bar_time::text) AS choch_bar_time
-      FROM nh_signals ORDER BY opened_at`)).rows;
+      FROM nh_signals ORDER BY (side = 'short') DESC, opened_at`)).rows; // shorts first (owner 2026-11-13)
   // meta for every signal (open ones too)
   const cols = ["id", "symbol", "side", "setup", "htf", "ltf", "status", "opened_at", "closed_at", "block_time", "block_created_at", "first_touch_at", "last_touch_at", "choch_bar_time", "block_top", "block_bottom", "entry", "stop"];
   const metaWs = createWriteStream(`${EXIT_DIR}/meta.csv`);
   metaWs.write(cols.join(",") + "\n");
   for (const r of all) metaWs.write(cols.map((c) => csvCell(c.endsWith("_at") && r[c] instanceof Date ? (r[c] as Date).toISOString() : r[c])).join(",") + "\n");
   metaWs.end(); await new Promise((r) => metaWs.on("finish", r));
-  const closed = all.filter((r) => r.status === "closed" && r.closed_at);
-  exitState.total = closed.length + all.length;
-  exitState.done = closed.filter((r) => donePath.has(r.id)).length + all.filter((r) => doneOb.has(r.id)).length;
-  say(`signals ${all.length} (closed ${closed.length}), cached path ${donePath.size}, ob ${doneOb.size}`);
+  exitState.total = 2 * all.length + 1;
+  exitState.done = all.filter((r) => donePath.has(r.id)).length + all.filter((r) => doneOb.has(r.id)).length;
+  say(`signals ${all.length}, cached path ${donePath.size}, ob ${doneOb.size}`);
+  // BTC over the whole period, 15m and 1h (owner 2026-11-13: test reactions to a market reversal).
+  if (!existsSync(`${EXIT_DIR}/btc.csv.gz`) && all.length) {
+    const first = Math.min(...all.map((r) => new Date(r.opened_at).getTime()));
+    const rows: string[] = ["tf,t,o,h,l,c,v,fut_buy,fut_sell,spot_buy,spot_sell,oi"];
+    for (const [tf, span] of [["15m", M15], ["1h", H1]] as const) {
+      const start = first - 150 * span, end = Date.now();
+      const limit = Math.min(4500, Math.ceil((end - start) / span) + 2);
+      const kl = await bingxKlines("BTC-USDT", tf, end, limit).catch(() => []);
+      const fut = await cg("/api/futures/aggregated-taker-buy-sell-volume/history", { symbol: "BTC", exchange_list: FUT }, ["aggregated_buy_volume_usd", "aggregated_sell_volume_usd"], end, limit, tf);
+      const spot = await cg("/api/spot/aggregated-cvd/history", { symbol: "BTC", exchange_list: SPOT }, ["agg_taker_buy_vol", "agg_taker_sell_vol"], end, limit, tf);
+      const oi = await cg("/api/futures/open-interest/aggregated-history", { symbol: "BTC" }, ["close"], end, limit, tf);
+      const f = (v: number | null | undefined) => (v === null || v === undefined ? "" : String(v));
+      for (const k of kl) {
+        const a = fut?.get(k.t), b = spot?.get(k.t), o = oi?.get(k.t);
+        rows.push([tf, k.t, k.o, k.h, k.l, k.c, k.v, f(a?.[0]), f(a?.[1]), f(b?.[0]), f(b?.[1]), f(o?.[0])].join(","));
+      }
+    }
+    const gz = createGzip(); const ws = createWriteStream(`${EXIT_DIR}/btc.csv.gz`); gz.pipe(ws);
+    gz.write(rows.join("\n") + "\n"); gz.end(); await new Promise((r) => ws.on("finish", r));
+    say(`btc.csv.gz: ${rows.length - 1} rows`);
+  }
+  exitState.done++;
   for (const r of all) {
     const opened = new Date(r.opened_at).getTime();
     if (!doneOb.has(r.id)) {
@@ -118,15 +146,16 @@ async function run(): Promise<void> {
       appendFileSync(OB_CACHE, JSON.stringify({ id: r.id, lines }) + "\n");
       exitState.done++;
     }
-    if (r.status === "closed" && r.closed_at && !donePath.has(r.id)) {
-      const lines = await pathOf({ id: r.id, symbol: r.symbol, opened, closed: new Date(r.closed_at).getTime() });
+    // Open signals too (owner 2026-11-13: the open shorts), their path up to now.
+    if (!donePath.has(r.id)) {
+      const lines = await pathOf({ id: r.id, symbol: r.symbol, opened, closed: r.closed_at ? new Date(r.closed_at).getTime() : Date.now() });
       appendFileSync(CACHE, JSON.stringify({ id: r.id, lines }) + "\n");
       exitState.done++;
     }
   }
   for (const [cache, out, head] of [
     [CACHE, "path.csv.gz", "signal_id,t,o,h,l,c,v,fut_buy,fut_sell,spot_buy,spot_sell,oi"],
-    [OB_CACHE, "ob.csv.gz", "signal_id,t,o,h,l,c,v,fut_buy,fut_sell,spot_buy,spot_sell"],
+    [OB_CACHE, "ob.csv.gz", "signal_id,t,o,h,l,c,v,fut_buy,fut_sell,spot_buy,spot_sell,oi,funding,liq_long,liq_short,ls_long_pct,ls_ratio"],
   ] as const) {
     const gz = createGzip(); const ws = createWriteStream(`${EXIT_DIR}/${out}`); gz.pipe(ws);
     gz.write(head + "\n");

@@ -4,7 +4,7 @@
  *   GET /api/nh-study/start            — starts the study in the background (once at a time); returns the state
  *   GET /api/nh-study/status           — progress, last log lines, files ready
  *   GET /api/nh-study/file/:name       — trades.csv | rejects.csv | trajectory.csv.gz | mf-cache-v3.jsonl
- *   GET /api/nh-study/exits/start | /exits/status | /exits/file/:name (path.csv.gz | ob.csv.gz | meta.csv) — exit and
+ *   GET /api/nh-study/exits/start | /exits/status | /exits/file/:name (path.csv.gz | ob.csv.gz | meta.csv | btc.csv.gz) — exit and
  *       order-block study (owner 2026-11-13): 15m path with delta, spot delta and OI from 150 bars before the entry to
  *       the close (closed signals); 1h volumes from the order block through the approach to the break (every signal).
  * Read-only on the database; nothing else in the app changes.
@@ -54,7 +54,7 @@ router.get("/nh-study/exits/start", (req, res) => {
   if (!allowed(req, res)) return;
   res.json({ started: startExitStudy(), state: exitState });
 });
-const EXIT_FILES = new Set(["path.csv.gz", "ob.csv.gz", "meta.csv"]);
+const EXIT_FILES = new Set(["path.csv.gz", "ob.csv.gz", "meta.csv", "btc.csv.gz"]);
 router.get("/nh-study/exits/status", (req, res) => {
   if (!allowed(req, res)) return;
   res.json({ state: exitState, files: Object.fromEntries([...EXIT_FILES].map((f) => [f, existsSync(`${EXIT_DIR}/${f}`) ? statSync(`${EXIT_DIR}/${f}`).size : null])) });
