@@ -103,9 +103,9 @@ export default function Reference() {
         <SideTable rows={rows} />
         <p className="text-xs text-muted">Сделки ведутся по 5-минутным свечам.</p>
         <div className="panel border-primary/30 p-4 text-sm leading-relaxed">
-          <p className="font-semibold">BTC — свои правила</p>
+          <p className="font-semibold">BTC — сигналов нет</p>
           <p className="mt-2 text-foreground/75">
-            BTC движется в разы меньше альтов, поэтому проценты альтов к нему не применяются.{owner ? " Стоп — 0,3% за структурным." : ""} Тейк 1 — 1,5R: закрывается 50%, стоп переносится на вход. Тейк 2 — 3R: закрывается остаток. Без безубытка на +5%, без фиксации 50% на +10% и без трейлинга.
+            У биткоина отдельный бот — Bitcoin Margin Master, поэтому Нигилист сигналы по BTC не даёт. Сделки по BTC, открытые раньше, ведутся до закрытия по своим правилам: тейк 1 — 1,5R (закрывается 50%, стоп на вход), тейк 2 — 3R.
           </p>
         </div>
       </Section>

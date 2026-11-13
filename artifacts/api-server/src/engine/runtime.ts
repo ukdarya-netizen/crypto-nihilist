@@ -184,7 +184,8 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
       { ...signalDetails(s), entryFilter: filter, chochBar });
     return "filtered";
   }
-  // BTC (owner 2026-11-10): BTC Bullet's management — TP 1 at 1.5R (50%, stop to entry), TP 2 at 3R.
+  // BTC (owner 2026-11-10): BTC Bullet's management — TP 1 at 1.5R (50%, stop to entry), TP 2 at 3R. No new BTC
+  // signals since 2026-11-13 (never evaluated); kept for BTC trades opened before.
   const btc = isBtc(symbol);
   const [btcTp1, btcTp2] = btcTargets(s.side, s.entry, s.stop);
   const trade = btc
@@ -327,6 +328,9 @@ async function runCycle(bar: number): Promise<void> {
   let evalChain: Promise<void> = Promise.resolve();
   const evaluate = (symbol: string) => {
     evaluated.add(symbol);
+    // Owner 2026-11-13: Bitcoin has its own bot (Bitcoin Margin Master) — no BTC signals here. BTC candles are
+    // still refreshed: they are the BTC context of every altcoin snapshot.
+    if (isBtc(symbol)) return;
     evalChain = evalChain.then(async () => {
       try {
         const result = await evaluateSymbol(symbol);
