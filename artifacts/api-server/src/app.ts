@@ -3,6 +3,7 @@ import cors from "cors";
 import nihilistRoutes from "./routes/nihilist";
 import authRoutes from "./routes/auth";
 import tradingSyncRoutes from "./routes/trading-sync";
+import finalStudyRoutes from "./routes/final-study";
 import { ownerOnly, requireUser } from "./lib/users";
 
 const app: Express = express();
@@ -21,6 +22,8 @@ app.get("/api/healthz", (_req, res) => {
 app.use("/api", authRoutes);
 // Trading bot (own token, not a dashboard login): position sync.
 app.use("/api", tradingSyncRoutes);
+// Study (same token as the trading bot): read-only on the database, files for the owner's analysis.
+app.use("/api", finalStudyRoutes);
 app.use("/api/nh", requireUser);
 // Owner only (2026-11-02): scanner, decisions, entry metrics, per-setup stats,
 // post-entry trajectories and diagnostics. Users see positions, overview,

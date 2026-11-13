@@ -25,11 +25,13 @@ import { bingxKlines, type C } from "../market/vsa";
 
 export const STUDY_DIR = process.env.NH_STUDY_OUT ?? "/tmp/nh-final";
 const OUT = STUDY_DIR;
-const CACHE = `${OUT}/mf-cache.jsonl`;
+// v2 (owner 2026-11-13): + Lucy's VSA before and after the entry; the v1 cache has no Lucy columns.
+const CACHE = `${OUT}/mf-cache-v2.jsonl`;
 export const studyState: { running: boolean; startedAt: string | null; finishedAt: string | null; phase: string; done: number; total: number; error: string | null; log: string[] } =
   { running: false, startedAt: null, finishedAt: null, phase: "idle", done: 0, total: 0, error: null, log: [] };
 const say = (m: string) => { studyState.log.push(`${new Date().toISOString()} ${m}`); if (studyState.log.length > 50) studyState.log.shift(); };
-const GAP_MS = Number(process.env.NH_STUDY_GAP_MS ?? 700);
+// The CoinGlass key is shared with CAB and the BTC bot (owner 2026-11-13): ~24 requests a minute at most.
+const GAP_MS = Number(process.env.NH_STUDY_GAP_MS ?? 2500);
 const SPOT_EXCHANGES = "Binance,Bitfinex,Bitget,Bybit,Coinbase,Crypto.com,Gate,Kraken,OKX,Upbit";
 const FUTURES_EXCHANGES = "Binance,BingX,Bitfinex,Bitget,Bybit,Coinbase,Crypto.com,Deribit,Gate,HTX,Hyperliquid,Kraken,KuCoin,LBank,MEXC,OKX,WhiteBIT,dYdX";
 const M30 = 1_800_000, H1 = 3_600_000, H4 = 4 * H1;
@@ -97,6 +99,89 @@ function readings(cs: Bar[], i: number, longN: number): Record<string, number | 
   return out;
 }
 
+// ---------------- Lucy's VSA (owner's TradingView indicator, one to one) ----------------
+// Total = aggregated spot + aggregated futures volume, USD (missing spot counts as 0, as z() in the
+// indicator; missing futures = no data). Welkin on the total: SMA(20) and population σ(20) including
+// the bar; > avg+4σ W · > avg+3σ M · > avg+2σ O · > avg A · ≥1.25× previous Y · else N; and a bar
+// below the long average SMA(120) is N (grey). BUY ▲ = bright bar (O/M/W) that made a lower low and
+// closed in the upper half; SELL ▼ = bright bar that made a higher high and closed in the lower half.
+const LUCY_LEN = 20, LUCY_LONG = 120;
+function lucyLetters(v: number[]): (string | null)[] {
+  return v.map((x, i) => {
+    if (i < LUCY_LONG - 1 || !Number.isFinite(x)) return null;
+    const w = v.slice(i - LUCY_LEN + 1, i + 1), lw = v.slice(i - LUCY_LONG + 1, i + 1);
+    if (!w.every(Number.isFinite) || !lw.every(Number.isFinite)) return null;
+    const a = w.reduce((s, y) => s + y, 0) / LUCY_LEN;
+    const sd = Math.sqrt(w.reduce((s, y) => s + (y - a) ** 2, 0) / LUCY_LEN);
+    const la = lw.reduce((s, y) => s + y, 0) / LUCY_LONG;
+    const prev = v[i - 1]!;
+    const letter = x > a + 4 * sd ? "W" : x > a + 3 * sd ? "M" : x > a + 2 * sd ? "O" : x > a ? "A" : prev > 0 && x / prev >= 1.25 ? "Y" : "N";
+    return x < la ? "N" : letter;
+  });
+}
+const bright = (l: string | null) => l === "O" || l === "M" || l === "W";
+export function lucyVsa(kl: C[], fut: Map<number, number> | null, spot: Map<number, number> | null, span: number, signalAt: number, tf: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!fut || kl.length === 0) { out[`lv_${tf}`] = "missing"; return out; }
+  const futV = kl.map((k) => fut.get(k.t) ?? NaN);
+  const spotV = kl.map((k) => spot?.get(k.t) ?? 0);
+  const agg = futV.map((f, i) => (Number.isFinite(f) ? f + spotV[i]! : NaN));
+  const L = lucyLetters(agg), LF = lucyLetters(futV), LS = spot ? lucyLetters(spotV) : kl.map(() => null);
+  const mark = kl.map((k, i) => {
+    if (i === 0 || !bright(L[i]!)) return null;
+    const pos = k.h > k.l ? (k.c - k.l) / (k.h - k.l) : 0.5;
+    if (pos >= 0.5 && k.l < kl[i - 1]!.l) return "BUY";
+    if (pos <= 0.5 && k.h > kl[i - 1]!.h) return "SELL";
+    return null;
+  });
+  const last = Math.floor(signalAt / span) * span - span; // last bar closed by the signal
+  const i = kl.findIndex((k) => k.t === last);
+  if (i < 0 || L[i] === null) { out[`lv_${tf}`] = "missing"; return out; }
+  out[`lv_${tf}`] = "ok";
+  out[`lv_${tf}_agg`] = L[i]; out[`lv_${tf}_fut`] = LF[i]; out[`lv_${tf}_spot`] = LS[i];
+  out[`lv_${tf}_mark`] = mark[i] ?? "";
+  const la = agg.slice(i - LUCY_LONG + 1, i + 1).reduce((s, y) => s + y, 0) / LUCY_LONG;
+  out[`lv_${tf}_vs_long`] = r4(la > 0 ? agg[i]! / la : null);
+  out[`lv_${tf}_spot_share`] = r4(agg[i]! > 0 ? spotV[i]! / agg[i]! : null);
+  const count = (from: number, to: number, f: (k: number) => boolean) => { let n = 0; for (let k = Math.max(0, from); k <= Math.min(kl.length - 1, to); k++) if (f(k)) n++; return n; };
+  for (const n of [6, 24]) {
+    out[`lv_${tf}_b${n}_bright`] = count(i - n + 1, i, (k) => bright(L[k]!));
+    out[`lv_${tf}_b${n}_grey`] = count(i - n + 1, i, (k) => L[k] === "N");
+    out[`lv_${tf}_b${n}_buy`] = count(i - n + 1, i, (k) => mark[k] === "BUY");
+    out[`lv_${tf}_b${n}_sell`] = count(i - n + 1, i, (k) => mark[k] === "SELL");
+  }
+  const ago = (m: string) => { for (let k = i; k >= Math.max(0, i - 47); k--) if (mark[k] === m) return i - k; return null; };
+  out[`lv_${tf}_last_buy_ago`] = ago("BUY"); out[`lv_${tf}_last_sell_ago`] = ago("SELL");
+  // After the entry (closed bars only): for a short a BUY is volume against it, for a long a SELL.
+  const after = kl.length - 1 - i;
+  out[`lv_${tf}_after_bars`] = after;
+  for (const n of [3, 6, 12, 24]) {
+    if (after < n) continue;
+    out[`lv_${tf}_a${n}_bright`] = count(i + 1, i + n, (k) => bright(L[k]!));
+    out[`lv_${tf}_a${n}_buy`] = count(i + 1, i + n, (k) => mark[k] === "BUY");
+    out[`lv_${tf}_a${n}_sell`] = count(i + 1, i + n, (k) => mark[k] === "SELL");
+  }
+  const first = (m: string) => { for (let k = i + 1; k < kl.length; k++) if (mark[k] === m) return k - i; return null; };
+  out[`lv_${tf}_first_buy_after`] = first("BUY"); out[`lv_${tf}_first_sell_after`] = first("SELL");
+  out[`lv_${tf}_seq`] = L.slice(Math.max(0, i - 11), i + 1).map((l, k) => (l ?? "-") + (mark[Math.max(0, i - 11) + k] === "BUY" ? "^" : mark[Math.max(0, i - 11) + k] === "SELL" ? "v" : "")).join("");
+  out[`lv_${tf}_seq_after`] = L.slice(i + 1, i + 13).map((l, k) => (l ?? "-") + (mark[i + 1 + k] === "BUY" ? "^" : mark[i + 1 + k] === "SELL" ? "v" : "")).join("");
+  return out;
+}
+function sum4h(m: Map<number, number> | null): Map<number, number> | null {
+  if (!m) return null;
+  const g = new Map<number, number[]>();
+  for (const [t, v] of m) { const k = Math.floor(t / H4) * H4; (g.get(k) ?? g.set(k, []).get(k)!).push(v); }
+  const out = new Map<number, number>();
+  for (const [t, xs] of g) if (xs.length === 4) out.set(t, xs.reduce((a, b) => a + b, 0));
+  return out;
+}
+function kl4h(k1: C[]): C[] {
+  const g = new Map<number, C[]>();
+  for (const b of k1) { const k = Math.floor(b.t / H4) * H4; (g.get(k) ?? g.set(k, []).get(k)!).push(b); }
+  return [...g.entries()].filter(([, xs]) => xs.length === 4).sort((a, b) => a[0] - b[0])
+    .map(([t, xs]) => ({ t, o: xs[0]!.o, h: Math.max(...xs.map((x) => x.h)), l: Math.min(...xs.map((x) => x.l)), c: xs[3]!.c, v: xs.reduce((s, x) => s + x.v, 0) }));
+}
+
 // ---------------- data ----------------
 async function cgVolume(path: string, params: Record<string, string | number>, interval: string, end: number, limit: number, buyKey: string, sellKey: string): Promise<Map<number, number> | null> {
   await sleep(GAP_MS);
@@ -127,11 +212,17 @@ function to4h(bars1h: Bar[]): Bar[] {
 async function moneyFlow(symbol: string, signalAt: number): Promise<Record<string, unknown>> {
   const base = cgBase(symbol);
   const out: Record<string, unknown> = {};
-  const [k30, k1] = await Promise.all([bingxKlines(symbol, "30m", signalAt, 320).catch(() => [] as C[]), bingxKlines(symbol, "1h", signalAt, 760).catch(() => [] as C[])]);
-  const fut30 = await cgVolume("/api/futures/aggregated-taker-buy-sell-volume/history", { symbol: base, exchange_list: FUTURES_EXCHANGES }, "30m", signalAt, 320, "aggregated_buy_volume_usd", "aggregated_sell_volume_usd");
-  const fut1 = await cgVolume("/api/futures/aggregated-taker-buy-sell-volume/history", { symbol: base, exchange_list: FUTURES_EXCHANGES }, "1h", signalAt, 760, "aggregated_buy_volume_usd", "aggregated_sell_volume_usd");
-  const spot30 = await cgVolume("/api/spot/aggregated-cvd/history", { symbol: base, exchange_list: SPOT_EXCHANGES }, "30m", signalAt, 320, "agg_taker_buy_vol", "agg_taker_sell_vol");
-  const spot1 = await cgVolume("/api/spot/aggregated-cvd/history", { symbol: base, exchange_list: SPOT_EXCHANGES }, "1h", signalAt, 760, "agg_taker_buy_vol", "agg_taker_sell_vol");
+  // Windows run 24 h (30m) / 48 h (1h) past the signal for Lucy's VSA after the entry — same request count;
+  // every reading at the entry uses only bars closed by the signal.
+  const end30 = Math.min(signalAt + 24 * H1, Date.now()), end1 = Math.min(signalAt + 48 * H1, Date.now());
+  const n30 = 320 + Math.ceil((end30 - signalAt) / M30), n1 = 760 + Math.ceil((end1 - signalAt) / H1);
+  const [k30, k1] = await Promise.all([bingxKlines(symbol, "30m", end30, n30).catch(() => [] as C[]), bingxKlines(symbol, "1h", end1, n1).catch(() => [] as C[])]);
+  const fut30 = await cgVolume("/api/futures/aggregated-taker-buy-sell-volume/history", { symbol: base, exchange_list: FUTURES_EXCHANGES }, "30m", end30, n30, "aggregated_buy_volume_usd", "aggregated_sell_volume_usd");
+  const fut1 = await cgVolume("/api/futures/aggregated-taker-buy-sell-volume/history", { symbol: base, exchange_list: FUTURES_EXCHANGES }, "1h", end1, n1, "aggregated_buy_volume_usd", "aggregated_sell_volume_usd");
+  const spot30 = await cgVolume("/api/spot/aggregated-cvd/history", { symbol: base, exchange_list: SPOT_EXCHANGES }, "30m", end30, n30, "agg_taker_buy_vol", "agg_taker_sell_vol");
+  const spot1 = await cgVolume("/api/spot/aggregated-cvd/history", { symbol: base, exchange_list: SPOT_EXCHANGES }, "1h", end1, n1, "agg_taker_buy_vol", "agg_taker_sell_vol");
+  Object.assign(out, lucyVsa(k30, fut30, spot30, M30, signalAt, "30m"), lucyVsa(k1, fut1, spot1, H1, signalAt, "1h"),
+    lucyVsa(kl4h(k1), sum4h(fut1), sum4h(spot1), H4, signalAt, "4h"));
   out.mf_fut = fut1 ? "ok" : "missing"; out.mf_spot = spot1 ? "ok" : "missing";
   const sets: Array<[string, Bar[], number, number]> = [];
   for (const [name, v30, v1, mode] of [["fut", fut30, fut1, "agg"], ["spot", spot30, spot1, "agg"], ["bingx", null, null, "bingx"]] as const) {
