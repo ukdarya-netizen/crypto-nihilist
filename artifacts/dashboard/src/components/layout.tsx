@@ -1,10 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Activity, Ban, BookOpen, CandlestickChart, FlaskConical, HeartPulse, History, LogOut, MoreHorizontal, ScanSearch, Target, Users, X } from "lucide-react";
+import { Activity, Ban, Bitcoin, BookOpen, CandlestickChart, FlaskConical, HeartPulse, History, LogOut, MoreHorizontal, ScanSearch, Target, Users, X } from "lucide-react";
 import { LanguageToggle } from "./language-toggle";
 import { BrandLockup, BrandMark, SLOGAN, Wordmark } from "./brand";
 import { STAGE_LABEL, currentSession, dur, get, isOwner, post, saveSession, usePoll, type Status } from "../lib/api";
 
-export type Route = "/" | "/tracker" | "/scanner" | "/rejections" | "/history" | "/metrics" | "/health" | "/reference" | "/members" | "/strategies"
+export type Route = "/" | "/tracker" | "/scanner" | "/rejections" | "/history" | "/metrics" | "/btc" | "/health" | "/reference" | "/members" | "/strategies"
   | "/login" | "/register" | "/reset-password";
 export const PUBLIC_ROUTES: Route[] = ["/login", "/register", "/reset-password"];
 
@@ -15,6 +15,8 @@ export const NAV: Array<{ href: Route; label: string; sub: string; icon: typeof 
   { href: "/rejections", label: "Отклонённые сигналы", sub: "причины · что было дальше", icon: Ban },
   { href: "/history", label: "История сигналов", sub: "закрытые сделки", icon: History },
   { href: "/metrics", label: "Метрики входа", sub: "что отличает прибыль от стопа", icon: FlaskConical },
+  // Owner 2026-11-13 (as CAB): BTC and its dominance as the context of our trades.
+  { href: "/btc", label: "BTC", sub: "контекст рынка · BTC.D", icon: Bitcoin },
   { href: "/health", label: "Bot Health", sub: "движок · CoinGlass", icon: HeartPulse },
   { href: "/reference", label: "Справочник", sub: "сетапы · правила", icon: BookOpen },
 ];

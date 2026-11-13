@@ -44,7 +44,7 @@ const round = (v: number, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
 const avg = (xs: number[]) => (xs.length ? round(xs.reduce((a, b) => a + b, 0) / xs.length) : null);
 const sum = (xs: number[]) => round(xs.reduce((a, b) => a + b, 0));
 
-function summarize(rows: JournalRow[]) {
+export function summarize(rows: JournalRow[]) {
   const closed = rows.filter((r) => r.status === "closed");
   const by = (s: TradeStatus) => closed.filter((r) => tradeStatus(r) === s);
   const profit = by("profit");
