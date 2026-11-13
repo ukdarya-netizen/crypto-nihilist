@@ -4,8 +4,9 @@
  *   GET /api/nh-study/start            — starts the study in the background (once at a time); returns the state
  *   GET /api/nh-study/status           — progress, last log lines, files ready
  *   GET /api/nh-study/file/:name       — trades.csv | rejects.csv | trajectory.csv.gz | mf-cache-v3.jsonl
- *   GET /api/nh-study/exits/start | /exits/status | /exits/file/path.csv.gz — exit study (owner 2026-11-13): 15m path
- *       with delta, spot delta and OI from 150 bars before the entry to the close, for every closed signal.
+ *   GET /api/nh-study/exits/start | /exits/status | /exits/file/:name (path.csv.gz | ob.csv.gz | meta.csv) — exit and
+ *       order-block study (owner 2026-11-13): 15m path with delta, spot delta and OI from 150 bars before the entry to
+ *       the close (closed signals); 1h volumes from the order block through the approach to the break (every signal).
  * Read-only on the database; nothing else in the app changes.
  */
 import { createReadStream, existsSync, statSync } from "node:fs";
@@ -53,17 +54,18 @@ router.get("/nh-study/exits/start", (req, res) => {
   if (!allowed(req, res)) return;
   res.json({ started: startExitStudy(), state: exitState });
 });
+const EXIT_FILES = new Set(["path.csv.gz", "ob.csv.gz", "meta.csv"]);
 router.get("/nh-study/exits/status", (req, res) => {
   if (!allowed(req, res)) return;
-  const p = `${EXIT_DIR}/path.csv.gz`;
-  res.json({ state: exitState, file: existsSync(p) ? statSync(p).size : null });
+  res.json({ state: exitState, files: Object.fromEntries([...EXIT_FILES].map((f) => [f, existsSync(`${EXIT_DIR}/${f}`) ? statSync(`${EXIT_DIR}/${f}`).size : null])) });
 });
-router.get("/nh-study/exits/file/path.csv.gz", (req, res) => {
+router.get("/nh-study/exits/file/:name", (req, res) => {
   if (!allowed(req, res)) return;
-  const p = `${EXIT_DIR}/path.csv.gz`;
-  if (!existsSync(p)) { res.status(404).json({ error: "not_ready" }); return; }
-  res.setHeader("Content-Type", "application/gzip");
-  res.setHeader("Content-Disposition", 'attachment; filename="path.csv.gz"');
+  const name = String(req.params.name);
+  const p = `${EXIT_DIR}/${name}`;
+  if (!EXIT_FILES.has(name) || !existsSync(p)) { res.status(404).json({ error: "not_ready" }); return; }
+  res.setHeader("Content-Type", name.endsWith(".gz") ? "application/gzip" : "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
   createReadStream(p).pipe(res);
 });
 

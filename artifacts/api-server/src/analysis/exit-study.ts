@@ -5,6 +5,11 @@
  * buy / sell (delta), aggregated spot taker buy / sell, aggregated OI close. The exit rules are simulated offline
  * on this file. Read-only on the database; CoinGlass at the study pace (key shared with CAB and the BTC bot).
  *   path.csv.gz: signal_id,t,o,h,l,c,v,fut_buy,fut_sell,spot_buy,spot_sell,oi
+ * Owner 2026-11-13, same run: the volumes of the order block itself, of the approach and of the structure break.
+ *   ob.csv.gz: signal_id,t,o,h,l,c,v,fut_buy,fut_sell,spot_buy,spot_sell — 1h from 125 days before the block candle
+ *     to the signal (4h / 1D are sums of 1h; enough history for the 120-bar long average on 1D);
+ *   meta.csv: id,symbol,side,setup,htf,ltf,opened_at,closed_at,block_time,block_created_at,first_touch_at,last_touch_at,
+ *     choch_bar_time,block_top,block_bottom,entry,stop — every signal, open ones included.
  */
 import { appendFileSync, createWriteStream, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createGzip } from "node:zlib";
@@ -16,6 +21,8 @@ import { logger } from "../lib/logger";
 
 export const EXIT_DIR = process.env.NH_STUDY_DIR ?? "/tmp/nh-final";
 const CACHE = `${EXIT_DIR}/exit-path-cache.jsonl`;
+const OB_CACHE = `${EXIT_DIR}/exit-ob-cache.jsonl`;
+const H1 = 3_600_000;
 const M15 = 15 * 60_000;
 const BEFORE = 150;
 const MAX_AFTER = 7 * 96; // 7 days of 15m bars
@@ -28,10 +35,10 @@ const say = (s: string) => { exitState.log.push(`${new Date().toISOString()} ${s
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const num = (v: unknown) => { const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN; return Number.isFinite(n) ? n : null; };
 
-async function cg(path: string, params: Record<string, string | number>, cols: string[], end: number, limit: number): Promise<Map<number, Array<number | null>> | null> {
+async function cg(path: string, params: Record<string, string | number>, cols: string[], end: number, limit: number, interval = "15m"): Promise<Map<number, Array<number | null>> | null> {
   await sleep(GAP_MS);
   await waitForScanIdle();
-  const res = await cgRequest(path, { ...params, interval: "15m", limit, end_time: end }, { health: false });
+  const res = await cgRequest(path, { ...params, interval, limit, end_time: end }, { health: false });
   if (!res.ok || !Array.isArray(res.data)) return null;
   const m = new Map<number, Array<number | null>>();
   for (const r of res.data as Array<Record<string, unknown>>) {
@@ -57,6 +64,26 @@ async function pathOf(sig: { id: number; symbol: string; opened: number; closed:
   });
 }
 
+
+/** 1h from 125 days before the block candle to the signal: order block, approach, break (owner 2026-11-13). */
+async function obOf(sig: { id: number; symbol: string; opened: number; blockTime: number | null }): Promise<string[]> {
+  if (!sig.blockTime) return [];
+  const base = cgBase(sig.symbol);
+  const end = Math.floor(sig.opened / H1) * H1;
+  const start = Math.floor(sig.blockTime / H1) * H1 - 125 * 24 * H1;
+  const limit = Math.min(4500, Math.ceil((end - start) / H1) + 2);
+  const kl = await bingxKlines(sig.symbol, "1h", end, limit).catch(() => []);
+  const fut = await cg("/api/futures/aggregated-taker-buy-sell-volume/history", { symbol: base, exchange_list: FUT }, ["aggregated_buy_volume_usd", "aggregated_sell_volume_usd"], end, limit, "1h");
+  const spot = await cg("/api/spot/aggregated-cvd/history", { symbol: base, exchange_list: SPOT }, ["agg_taker_buy_vol", "agg_taker_sell_vol"], end, limit, "1h");
+  const f = (v: number | null | undefined) => (v === null || v === undefined ? "" : String(v));
+  return kl.filter((k) => k.t >= start).map((k) => {
+    const a = fut?.get(k.t), b = spot?.get(k.t);
+    return [sig.id, k.t, k.o, k.h, k.l, k.c, k.v, f(a?.[0]), f(a?.[1]), f(b?.[0]), f(b?.[1])].join(",");
+  });
+}
+const ms = (v: unknown) => { const n = num(v); return n === null ? null : n < 1e12 ? n * 1000 : n; };
+const csvCell = (v: unknown) => (v === null || v === undefined ? "" : String(v).includes(",") ? `"${String(v)}"` : String(v));
+
 export function startExitStudy(): boolean {
   if (exitState.running) return false;
   Object.assign(exitState, { running: true, startedAt: new Date().toISOString(), finishedAt: null, done: 0, total: 0, error: null, log: [] });
@@ -66,24 +93,49 @@ export function startExitStudy(): boolean {
 
 async function run(): Promise<void> {
   mkdirSync(EXIT_DIR, { recursive: true });
-  const done = new Set<number>();
-  if (existsSync(CACHE)) for (const l of readFileSync(CACHE, "utf8").split("\n")) if (l) done.add(JSON.parse(l).id);
-  const rows = (await pool.query(`SELECT id, symbol, opened_at, closed_at FROM nh_signals WHERE status = 'closed' AND closed_at IS NOT NULL ORDER BY opened_at`)).rows;
-  const todo = rows.filter((r) => !done.has(r.id));
-  exitState.total = rows.length; exitState.done = rows.length - todo.length;
-  say(`closed signals ${rows.length}, cached ${done.size}`);
-  for (const r of todo) {
-    const lines = await pathOf({ id: r.id, symbol: r.symbol, opened: new Date(r.opened_at).getTime(), closed: new Date(r.closed_at).getTime() });
-    appendFileSync(CACHE, JSON.stringify({ id: r.id, lines }) + "\n");
-    exitState.done++;
+  const loaded = (file: string) => { const d = new Set<number>(); if (existsSync(file)) for (const l of readFileSync(file, "utf8").split("\n")) if (l) d.add(JSON.parse(l).id); return d; };
+  const donePath = loaded(CACHE), doneOb = loaded(OB_CACHE);
+  const all = (await pool.query(`
+    SELECT id, symbol, side, setup, htf, ltf, status, opened_at, closed_at, block_top, block_bottom, entry, stop,
+           details->>'blockTime' AS block_time, details->>'blockCreatedAt' AS block_created_at,
+           details->>'firstTouchAt' AS first_touch_at, details->>'lastTouchAt' AS last_touch_at,
+           coalesce(details->'chochBar'->>'t', details->'chochBar'->>'time', bar_time::text) AS choch_bar_time
+      FROM nh_signals ORDER BY opened_at`)).rows;
+  // meta for every signal (open ones too)
+  const cols = ["id", "symbol", "side", "setup", "htf", "ltf", "status", "opened_at", "closed_at", "block_time", "block_created_at", "first_touch_at", "last_touch_at", "choch_bar_time", "block_top", "block_bottom", "entry", "stop"];
+  const metaWs = createWriteStream(`${EXIT_DIR}/meta.csv`);
+  metaWs.write(cols.join(",") + "\n");
+  for (const r of all) metaWs.write(cols.map((c) => csvCell(c.endsWith("_at") && r[c] instanceof Date ? (r[c] as Date).toISOString() : r[c])).join(",") + "\n");
+  metaWs.end(); await new Promise((r) => metaWs.on("finish", r));
+  const closed = all.filter((r) => r.status === "closed" && r.closed_at);
+  exitState.total = closed.length + all.length;
+  exitState.done = closed.filter((r) => donePath.has(r.id)).length + all.filter((r) => doneOb.has(r.id)).length;
+  say(`signals ${all.length} (closed ${closed.length}), cached path ${donePath.size}, ob ${doneOb.size}`);
+  for (const r of all) {
+    const opened = new Date(r.opened_at).getTime();
+    if (!doneOb.has(r.id)) {
+      const lines = await obOf({ id: r.id, symbol: r.symbol, opened, blockTime: ms(r.block_time) });
+      appendFileSync(OB_CACHE, JSON.stringify({ id: r.id, lines }) + "\n");
+      exitState.done++;
+    }
+    if (r.status === "closed" && r.closed_at && !donePath.has(r.id)) {
+      const lines = await pathOf({ id: r.id, symbol: r.symbol, opened, closed: new Date(r.closed_at).getTime() });
+      appendFileSync(CACHE, JSON.stringify({ id: r.id, lines }) + "\n");
+      exitState.done++;
+    }
   }
-  const gz = createGzip(); const ws = createWriteStream(`${EXIT_DIR}/path.csv.gz`); gz.pipe(ws);
-  gz.write("signal_id,t,o,h,l,c,v,fut_buy,fut_sell,spot_buy,spot_sell,oi\n");
-  let n = 0;
-  for (const l of readFileSync(CACHE, "utf8").split("\n")) {
-    if (!l) continue;
-    for (const line of JSON.parse(l).lines as string[]) { gz.write(line + "\n"); n++; }
+  for (const [cache, out, head] of [
+    [CACHE, "path.csv.gz", "signal_id,t,o,h,l,c,v,fut_buy,fut_sell,spot_buy,spot_sell,oi"],
+    [OB_CACHE, "ob.csv.gz", "signal_id,t,o,h,l,c,v,fut_buy,fut_sell,spot_buy,spot_sell"],
+  ] as const) {
+    const gz = createGzip(); const ws = createWriteStream(`${EXIT_DIR}/${out}`); gz.pipe(ws);
+    gz.write(head + "\n");
+    let n = 0;
+    for (const l of readFileSync(cache, "utf8").split("\n")) {
+      if (!l) continue;
+      for (const line of JSON.parse(l).lines as string[]) { gz.write(line + "\n"); n++; }
+    }
+    gz.end(); await new Promise((r) => ws.on("finish", r));
+    say(`${out}: ${n} rows`);
   }
-  gz.end(); await new Promise((r) => ws.on("finish", r));
-  say(`path.csv.gz: ${n} rows`);
 }
