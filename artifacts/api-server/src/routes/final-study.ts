@@ -4,6 +4,8 @@
  *   GET /api/nh-study/start            — starts the study in the background (once at a time); returns the state
  *   GET /api/nh-study/status           — progress, last log lines, files ready
  *   GET /api/nh-study/file/:name       — trades.csv | rejects.csv | trajectory.csv.gz | mf-cache-v3.jsonl
+ *   GET /api/nh-study/exits/start | /exits/status | /exits/file/path.csv.gz — exit study (owner 2026-11-13): 15m path
+ *       with delta, spot delta and OI from 150 bars before the entry to the close, for every closed signal.
  * Read-only on the database; nothing else in the app changes.
  */
 import { createReadStream, existsSync, statSync } from "node:fs";
@@ -11,6 +13,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { tradingToken } from "../lib/trading-relay";
 import { tokenMatches } from "./trading-sync";
 import { STUDY_DIR, startFinalStudy, studyState } from "../analysis/final-study";
+import { EXIT_DIR, exitState, startExitStudy } from "../analysis/exit-study";
 
 const FILES = new Set(["trades.csv", "rejects.csv", "trajectory.csv.gz", "mf-cache-v3.jsonl"]);
 const router: IRouter = Router();
@@ -43,6 +46,24 @@ router.get("/nh-study/file/:name", (req, res) => {
   if (!FILES.has(name) || !existsSync(p)) { res.status(404).json({ error: "not_ready" }); return; }
   res.setHeader("Content-Type", name.endsWith(".gz") ? "application/gzip" : "text/plain; charset=utf-8");
   res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+  createReadStream(p).pipe(res);
+});
+
+router.get("/nh-study/exits/start", (req, res) => {
+  if (!allowed(req, res)) return;
+  res.json({ started: startExitStudy(), state: exitState });
+});
+router.get("/nh-study/exits/status", (req, res) => {
+  if (!allowed(req, res)) return;
+  const p = `${EXIT_DIR}/path.csv.gz`;
+  res.json({ state: exitState, file: existsSync(p) ? statSync(p).size : null });
+});
+router.get("/nh-study/exits/file/path.csv.gz", (req, res) => {
+  if (!allowed(req, res)) return;
+  const p = `${EXIT_DIR}/path.csv.gz`;
+  if (!existsSync(p)) { res.status(404).json({ error: "not_ready" }); return; }
+  res.setHeader("Content-Type", "application/gzip");
+  res.setHeader("Content-Disposition", 'attachment; filename="path.csv.gz"');
   createReadStream(p).pipe(res);
 });
 
