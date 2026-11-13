@@ -14,6 +14,7 @@ import { INTERVAL_MS, type Interval } from "../engine/candles";
 import { HISTORY_DAYS, loadReport, runStrategyReport, strategyReportRunning } from "../analysis/strategy-report";
 import { SMC_STUDY_CSV, loadSmcStudy, runSmcStudy, smcStudyRunning, smcStudyText } from "../analysis/smc-study";
 import { createReadStream, existsSync } from "node:fs";
+import { btcNow, buildBtcView, dominanceHistory, type BtcTradeRow } from "../stats/btc";
 
 const router: IRouter = Router();
 
@@ -213,6 +214,24 @@ const liveOnly = (value: unknown) => value === "1" || value === "true";
  * averages, best trade, per-setup table and the daily chart. Cohort = signals
  * opened in the last N days; `live=1` = only setups published to Telegram.
  */
+// Owner 2026-11-13: the «BTC» tab (as CAB) — BTC and BTC.D as the context of our trades, last 60 days of trades.
+router.get("/nh/btc", async (req, res) => {
+  const live = liveOnly(req.query.live) || !isOwnerReq(req);
+  await ensureSnapshotTable();
+  const [{ rows }, points] = await Promise.all([
+    pool.query<BtcTradeRow>(
+      `SELECT s.id, s.symbol, s.setup, s.side, s.status, s.live, s.close_reason, s.pnl_pct, s.r_multiple, s.peak_pct, s.mfe_pct,
+              s.opened_at, s.closed_at, (n.metrics->>'btc_chg24h')::float AS btc_chg24h
+       FROM nh_signals s LEFT JOIN nh_signal_snapshots n ON n.signal_id = s.id
+       WHERE s.opened_at > now() - interval '60 days' AND s.symbol <> 'BTC-USDT' AND (NOT $1 OR s.live)`,
+      [live],
+    ),
+    dominanceHistory().catch(() => []),
+  ]);
+  const now = btcNow();
+  res.json({ live, ...buildBtcView({ rows, points, now: Date.now(), btcPrice: now.price, btcChg24h: now.chg24h }) });
+});
+
 router.get("/nh/journal", async (req, res) => {
   const d = days(req.query.days, 30);
   // Users see only signals published to Telegram.
