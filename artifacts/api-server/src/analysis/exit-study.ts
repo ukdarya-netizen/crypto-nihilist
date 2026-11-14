@@ -4,7 +4,8 @@
  * exports the 15m path from 150 bars before the entry to the close: BingX candles, aggregated futures taker
  * buy / sell (delta), aggregated spot taker buy / sell, aggregated OI close. The exit rules are simulated offline
  * on this file. Read-only on the database; CoinGlass at the study pace (key shared with CAB and the BTC bot).
- *   path.csv.gz: signal_id,t,o,h,l,c,v,fut_buy,fut_sell,spot_buy,spot_sell,oi
+ *   path.csv.gz: signal_id,t,o,h,l,c,v,fut_buy,fut_sell,spot_buy,spot_sell,oi — 150 bars before the entry to entry + 7 days
+ *     (2026-11-14: no longer cut at the real close)
  * Owner 2026-11-13, same run: the volumes of the order block itself, of the approach and of the structure break.
  *   ob.csv.gz: signal_id,t,o,h,l,c,v,fut_buy,fut_sell,spot_buy,spot_sell — 1h from 25 days before the block candle
  *     to the signal (4h / 1D are sums of 1h; 120-bar long average on 4h; 2026-11-14: 25 instead of 125 days, the
@@ -50,7 +51,9 @@ async function cg(path: string, params: Record<string, string | number>, cols: s
 async function pathOf(sig: { id: number; symbol: string; opened: number; closed: number }): Promise<string[]> {
   const base = cgBase(sig.symbol);
   const start = Math.floor(sig.opened / M15) * M15 - BEFORE * M15;
-  const end = Math.min(sig.closed + 2 * M15, sig.opened + MAX_AFTER * M15, Date.now());
+  // Owner 2026-11-14: 7 days after the entry whatever the real exit was — other exits (later break-even, exits on
+  // buy-backs) and later entries (OTE, retests) run past the real close and need the bars after it.
+  const end = Math.min(sig.opened + MAX_AFTER * M15, Date.now());
   const limit = Math.min(4500, Math.ceil((end - start) / M15) + 2);
   const kl = await bingxKlines(sig.symbol, "15m", end, limit).catch(() => []);
   const fut = await cg("/api/futures/aggregated-taker-buy-sell-volume/history", { symbol: base, exchange_list: FUT }, ["aggregated_buy_volume_usd", "aggregated_sell_volume_usd"], end, limit);
@@ -98,9 +101,11 @@ export function startExitStudy(): boolean {
 // ── Storage (owner 2026-11-14: the night run was lost — the deployment restarted and /tmp went with it). Every
 // signal's rows go into nh_state (gzip, key nhstudy:<kind>:<id>), the run resumes where it stopped (also by itself
 // after a restart while nhstudy:running is set), and the files are built from the database when downloaded. ──
-const KEY = (kind: "path" | "ob", id: number) => `nhstudy:${kind}:${id}`;
+// "path7": the path to entry + 7 days (2026-11-14); paths stored before that (to the real close) are fetched again.
+const KIND = { path: "path7", ob: "ob" } as const;
+const KEY = (kind: "path" | "ob", id: number) => `nhstudy:${KIND[kind]}:${id}`;
 async function saved(kind: "path" | "ob"): Promise<Set<number>> {
-  const r = await pool.query(`SELECT key FROM nh_state WHERE key LIKE $1`, [`nhstudy:${kind}:%`]);
+  const r = await pool.query(`SELECT key FROM nh_state WHERE key LIKE $1`, [`nhstudy:${KIND[kind]}:%`]);
   return new Set(r.rows.map((x) => Number(String(x.key).split(":")[2])));
 }
 async function put(key: string, lines: string[]): Promise<void> {
@@ -139,7 +144,7 @@ export async function exitFile(name: string): Promise<{ body: Buffer; rows: numb
   }
   const head = HEADS[name as keyof typeof HEADS];
   if (!head) return null;
-  const prefix = name === "btc.csv.gz" ? "nhstudy:btc" : `nhstudy:${name.startsWith("path") ? "path" : "ob"}:%`;
+  const prefix = name === "btc.csv.gz" ? "nhstudy:btc" : `nhstudy:${name.startsWith("path") ? KIND.path : KIND.ob}:%`;
   const r = await pool.query(`SELECT value FROM nh_state WHERE key LIKE $1 ORDER BY key`, [prefix]);
   if (!r.rows.length) return null;
   const parts: string[] = [head];
