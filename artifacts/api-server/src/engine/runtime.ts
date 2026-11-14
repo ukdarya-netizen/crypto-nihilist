@@ -23,7 +23,7 @@ import { trackRejections } from "./rejections";
 import { enqueueSignal, startTradingRelay } from "../lib/trading-relay";
 import { BTC_STOP_EXTRA_PCT, BTC_TARGETS_R, BTC_TARGETS_SOURCE, COMBOS, MAX_HOLD_MS, PARTIAL_AT_PCT, PCT_TARGETS_SOURCE, btcTargets, isBtc, partialPrice } from "./config";
 import { openTrade } from "./trade";
-import { BREAKEVEN_AT_PCT, LIVE_SETUPS, OB_MIN_DISPLACEMENT_ATR, entryFilter } from "./config";
+import { BREAKEVEN_AT_PCT, LIVE_SETUPS, OB_MIN_DISPLACEMENT_ATR, SHORT_MIN_MARKET_SHORTS_24H, entryFilter } from "./config";
 import { chochBarMetrics } from "./choch-bar";
 import { insertEvent, startTracker } from "./tracker";
 import { startTelegram } from "../telegram/telegram";
@@ -162,6 +162,21 @@ const priorityOf = (setup: string) => SETUP_PRIORITY.indexOf(setup.replace(/_(lo
 
 type OpenResult = "opened" | "busy" | "filtered" | "conflict";
 
+/**
+ * Shorts over the whole market in the 24 h up to `at` (owner 2026-11-14): published shorts plus coins whose short
+ * this rule rejected (otherwise the rule would feed on itself: fewer published shorts → more rejected).
+ */
+export async function marketShorts24hAt(at: number): Promise<number> {
+  const from = new Date(at - 24 * 3_600_000), to = new Date(at);
+  const r = await pool.query<{ n: string }>(
+    `SELECT count(*) AS n FROM (
+       SELECT 's' || id::text AS k FROM nh_signals WHERE side = 'short' AND opened_at > $1 AND opened_at <= $2
+       UNION
+       SELECT DISTINCT 'r' || symbol AS k FROM nh_decisions WHERE reason = 'entry_filter:isolated_short' AND created_at > $1 AND created_at <= $2
+     ) x`, [from, to]);
+  return Number(r.rows[0]?.n ?? 0);
+}
+
 async function openSignal(symbol: string, s: SetupSignal, confluence: string[] = [s.setup], chochBar: Record<string, number | null> | null = null): Promise<OpenResult> {
   const busy = await pool.query<{ id: number; setup: string }>(
     "SELECT id, setup FROM nh_signals WHERE status = 'open' AND symbol = $1 AND side = $2 LIMIT 1", [symbol, s.side],
@@ -170,6 +185,15 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
     await recordDecision(symbol, s.setup, s.barTime, "skipped", "open_signal_same_symbol", s.block.id,
       { ...signalDetails(s), openSignalId: busy.rows[0].id, openSetup: busy.rows[0].setup });
     return "busy";
+  }
+  // No isolated short (owner 2026-11-14): fewer than 13 other shorts over the market in the last 24 h → not opened.
+  if (s.side === "short") {
+    const marketShorts24h = await marketShorts24hAt(s.signalAt);
+    if (marketShorts24h < SHORT_MIN_MARKET_SHORTS_24H) {
+      await recordDecision(symbol, s.setup, s.barTime, "rejected", "entry_filter:isolated_short", s.block.id,
+        { ...signalDetails(s), marketShorts24h, chochBar });
+      return "filtered";
+    }
   }
   // Entry filter (owner 2026-11-02, longs only): a long that fails is not
   // opened at all; the rejection and its reason go to nh_decisions.

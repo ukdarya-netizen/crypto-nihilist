@@ -546,7 +546,6 @@
  "Стоп": "Stop",
  "Стоп %": "Stop %",
  "Стоп в безубыток": "Stop to break-even",
- "Стоп дальше 20% · по монете уже открыта сделка в эту сторону · лонг не прошёл фильтр входа. Одна сделка на блок; причина пишется в «Отклонённые сигналы».": "Stop beyond 20% · a trade on this coin in this direction is already open · a long failed the entry filter. One trade per block; the reason goes to «Rejected signals».",
  "Стоп дальше 20% · уже открыта сделка этого сетапа по монете. Одна сделка на блок. Отказ «тейк 1 ближе 1R» снят вместе с тейками (02.11.2026).": "Stop beyond 20% · a trade of this setup on the coin is already open. One trade per block. The \"TP 1 closer than 1R\" rejection was removed together with takes (02.11.2026).",
  "Стоп не ближе 7%, ордер-блоку не больше 300 ч, высота блока от 4% цены, ATR(14) 1H от 1,9%": "Stop at least 7% away, order block no older than 300 h, block height from 4% of price, 1H ATR(14) from 1.9%",
  "Стоп при входе": "Stop at entry",
@@ -883,5 +882,9 @@
  "сд. · винрейт": "tr. · win rate",
  "флэт": "flat",
  "━ цена BTC": "━ BTC price",
- "контекст рынка · BTC.D": "market context · BTC.D"
+ "контекст рынка · BTC.D": "market context · BTC.D",
+ "Стоп дальше 20% · по монете уже открыта сделка в эту сторону · лонг не прошёл фильтр входа · одиночный шорт. Одна сделка на блок; причина пишется в «Отклонённые сигналы».": "Stop beyond 20% · a trade on this coin in this direction is already open · a long failed the entry filter · an isolated short. One trade per block; the reason goes to «Rejected signals».",
+ "Не одиночный: за 24 ч до сигнала по рынку не меньше 13 других шортов (с 14.11.2026)": "Not isolated: at least 13 other shorts across the market in the 24 h before the signal (since 14.11.2026)",
+ "одиночный шорт: меньше 13 шортов по рынку за 24 ч": "isolated short: fewer than 13 shorts across the market in 24 h",
+ "ATR(14) 1H ниже порога": "1H ATR(14) below the threshold"
 }

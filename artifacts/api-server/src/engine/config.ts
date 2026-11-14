@@ -107,6 +107,15 @@ export const ENTRY_FILTER_MIN_BLOCK_SIZE_PCT = 4;
  */
 export const ENTRY_FILTER_MIN_ATR1H_PCT = 1.9;
 
+/**
+ * Owner 2026-11-14 (exit study, 352 shorts 25.10–13.11, current management simulated on 15m): no ISOLATED short.
+ * A short is opened only when at least 13 other shorts came out over the whole market in the 24 h before it
+ * (published shorts plus shorts rejected by this rule, one per coin). Shorts with 12 or fewer: 58 of 352,
+ * −63% in sum, 41–42% stops in both halves of the period; the rest +3.5…+3.8% a trade in both halves. The only
+ * short rule that held when chosen on the first half and checked on the second.
+ */
+export const SHORT_MIN_MARKET_SHORTS_24H = 13;
+
 export type EntryFilterResult = {
   pass: boolean; reason: string | null; riskPct: number; blockAgeH: number | null; blockSizePct: number;
   atrPct1h?: number | null;
