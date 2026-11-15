@@ -12,7 +12,8 @@ import { INTERVAL_MS, type Candle } from "../engine/candles";
 import { MAX_HOLD_MS, entryFilter } from "../engine/config";
 import type { SetupSignal } from "../engine/setups";
 import { SmcEngine } from "../engine/smc";
-import { getUniverse } from "../market/coinglass";
+import { cgRequest, getUniverse, waitForScanIdle } from "../market/coinglass";
+import { cgBase } from "../market/derivatives";
 import { logger } from "../lib/logger";
 import { allSignals, loadHistory } from "./strategy-report";
 import { simulate, variants, type SimTrade } from "./strategy-sim";
@@ -91,6 +92,85 @@ export function structureSeries(cs: Candle[]): StructRow[] {
     return { it: eng.internalTrend, st: eng.swingTrend, ie, ieChoch, ieAt, se, seChoch, seAt, top: eng.trailingTop, bot: eng.trailingBottom };
   });
 }
+/**
+ * Owner 2026-11-15: Lucy's VSA exactly as her indicator, on 4h — aggregated USD volume (futures + spot of many
+ * exchanges, CoinGlass), Welkin on the total (20 bars with the bar itself, population σ: W > avg+4σ · M > +3σ ·
+ * O > +2σ · A > avg · Y ≥ 1.25 × previous · N), a bar under the 120-bar average = N; bright = O / M / W.
+ * BUY: bright bar at the lowest low of 20 bars closing above its middle, confirmed by the next bar (close above the
+ * middle, no lower low); SELL the mirror. A "buying" bar = bright on a rising candle (her reading of the chart).
+ */
+const VSA_SPOT = "Binance,Bitfinex,Bitget,Bybit,Coinbase,Crypto.com,Gate,Kraken,OKX,Upbit";
+const VSA_FUT = "Binance,BingX,Bitfinex,Bitget,Bybit,Coinbase,Crypto.com,Deribit,Gate,HTX,Hyperliquid,Kraken,KuCoin,LBank,MEXC,OKX,WhiteBIT,dYdX";
+const numOf = (v: unknown) => { const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN; return Number.isFinite(n) ? n : 0; };
+async function cgSeries(path: string, params: Record<string, string | number>, cols: [string, string]): Promise<Map<number, number> | null> {
+  await waitForScanIdle();
+  const res = await cgRequest(path, { ...params, interval: "4h", limit: 700, end_time: Date.now() }, { health: false });
+  if (!res.ok || !Array.isArray(res.data)) return null;
+  const m = new Map<number, number>();
+  for (const r of res.data as Array<Record<string, unknown>>) {
+    const t = Number(r.time); if (!Number.isFinite(t)) continue;
+    m.set(t < 1e12 ? t * 1000 : t, numOf(r[cols[0]]) + numOf(r[cols[1]]));
+  }
+  return m;
+}
+export async function volume4h(symbol: string): Promise<{ fut: Map<number, number> | null; spot: Map<number, number> | null }> {
+  const base = cgBase(symbol);
+  const fut = await cgSeries("/api/futures/aggregated-taker-buy-sell-volume/history", { symbol: base, exchange_list: VSA_FUT }, ["aggregated_buy_volume_usd", "aggregated_sell_volume_usd"]);
+  const spot = await cgSeries("/api/spot/aggregated-cvd/history", { symbol: base, exchange_list: VSA_SPOT }, ["agg_taker_buy_vol", "agg_taker_sell_vol"]);
+  return { fut, spot };
+}
+export type VsaRow = { letter: number; bright: boolean; up: boolean; spot: number; total: number; has: boolean; buy: boolean; sell: boolean };
+const LETTER = { N: 0, Y: 1, A: 2, O: 3, M: 4, W: 5 } as const;
+/** Lucy's VSA per 4h bar; buy / sell = a triangle CONFIRMED on this bar (it marks the previous bar). */
+export function vsaSeries(cs: Candle[], fut: Map<number, number> | null, spot: Map<number, number> | null): VsaRow[] {
+  const tot = cs.map((c) => (fut?.get(c.t) ?? 0) + (spot?.get(c.t) ?? 0));
+  const rows: VsaRow[] = [];
+  const brightAt: boolean[] = [];
+  for (let i = 0; i < cs.length; i++) {
+    const v = tot[i]!;
+    let L = 0;
+    if (i >= 19) {
+      const w = tot.slice(i - 19, i + 1), a = w.reduce((x, y) => x + y, 0) / 20;
+      const sd = Math.sqrt(w.reduce((x, y) => x + (y - a) ** 2, 0) / 20);
+      L = v > a + 4 * sd ? LETTER.W : v > a + 3 * sd ? LETTER.M : v > a + 2 * sd ? LETTER.O : v > a ? LETTER.A : i > 0 && tot[i - 1]! > 0 && v / tot[i - 1]! >= 1.25 ? LETTER.Y : LETTER.N;
+      if (i >= 119) { const la = tot.slice(i - 119, i + 1).reduce((x, y) => x + y, 0) / 120; if (v < la) L = LETTER.N; }
+    }
+    const c = cs[i]!, bright = L >= LETTER.O;
+    brightAt.push(bright);
+    let buy = false, sell = false;
+    if (i >= 20) {
+      const p = cs[i - 1]!, rng = p.h - p.l, pos = rng > 0 ? (p.c - p.l) / rng : 0.5, mid = (p.h + p.l) / 2;
+      const lows = cs.slice(i - 20, i).map((x) => x.l), highs = cs.slice(i - 20, i).map((x) => x.h);
+      const rawBuy = brightAt[i - 1]! && pos > 0.5 && p.l <= Math.min(...lows);
+      const rawSell = brightAt[i - 1]! && pos < 0.5 && p.h >= Math.max(...highs);
+      buy = rawBuy && c.c > mid && c.l >= p.l;
+      sell = rawSell && c.c < mid && c.h <= p.h;
+    }
+    rows.push({ letter: L, bright, up: c.c > c.o, spot: spot?.get(c.t) ?? 0, total: tot[i]!, has: (fut?.has(c.t) ?? false) || (spot?.has(c.t) ?? false), buy, sell });
+  }
+  return rows;
+}
+/** VSA at the signal on closed 4h bars ("against" = volume pushing against the trade: a short after a bright rising bar). */
+export function vsaMeasures(s: SetupSignal, cs: Candle[], rows: VsaRow[]): Measures {
+  const d = s.side === "long" ? 1 : -1, m: Measures = {};
+  const i = lastClosed(cs, 4 * 3_600_000, s.signalAt);
+  if (i < 125 || !rows[i]!.has) return m;
+  m.vsa_letter_last = rows[i]!.letter;
+  for (const n of [1, 3, 6, 12]) {
+    const w = rows.slice(i - n + 1, i + 1);
+    m[`vsa_bright_against_${n}`] = w.some((r) => r.bright && (d === 1 ? !r.up : r.up)) ? 1 : 0;
+    m[`vsa_bright_with_${n}`] = w.some((r) => r.bright && (d === 1 ? r.up : !r.up)) ? 1 : 0;
+  }
+  const w3 = rows.slice(i - 2, i + 1);
+  m.vsa_active_3 = w3.filter((r) => r.letter > 0).length;
+  const t3 = w3.reduce((a, r) => a + r.total, 0);
+  m.vsa_spot_share_3 = t3 > 0 ? w3.reduce((a, r) => a + r.spot, 0) / t3 : null;
+  const w6 = rows.slice(i - 5, i + 1);
+  m.vsa_tri_against_6 = w6.some((r) => (d === 1 ? r.sell : r.buy)) ? 1 : 0;
+  m.vsa_tri_with_6 = w6.some((r) => (d === 1 ? r.buy : r.sell)) ? 1 : 0;
+  return m;
+}
+
 export type StructTf = "30m" | "1h" | "4h" | "1d";
 export type Structures = Partial<Record<StructTf, { cs: Candle[]; rows: StructRow[] }>>;
 const TF_MS: Record<StructTf, number> = { "30m": 30 * 60_000, "1h": 3_600_000, "4h": 4 * 3_600_000, "1d": 24 * 3_600_000 };
@@ -186,7 +266,8 @@ const COLS = ["brk_body_share", "brk_close_pos", "brk_body_pct", "brk_fvg", "ap_
   "st_1h", "ema20_1h", "ema50_1h", "ema200_1h", "macd_hist_1h", "slope20_1h", "st_4h", "ema20_4h", "ema50_4h", "ema200_4h", "macd_hist_4h", "slope20_4h",
   "st_1d", "ema20_1d", "ema50_1d", "ema200_1d", "macd_hist_1d", "slope20_1d", "ema20_30m", "range37h_far", "atr1h_pct", "ret24",
   ...(["30m", "1h", "4h", "1d"] as const).flatMap((tf) => ["int_trend", "swing_trend", "int_last", "int_last_choch", "int_last_age", "swing_last", "swing_last_choch", "swing_last_age", "pd"].map((k) => `smc_${k}_${tf}`)),
-  "smc_htf_swing_aligned", "smc_htf_int_aligned", "smc_htf_discount", "smc_sweep", "smc_htf_fvg", "smc_fresh", "htf_is_1d", "ltf_is_1h"];
+  "smc_htf_swing_aligned", "smc_htf_int_aligned", "smc_htf_discount", "smc_sweep", "smc_htf_fvg", "smc_fresh", "htf_is_1d", "ltf_is_1h",
+  "vsa_letter_last", ...[1, 3, 6, 12].flatMap((n) => [`vsa_bright_against_${n}`, `vsa_bright_with_${n}`]), "vsa_active_3", "vsa_spot_share_3", "vsa_tri_against_6", "vsa_tri_with_6"];
 const HEAD = ["symbol", "side", "setup", "signal_at", "entry", "stop", "risk_pct", "long_filter", "closed", "reason", "pnl_pct", "peak_pct", "hold_h", ...COLS].join(",");
 
 export async function candFile(): Promise<{ body: Buffer; rows: number } | null> {
@@ -209,13 +290,16 @@ async function run(): Promise<void> {
       let st: Structures = {};
       try { st = Object.fromEntries((["30m", "1h", "4h", "1d"] as StructTf[]).map((tf) => { const cs = (data as Record<StructTf, Candle[]>)[tf]; return [tf, { cs, rows: structureSeries(cs) }]; })); }
       catch (err) { logger.warn({ err, symbol }, "nihilist: candidate structure failed"); }
+      let vsa: VsaRow[] = [];
+      try { const v = await volume4h(symbol); vsa = vsaSeries(data["4h"], v.fut, v.spot); }
+      catch (err) { logger.warn({ err, symbol }, "nihilist: candidate VSA failed"); }
       for (const s of allSignals(data)) {
         if (s.signalAt < busy[s.side]) continue;   // one open trade per coin and side, as the bot
         const trade: SimTrade = { id: `${symbol}:${s.setup}:${s.signalAt}`, side: s.side, entry: s.entry, stop: s.stop, openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf] };
         const res = simulate(trade, data["30m"], SPAN, NOW_MGMT);
         busy[s.side] = res.closed ? res.closedAt! : Infinity;
         let mm: Measures = {};
-        try { mm = { ...measures(s, data as never), ...structureMeasures(s, st) }; } catch (err) { logger.warn({ err, symbol }, "nihilist: candidate measures failed"); }
+        try { mm = { ...measures(s, data as never), ...structureMeasures(s, st), ...(vsa.length ? vsaMeasures(s, data["4h"], vsa) : {}) }; } catch (err) { logger.warn({ err, symbol }, "nihilist: candidate measures failed"); }
         const h1 = data["1h"].filter((c) => c.t + H <= s.signalAt).slice(-15);
         const tr = trueRange(h1).slice(1);
         const atr = h1.length > 2 ? (tr.reduce((a, b) => a + b, 0) / tr.length / h1[h1.length - 1]!.c) * 100 : null;

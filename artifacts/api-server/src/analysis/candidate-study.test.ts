@@ -24,3 +24,16 @@ test("structure series (owner 2026-11-15): bar by bar, no later bar used; an up-
   assert.deepEqual(part, full.slice(0, 250));
   assert.equal(full[399]!.it, 1);
 });
+
+test("Lucy's VSA (owner 2026-11-15): Welkin letters as her indicator; a bright bar at a 20-bar low with a confirming bar = BUY", async () => {
+  const { vsaSeries } = await import("./candidate-study");
+  const H4 = 4 * 3_600_000;
+  const cs = Array.from({ length: 160 }, (_, i) => ({ t: i * H4, o: 100, h: 101, l: 99, c: 100.2, v: 1 }));
+  cs[150] = { t: 150 * H4, o: 99, h: 100, l: 90, c: 99.5, v: 1 };     // lowest low of 20, closes in the upper half
+  cs[151] = { t: 151 * H4, o: 99.5, h: 100, l: 95, c: 99.8, v: 1 };   // above the middle (95), no lower low
+  const fut = new Map(cs.map((c, i) => [c.t, i === 150 ? 1000 : 100 + (i % 3)] as [number, number]));
+  const rows = vsaSeries(cs as never, fut, null);
+  assert.equal(rows[150]!.letter, 5);   // W
+  assert.equal(rows[151]!.buy, true);
+  assert.equal(rows[140]!.bright, false);
+});
