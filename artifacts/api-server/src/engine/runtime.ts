@@ -32,6 +32,7 @@ import { getUniverse, setScanBusy, type UniverseSymbol } from "../market/coingla
 import { waitForEngineLease } from "../ops/lease";
 import { logger } from "../lib/logger";
 import { marketMetrics } from "./metrics";
+import { shortUptrend } from "./short-uptrend";
 
 /** LTF bars walked per evaluation (enough for the LTF structure to settle). */
 const LTF_WINDOW = 400;
@@ -192,6 +193,14 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
     if (marketShorts24h < SHORT_MIN_MARKET_SHORTS_24H) {
       await recordDecision(symbol, s.setup, s.barTime, "rejected", "entry_filter:isolated_short", s.block.id,
         { ...signalDetails(s), marketShorts24h, chochBar });
+      return "filtered";
+    }
+    // No short into a rising 4h (owner 2026-11-15): above the Ichimoku cloud on 4h and ADX 4h ≥ 25 or a buyer on 1h in 6 h.
+    const b = book(symbol);
+    const up = await shortUptrend(symbol, s, b["4h"], b["1h"]);
+    if (up.block) {
+      await recordDecision(symbol, s.setup, s.barTime, "rejected", "entry_filter:short_uptrend_4h", s.block.id,
+        { ...signalDetails(s), shortUptrend: up, chochBar });
       return "filtered";
     }
   }

@@ -173,9 +173,9 @@ export function structureSeries(cs: Candle[]): StructRow[] {
  * BUY: bright bar at the lowest low of 20 bars closing above its middle, confirmed by the next bar (close above the
  * middle, no lower low); SELL the mirror. A "buying" bar = bright on a rising candle (her reading of the chart).
  */
-const VSA_SPOT = "Binance,Bitfinex,Bitget,Bybit,Coinbase,Crypto.com,Gate,Kraken,OKX,Upbit";
-const VSA_FUT = "Binance,BingX,Bitfinex,Bitget,Bybit,Coinbase,Crypto.com,Deribit,Gate,HTX,Hyperliquid,Kraken,KuCoin,LBank,MEXC,OKX,WhiteBIT,dYdX";
-const numOf = (v: unknown) => { const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN; return Number.isFinite(n) ? n : 0; };
+export const VSA_SPOT = "Binance,Bitfinex,Bitget,Bybit,Coinbase,Crypto.com,Gate,Kraken,OKX,Upbit";
+export const VSA_FUT = "Binance,BingX,Bitfinex,Bitget,Bybit,Coinbase,Crypto.com,Deribit,Gate,HTX,Hyperliquid,Kraken,KuCoin,LBank,MEXC,OKX,WhiteBIT,dYdX";
+export const numOf = (v: unknown) => { const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN; return Number.isFinite(n) ? n : 0; };
 async function cgSeries(path: string, params: Record<string, string | number>, cols: [string, string], interval = "4h", limit = 700): Promise<Map<number, number> | null> {
   await waitForScanIdle();
   const res = await cgRequest(path, { ...params, interval, limit, end_time: Date.now() }, { health: false });

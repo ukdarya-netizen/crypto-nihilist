@@ -152,10 +152,11 @@ const FILTER_LABEL: Record<string, string> = {
   risk_below_7pct: "стоп ближе 7%", block_older_300h: "блок старше 300 ч", block_age_unknown: "возраст блока неизвестен",
   block_below_4pct: "блок ниже 4% цены", atr1h_below_1_2pct: "ATR(14) 1H ниже порога",
 };
-/** Reason of a decision in Russian (entry filter reasons: «фильтр лонгов: …»; owner 2026-11-14: «одиночный шорт»). */
+/** Reason of a decision in Russian (entry filter reasons: «фильтр лонгов: …»; owner 2026-11-14: «одиночный шорт»; 2026-11-15: «шорт против роста 4h»). */
 export function reasonLabel(reason: string | null | undefined): string {
   if (!reason) return "—";
   if (reason === "entry_filter:isolated_short") return "одиночный шорт: меньше 13 шортов по рынку за 24 ч";
+  if (reason === "entry_filter:short_uptrend_4h") return "шорт против роста 4h: цена над облаком Ichimoku и ADX 4h от 25 или покупатель на 1h за 6 ч";
   if (reason.startsWith("entry_filter:")) return `фильтр лонгов: ${reason.slice(13).split(",").map((r) => FILTER_LABEL[r] ?? r).join(", ")}`;
   return REASON_LABEL[reason] ?? reason;
 }
