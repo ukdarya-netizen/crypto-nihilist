@@ -4,6 +4,9 @@
  * user with access (approved, subscription active, signals on — see
  * lib/users.ts) whose signals were on before the event. One delivery row per recipient:
  * a success is never repeated when others fail; up to 8 attempts each.
+ * Owner 2026-11-15 (the same message several times): a delivery is claimed in the database before it is sent (two
+ * app instances during a publish, or two loops, never send the same row); a message in several parts (photo + text,
+ * long text) remembers the parts already sent; a delivery Telegram did not answer in time is not sent again.
  * Shadow trades (setup not in LIVE_SETUPS) never leave the dashboard.
  * Only signals and the daily/weekly/monthly reports go out: no service,
  * restart or API-outage messages.
@@ -13,7 +16,7 @@ import { logger } from "../lib/logger";
 import { formatEvent, type EventForText, type SignalForText } from "./format";
 import { notificationPhotoKind, shouldSuppressTelegramEvent } from "./notification-media";
 import { startReports } from "./reports";
-import { sendMessage, sendPhoto, signalChannel, telegramCall, telegramEnabled, TelegramError, type TelegramUpdate } from "./transport";
+import { sendPhoto, signalChannel, splitText, telegramCall, telegramEnabled, TelegramError, TelegramTimeout, type TelegramUpdate } from "./transport";
 import { ensureUserTables, ownerEmail, recipientSql } from "../lib/users";
 import { handleUpdate, setBotMenu } from "./bot";
 import { MAX_AUTO_DELIVERY_AGE_MS, MAX_UPDATE_DELIVERY_AGE_MS, planEventDelivery, type DeliveryRecipient } from "./delivery-policy";
@@ -90,17 +93,26 @@ async function enqueue(): Promise<QueueRow[]> {
   return rows.filter((r) => r.signal_live && !r.silent);
 }
 
+/** Text of a delivery whose photo already went out (only the text parts are left). */
+const PHOTO_DONE = "⟦photo-sent⟧";
+/** Claimed for this long; a row whose sender died is retried after it (rare, and only then can it repeat). */
+const LEASE_MS = 10 * 60_000;
+
 async function sendPending(): Promise<void> {
+  // Claim the due rows atomically: another instance (a publish overlaps the old and the new one) skips them.
   const { rows } = await pool.query<{
     id: number; event_id: number; chat_id: string; channel: boolean; text: string; attempts: number;
     event_kind: string | null; event_reason: string | null;
   }>(
-    `SELECT d.id, d.event_id, d.chat_id, d.channel, d.text, d.attempts,
-            (SELECT e.kind FROM nh_signal_events e WHERE e.id = d.event_id) AS event_kind,
-            (SELECT e.detail->>'reason' FROM nh_signal_events e WHERE e.id = d.event_id) AS event_reason
-     FROM nh_telegram_deliveries d
-     WHERE d.status = 'pending' AND d.next_attempt_at <= now() ORDER BY d.id LIMIT 20`,
+    `UPDATE nh_telegram_deliveries d SET next_attempt_at = now() + ($1::int * interval '1 millisecond')
+      WHERE d.id IN (SELECT id FROM nh_telegram_deliveries
+                      WHERE status = 'pending' AND next_attempt_at <= now() ORDER BY id LIMIT 20 FOR UPDATE SKIP LOCKED)
+      RETURNING d.id, d.event_id, d.chat_id, d.channel, d.text, d.attempts,
+                (SELECT e.kind FROM nh_signal_events e WHERE e.id = d.event_id) AS event_kind,
+                (SELECT e.detail->>'reason' FROM nh_signal_events e WHERE e.id = d.event_id) AS event_reason`,
+    [LEASE_MS],
   );
+  rows.sort((a, b) => a.id - b.id);
   for (const d of rows) {
     if (shouldSuppressTelegramEvent(d.event_kind)) {
       await pool.query("UPDATE nh_telegram_deliveries SET status = 'skipped', sent_at = now() WHERE id = $1", [d.id]);
@@ -114,20 +126,35 @@ async function sendPending(): Promise<void> {
       }
     }
     try {
-      const photoKind = notificationPhotoKind(d.event_kind, d.event_reason, d.event_id);
-      // Daily report: a photo caption holds 1024 characters — the title goes with the image, the report follows
-      // as text (split into parts over 4096 by sendMessage, owner 2026-11-10).
-      if (photoKind === "dailyReport" && d.text.length > 1024) {
-        const [title, ...body] = d.text.split("\n");
-        await sendPhoto(d.chat_id, title, photoKind);
-        await sendMessage(d.chat_id, body.join("\n"));
-      } else if (photoKind) {
-        await sendPhoto(d.chat_id, d.text, photoKind);
-      } else {
-        await sendMessage(d.chat_id, d.text);
+      const photoDone = d.text.startsWith(PHOTO_DONE);
+      let rest = photoDone ? d.text.slice(PHOTO_DONE.length) : d.text;
+      const photoKind = photoDone ? null : notificationPhotoKind(d.event_kind, d.event_reason, d.event_id);
+      if (photoKind) {
+        // Daily report: a photo caption holds 1024 characters — the title goes with the image, the report follows
+        // as text (split into parts over 4096, owner 2026-11-10).
+        const long = photoKind === "dailyReport" && rest.length > 1024;
+        const [title, ...body] = rest.split("\n");
+        // A photo Telegram did not confirm in time is taken as sent (resending made copies); the text follows.
+        await sendPhoto(d.chat_id, long ? title! : rest, photoKind).catch((e) => { if (!(e instanceof TelegramTimeout)) throw e; });
+        rest = long ? body.join("\n") : "";
+        await pool.query("UPDATE nh_telegram_deliveries SET text = $2 WHERE id = $1", [d.id, `${PHOTO_DONE}${rest}`]);
+      }
+      // Text parts one by one; what is left is saved after each, so a retry never repeats a part.
+      const parts = rest ? splitText(rest) : [];
+      for (const [i, part] of parts.entries()) {
+        await telegramCall("sendMessage", { chat_id: d.chat_id, text: part, disable_web_page_preview: true });
+        if (i < parts.length - 1) {
+          await pool.query("UPDATE nh_telegram_deliveries SET text = $2 WHERE id = $1", [d.id, `${PHOTO_DONE}${parts.slice(i + 1).join("\n")}`]);
+        }
       }
       await pool.query("UPDATE nh_telegram_deliveries SET status = 'sent', sent_at = now() WHERE id = $1", [d.id]);
     } catch (err) {
+      if (err instanceof TelegramTimeout) {
+        // Probably delivered: not sent again (that was the copy); counted as sent.
+        await pool.query("UPDATE nh_telegram_deliveries SET status = 'sent', sent_at = now() WHERE id = $1", [d.id]);
+        logger.warn({ deliveryId: d.id }, "nihilist: Telegram did not answer in time — not resent");
+        continue;
+      }
       const attempts = d.attempts + 1;
       const blocked = !d.channel && err instanceof TelegramError && err.code === 403;
       // The user blocked the bot: signals off until /start.
