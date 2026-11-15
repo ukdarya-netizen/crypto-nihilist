@@ -267,6 +267,7 @@ const COLS = ["brk_body_share", "brk_close_pos", "brk_body_pct", "brk_fvg", "ap_
   "st_1d", "ema20_1d", "ema50_1d", "ema200_1d", "macd_hist_1d", "slope20_1d", "ema20_30m", "range37h_far", "atr1h_pct", "ret24",
   ...(["30m", "1h", "4h", "1d"] as const).flatMap((tf) => ["int_trend", "swing_trend", "int_last", "int_last_choch", "int_last_age", "swing_last", "swing_last_choch", "swing_last_age", "pd"].map((k) => `smc_${k}_${tf}`)),
   "smc_htf_swing_aligned", "smc_htf_int_aligned", "smc_htf_discount", "smc_sweep", "smc_htf_fvg", "smc_fresh", "htf_is_1d", "ltf_is_1h",
+  "filter_mirror", "block_age_h", "block_size_pct",
   "vsa_letter_last", ...[1, 3, 6, 12].flatMap((n) => [`vsa_bright_against_${n}`, `vsa_bright_with_${n}`]), "vsa_active_3", "vsa_spot_share_3", "vsa_tri_against_6", "vsa_tri_with_6"];
 const HEAD = ["symbol", "side", "setup", "signal_at", "entry", "stop", "risk_pct", "long_filter", "closed", "reason", "pnl_pct", "peak_pct", "hold_h", ...COLS].join(",");
 
@@ -307,6 +308,13 @@ async function run(): Promise<void> {
           side: s.side, riskPct: s.riskPct, entry: s.entry, blockTop: s.block.top, blockBottom: s.block.bottom,
           signalAt: s.signalAt, blockCreatedAt: s.block.createdAt ?? null, blockTime: s.block.time ?? null, atrPct1h: atr,
         }).pass ? "1" : "0";
+        // Owner 2026-11-15: the same rules for both sides — the long filter applied to every signal (shorts mirrored),
+        // with its parts, so the rejected and the would-be-rejected are all in the file with what happened after.
+        const ef = entryFilter({
+          side: "long", riskPct: s.riskPct, entry: s.entry, blockTop: s.block.top, blockBottom: s.block.bottom,
+          signalAt: s.signalAt, blockCreatedAt: s.block.createdAt ?? null, blockTime: s.block.time ?? null, atrPct1h: atr,
+        });
+        mm.filter_mirror = ef.pass ? 1 : 0; mm.block_age_h = ef.blockAgeH; mm.block_size_pct = ef.blockSizePct;
         lines.push([symbol, s.side, s.setup, new Date(s.signalAt).toISOString(), s.entry, s.stop, r4(s.riskPct), pass,
           res.closed ? 1 : 0, res.reason ?? "", r4(res.pnlPct), r4(res.peakPct), r4(res.holdH), ...COLS.map((c) => r4(mm[c]))].join(","));
       }
