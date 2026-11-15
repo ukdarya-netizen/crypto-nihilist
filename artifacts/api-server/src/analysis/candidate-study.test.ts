@@ -12,3 +12,15 @@ test("supertrend follows a clear trend", () => {
   assert.equal(supertrend(up), 1);
   assert.equal(supertrend(down), -1);
 });
+
+test("structure series (owner 2026-11-15): bar by bar, no later bar used; an up-trend reads as up", async () => {
+  const { structureSeries } = await import("./candidate-study");
+  const cs = Array.from({ length: 400 }, (_, i) => {
+    const base = 100 + i * 0.2 + 3 * Math.sin(i / 6);
+    return { t: i * 3_600_000, o: base, h: base + 1, l: base - 1, c: base + 0.3, v: 1 };
+  });
+  const full = structureSeries(cs as never);
+  const part = structureSeries(cs.slice(0, 250) as never);
+  assert.deepEqual(part, full.slice(0, 250));
+  assert.equal(full[399]!.it, 1);
+});

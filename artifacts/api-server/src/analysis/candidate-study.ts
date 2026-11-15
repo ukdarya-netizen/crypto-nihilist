@@ -11,6 +11,7 @@ import { pool } from "@workspace/db";
 import { INTERVAL_MS, type Candle } from "../engine/candles";
 import { MAX_HOLD_MS, entryFilter } from "../engine/config";
 import type { SetupSignal } from "../engine/setups";
+import { SmcEngine } from "../engine/smc";
 import { getUniverse } from "../market/coinglass";
 import { logger } from "../lib/logger";
 import { allSignals, loadHistory } from "./strategy-report";
@@ -71,6 +72,59 @@ function slopePctPerBar(v: number[]): number | null {
 const r4 = (x: number | null | undefined) => (x === null || x === undefined || !Number.isFinite(x) ? "" : String(Math.round(x * 1e4) / 1e4));
 
 export type Measures = Record<string, number | null>;
+
+/**
+ * Owner 2026-11-15 («рядом слом структуры наверх, а бот шортит»): the LuxAlgo structure of the coin on every timeframe,
+ * as a human reads it on the chart — the same engine as the signals (swing 50 / internal 5), run bar by bar, so a
+ * value at a bar never uses a later bar. Per bar: internal and swing trend, the last internal / swing break
+ * (direction, CHoCH or BOS, bar index) and the trailing top / bottom (premium / discount range).
+ */
+export type StructRow = { it: number; st: number; ie: number; ieChoch: number; ieAt: number; se: number; seChoch: number; seAt: number; top: number | null; bot: number | null };
+export function structureSeries(cs: Candle[]): StructRow[] {
+  const eng = new SmcEngine();
+  let ie = 0, ieChoch = 0, ieAt = -1, se = 0, seChoch = 0, seAt = -1;
+  return cs.map((c, i) => {
+    for (const e of eng.push(c)) {
+      if (e.scope === "internal") { ie = e.dir; ieChoch = e.kind === "CHOCH" ? 1 : 0; ieAt = i; }
+      else { se = e.dir; seChoch = e.kind === "CHOCH" ? 1 : 0; seAt = i; }
+    }
+    return { it: eng.internalTrend, st: eng.swingTrend, ie, ieChoch, ieAt, se, seChoch, seAt, top: eng.trailingTop, bot: eng.trailingBottom };
+  });
+}
+export type StructTf = "30m" | "1h" | "4h" | "1d";
+export type Structures = Partial<Record<StructTf, { cs: Candle[]; rows: StructRow[] }>>;
+const TF_MS: Record<StructTf, number> = { "30m": 30 * 60_000, "1h": 3_600_000, "4h": 4 * 3_600_000, "1d": 24 * 3_600_000 };
+/** Index of the last bar closed by `at` (−1 if none). */
+function lastClosed(cs: Candle[], ms: number, at: number): number {
+  let lo = 0, hi = cs.length - 1, ans = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (cs[mid]!.t + ms <= at) { ans = mid; lo = mid + 1; } else hi = mid - 1; }
+  return ans;
+}
+/** Structure measures ("+" = in the trade's direction; age in bars of that timeframe). */
+export function structureMeasures(s: SetupSignal, st: Structures): Measures {
+  const d = s.side === "long" ? 1 : -1, m: Measures = {};
+  for (const tf of ["30m", "1h", "4h", "1d"] as StructTf[]) {
+    const x = st[tf]; if (!x) continue;
+    const i = lastClosed(x.cs, TF_MS[tf], s.signalAt); if (i < 0) continue;
+    const r = x.rows[i]!;
+    m[`smc_int_trend_${tf}`] = r.it === 0 ? null : d * r.it;
+    m[`smc_swing_trend_${tf}`] = r.st === 0 ? null : d * r.st;
+    m[`smc_int_last_${tf}`] = r.ieAt < 0 ? null : d * r.ie;
+    m[`smc_int_last_choch_${tf}`] = r.ieAt < 0 ? null : r.ieChoch;
+    m[`smc_int_last_age_${tf}`] = r.ieAt < 0 ? null : i - r.ieAt;
+    m[`smc_swing_last_${tf}`] = r.seAt < 0 ? null : d * r.se;
+    m[`smc_swing_last_choch_${tf}`] = r.seAt < 0 ? null : r.seChoch;
+    m[`smc_swing_last_age_${tf}`] = r.seAt < 0 ? null : i - r.seAt;
+    // Premium / discount: 1 = the favourable end (long: bottom of the range, short: top), 0 = the other end.
+    if (r.top !== null && r.bot !== null && r.top > r.bot) { const pos = (s.entry - r.bot) / (r.top - r.bot); m[`smc_pd_${tf}`] = d === 1 ? 1 - pos : pos; }
+  }
+  // The bot's own classic checks at the signal (on the block's timeframe; research only).
+  const b = (v: boolean | null | undefined) => (v === null || v === undefined ? null : v ? 1 : 0);
+  m.smc_htf_swing_aligned = b(s.smc?.trendSwing); m.smc_htf_int_aligned = b(s.smc?.trendInternal);
+  m.smc_htf_discount = b(s.smc?.discount); m.smc_sweep = b(s.smc?.sweep); m.smc_htf_fvg = b(s.smc?.fvg); m.smc_fresh = b(s.smc?.fresh);
+  m.htf_is_1d = s.htf === "1d" ? 1 : 0; m.ltf_is_1h = s.ltf === "1h" ? 1 : 0;
+  return m;
+}
 /** Every candidate measure of one signal (d = +1 long / −1 short; "+" = in the trade's direction). */
 export function measures(s: SetupSignal, data: Record<"30m" | "1h" | "4h" | "1d", Candle[]>): Measures {
   const d = s.side === "long" ? 1 : -1, at = s.signalAt, m: Measures = {};
@@ -130,7 +184,9 @@ export function measures(s: SetupSignal, data: Record<"30m" | "1h" | "4h" | "1d"
 // ---------- the run ----------
 const COLS = ["brk_body_share", "brk_close_pos", "brk_body_pct", "brk_fvg", "ap_bars", "ap_waves", "ap_move_pct", "rebound_pct", "entry_out_block_pct",
   "st_1h", "ema20_1h", "ema50_1h", "ema200_1h", "macd_hist_1h", "slope20_1h", "st_4h", "ema20_4h", "ema50_4h", "ema200_4h", "macd_hist_4h", "slope20_4h",
-  "st_1d", "ema20_1d", "ema50_1d", "ema200_1d", "macd_hist_1d", "slope20_1d", "ema20_30m", "range37h_far", "atr1h_pct", "ret24"];
+  "st_1d", "ema20_1d", "ema50_1d", "ema200_1d", "macd_hist_1d", "slope20_1d", "ema20_30m", "range37h_far", "atr1h_pct", "ret24",
+  ...(["30m", "1h", "4h", "1d"] as const).flatMap((tf) => ["int_trend", "swing_trend", "int_last", "int_last_choch", "int_last_age", "swing_last", "swing_last_choch", "swing_last_age", "pd"].map((k) => `smc_${k}_${tf}`)),
+  "smc_htf_swing_aligned", "smc_htf_int_aligned", "smc_htf_discount", "smc_sweep", "smc_htf_fvg", "smc_fresh", "htf_is_1d", "ltf_is_1h"];
 const HEAD = ["symbol", "side", "setup", "signal_at", "entry", "stop", "risk_pct", "long_filter", "closed", "reason", "pnl_pct", "peak_pct", "hold_h", ...COLS].join(",");
 
 export async function candFile(): Promise<{ body: Buffer; rows: number } | null> {
@@ -150,13 +206,16 @@ async function run(): Promise<void> {
     const data = await loadHistory(symbol).catch(() => null);
     if (data) {
       const busy = { long: 0, short: 0 };
+      let st: Structures = {};
+      try { st = Object.fromEntries((["30m", "1h", "4h", "1d"] as StructTf[]).map((tf) => { const cs = (data as Record<StructTf, Candle[]>)[tf]; return [tf, { cs, rows: structureSeries(cs) }]; })); }
+      catch (err) { logger.warn({ err, symbol }, "nihilist: candidate structure failed"); }
       for (const s of allSignals(data)) {
         if (s.signalAt < busy[s.side]) continue;   // one open trade per coin and side, as the bot
         const trade: SimTrade = { id: `${symbol}:${s.setup}:${s.signalAt}`, side: s.side, entry: s.entry, stop: s.stop, openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf] };
         const res = simulate(trade, data["30m"], SPAN, NOW_MGMT);
         busy[s.side] = res.closed ? res.closedAt! : Infinity;
         let mm: Measures = {};
-        try { mm = measures(s, data as never); } catch (err) { logger.warn({ err, symbol }, "nihilist: candidate measures failed"); }
+        try { mm = { ...measures(s, data as never), ...structureMeasures(s, st) }; } catch (err) { logger.warn({ err, symbol }, "nihilist: candidate measures failed"); }
         const h1 = data["1h"].filter((c) => c.t + H <= s.signalAt).slice(-15);
         const tr = trueRange(h1).slice(1);
         const atr = h1.length > 2 ? (tr.reduce((a, b) => a + b, 0) / tr.length / h1[h1.length - 1]!.c) * 100 : null;
