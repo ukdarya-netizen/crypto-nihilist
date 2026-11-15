@@ -37,3 +37,14 @@ test("Lucy's VSA (owner 2026-11-15): Welkin letters as her indicator; a bright b
   assert.equal(rows[151]!.buy, true);
   assert.equal(rows[140]!.bright, false);
 });
+
+test("VSA 1h (owner 2026-11-15): a bright rising 1h bar right before a short counts as the buyer against it", async () => {
+  const { vsaSeries, vsa1hMeasures } = await import("./candidate-study");
+  const H = 3_600_000;
+  const cs = Array.from({ length: 200 }, (_, i) => ({ t: i * H, o: 100, h: 101, l: 99, c: i === 198 ? 100.8 : 100, v: 1 }));
+  const fut = new Map(cs.map((c, i) => [c.t, i === 198 ? 1000 : 100 + (i % 3)] as [number, number]));
+  const rows = vsaSeries(cs as never, fut, null);
+  const m = vsa1hMeasures({ side: "short", signalAt: 199 * H } as never, cs as never, rows);
+  assert.equal(m.vsa1h_bright_against_1, 1);
+  assert.equal(m.vsa1h_bright_with_1, 0);
+});

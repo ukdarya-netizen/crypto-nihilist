@@ -102,9 +102,9 @@ export function structureSeries(cs: Candle[]): StructRow[] {
 const VSA_SPOT = "Binance,Bitfinex,Bitget,Bybit,Coinbase,Crypto.com,Gate,Kraken,OKX,Upbit";
 const VSA_FUT = "Binance,BingX,Bitfinex,Bitget,Bybit,Coinbase,Crypto.com,Deribit,Gate,HTX,Hyperliquid,Kraken,KuCoin,LBank,MEXC,OKX,WhiteBIT,dYdX";
 const numOf = (v: unknown) => { const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN; return Number.isFinite(n) ? n : 0; };
-async function cgSeries(path: string, params: Record<string, string | number>, cols: [string, string]): Promise<Map<number, number> | null> {
+async function cgSeries(path: string, params: Record<string, string | number>, cols: [string, string], interval = "4h", limit = 700): Promise<Map<number, number> | null> {
   await waitForScanIdle();
-  const res = await cgRequest(path, { ...params, interval: "4h", limit: 700, end_time: Date.now() }, { health: false });
+  const res = await cgRequest(path, { ...params, interval, limit, end_time: Date.now() }, { health: false });
   if (!res.ok || !Array.isArray(res.data)) return null;
   const m = new Map<number, number>();
   for (const r of res.data as Array<Record<string, unknown>>) {
@@ -113,11 +113,44 @@ async function cgSeries(path: string, params: Record<string, string | number>, c
   }
   return m;
 }
-export async function volume4h(symbol: string): Promise<{ fut: Map<number, number> | null; spot: Map<number, number> | null }> {
+export async function volume4h(symbol: string, interval = "4h", limit = 700): Promise<{ fut: Map<number, number> | null; spot: Map<number, number> | null }> {
   const base = cgBase(symbol);
-  const fut = await cgSeries("/api/futures/aggregated-taker-buy-sell-volume/history", { symbol: base, exchange_list: VSA_FUT }, ["aggregated_buy_volume_usd", "aggregated_sell_volume_usd"]);
-  const spot = await cgSeries("/api/spot/aggregated-cvd/history", { symbol: base, exchange_list: VSA_SPOT }, ["agg_taker_buy_vol", "agg_taker_sell_vol"]);
+  const fut = await cgSeries("/api/futures/aggregated-taker-buy-sell-volume/history", { symbol: base, exchange_list: VSA_FUT }, ["aggregated_buy_volume_usd", "aggregated_sell_volume_usd"], interval, limit);
+  const spot = await cgSeries("/api/spot/aggregated-cvd/history", { symbol: base, exchange_list: VSA_SPOT }, ["agg_taker_buy_vol", "agg_taker_sell_vol"], interval, limit);
   return { fut, spot };
+}
+
+/**
+ * Owner 2026-11-15: Lucy's VSA on 1h — on one month the buyer in the last hours before a short (15m–1h) separated
+ * the shorts in both halves; the 4h bars hide it. Same rules as the indicator, 1h bars.
+ */
+export function vsa1hMeasures(s: SetupSignal, cs: Candle[], rows: VsaRow[]): Measures {
+  const d = s.side === "long" ? 1 : -1, m: Measures = {};
+  const i = lastClosed(cs, 3_600_000, s.signalAt);
+  if (i < 125 || !rows[i]!.has) return m;
+  for (const n of [1, 2, 4, 6, 12]) {
+    const w = rows.slice(i - n + 1, i + 1);
+    m[`vsa1h_bright_against_${n}`] = w.some((r) => r.bright && (d === 1 ? !r.up : r.up)) ? 1 : 0;
+    m[`vsa1h_bright_with_${n}`] = w.some((r) => r.bright && (d === 1 ? r.up : !r.up)) ? 1 : 0;
+    m[`vsa1h_grey_${n}`] = w.filter((r) => r.letter === 0).length / n;
+  }
+  const w6 = rows.slice(i - 5, i + 1);
+  m.vsa1h_tri_against_6 = w6.some((r) => (d === 1 ? r.sell : r.buy)) ? 1 : 0;
+  m.vsa1h_tri_with_6 = w6.some((r) => (d === 1 ? r.buy : r.sell)) ? 1 : 0;
+  return m;
+}
+const VSA1H_COLS = [1, 2, 4, 6, 12].flatMap((n) => [`vsa1h_bright_against_${n}`, `vsa1h_bright_with_${n}`, `vsa1h_grey_${n}`]).concat(["vsa1h_tri_against_6", "vsa1h_tri_with_6"]);
+
+/**
+ * Owner 2026-11-15 («защита пачки шортов при отскоке рынка»): the hourly path of every trade for 7 days after the
+ * entry — high / low / close of each 1h candle as % from the entry — so rules over all open trades at once
+ * (a market-wide bounce like 19.09) can be simulated offline.
+ */
+function hourlyPath(s: SetupSignal, cs: Candle[]): [string, string, string] {
+  const i0 = cs.findIndex((c) => c.t >= s.signalAt);
+  if (i0 < 0) return ["", "", ""];
+  const w = cs.slice(i0, i0 + 168), pc = (v: number) => (Math.round((v / s.entry - 1) * 10000) / 100).toString();
+  return [w.map((c) => pc(c.h)).join(";"), w.map((c) => pc(c.l)).join(";"), w.map((c) => pc(c.c)).join(";")];
 }
 export type VsaRow = { letter: number; bright: boolean; up: boolean; spot: number; total: number; has: boolean; buy: boolean; sell: boolean };
 const LETTER = { N: 0, Y: 1, A: 2, O: 3, M: 4, W: 5 } as const;
@@ -269,7 +302,7 @@ const COLS = ["brk_body_share", "brk_close_pos", "brk_body_pct", "brk_fvg", "ap_
   "smc_htf_swing_aligned", "smc_htf_int_aligned", "smc_htf_discount", "smc_sweep", "smc_htf_fvg", "smc_fresh", "htf_is_1d", "ltf_is_1h",
   "filter_mirror", "block_age_h", "block_size_pct",
   "vsa_letter_last", ...[1, 3, 6, 12].flatMap((n) => [`vsa_bright_against_${n}`, `vsa_bright_with_${n}`]), "vsa_active_3", "vsa_spot_share_3", "vsa_tri_against_6", "vsa_tri_with_6"];
-const HEAD = ["symbol", "side", "setup", "signal_at", "entry", "stop", "risk_pct", "long_filter", "closed", "reason", "pnl_pct", "peak_pct", "hold_h", ...COLS].join(",");
+const HEAD = ["symbol", "side", "setup", "signal_at", "entry", "stop", "risk_pct", "long_filter", "closed", "reason", "pnl_pct", "peak_pct", "hold_h", ...COLS, ...VSA1H_COLS, "path_h", "path_l", "path_c"].join(",");
 
 export async function candFile(): Promise<{ body: Buffer; rows: number } | null> {
   const r = await pool.query<{ value: { z: string; n: number } }>("SELECT value FROM nh_state WHERE key = $1", [KEY]);
@@ -294,13 +327,16 @@ async function run(): Promise<void> {
       let vsa: VsaRow[] = [];
       try { const v = await volume4h(symbol); vsa = vsaSeries(data["4h"], v.fut, v.spot); }
       catch (err) { logger.warn({ err, symbol }, "nihilist: candidate VSA failed"); }
+      let vsa1: VsaRow[] = [];
+      try { const v = await volume4h(symbol, "1h", 1700); vsa1 = vsaSeries(data["1h"], v.fut, v.spot); }
+      catch (err) { logger.warn({ err, symbol }, "nihilist: candidate VSA 1h failed"); }
       for (const s of allSignals(data)) {
         if (s.signalAt < busy[s.side]) continue;   // one open trade per coin and side, as the bot
         const trade: SimTrade = { id: `${symbol}:${s.setup}:${s.signalAt}`, side: s.side, entry: s.entry, stop: s.stop, openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf] };
         const res = simulate(trade, data["30m"], SPAN, NOW_MGMT);
         busy[s.side] = res.closed ? res.closedAt! : Infinity;
         let mm: Measures = {};
-        try { mm = { ...measures(s, data as never), ...structureMeasures(s, st), ...(vsa.length ? vsaMeasures(s, data["4h"], vsa) : {}) }; } catch (err) { logger.warn({ err, symbol }, "nihilist: candidate measures failed"); }
+        try { mm = { ...measures(s, data as never), ...structureMeasures(s, st), ...(vsa.length ? vsaMeasures(s, data["4h"], vsa) : {}), ...(vsa1.length ? vsa1hMeasures(s, data["1h"], vsa1) : {}) }; } catch (err) { logger.warn({ err, symbol }, "nihilist: candidate measures failed"); }
         const h1 = data["1h"].filter((c) => c.t + H <= s.signalAt).slice(-15);
         const tr = trueRange(h1).slice(1);
         const atr = h1.length > 2 ? (tr.reduce((a, b) => a + b, 0) / tr.length / h1[h1.length - 1]!.c) * 100 : null;
@@ -316,7 +352,8 @@ async function run(): Promise<void> {
         });
         mm.filter_mirror = ef.pass ? 1 : 0; mm.block_age_h = ef.blockAgeH; mm.block_size_pct = ef.blockSizePct;
         lines.push([symbol, s.side, s.setup, new Date(s.signalAt).toISOString(), s.entry, s.stop, r4(s.riskPct), pass,
-          res.closed ? 1 : 0, res.reason ?? "", r4(res.pnlPct), r4(res.peakPct), r4(res.holdH), ...COLS.map((c) => r4(mm[c]))].join(","));
+          res.closed ? 1 : 0, res.reason ?? "", r4(res.pnlPct), r4(res.peakPct), r4(res.holdH), ...COLS.map((c) => r4(mm[c])),
+          ...VSA1H_COLS.map((c) => r4(mm[c])), ...hourlyPath(s, data["1h"])].join(","));
       }
     }
     candState.done += 1;
