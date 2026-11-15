@@ -7,6 +7,8 @@
  *   GET /api/nh-study/exits/start | /exits/status | /exits/file/:name (path.csv.gz | ob.csv.gz | meta.csv | btc.csv.gz) | /exits/clear — exit and
  *       order-block study (owner 2026-11-13): 15m path with delta, spot delta and OI from 150 bars before the entry to
  *       the close (closed signals); 1h volumes from the order block through the approach to the break (every signal).
+ *   GET /api/nh-study/cand/start | /cand/status | /cand/file — candidate rules on the 60-day history (owner 2026-11-15):
+ *       one row per trade with its result and every price-only candidate measure (history.csv.gz).
  * Read-only on the database; nothing else in the app changes.
  */
 import { createReadStream, existsSync, statSync } from "node:fs";
@@ -15,6 +17,7 @@ import { tradingToken } from "../lib/trading-relay";
 import { tokenMatches } from "./trading-sync";
 import { STUDY_DIR, startFinalStudy, studyState } from "../analysis/final-study";
 import { clearExitStudy, exitFile, exitState, startExitStudy } from "../analysis/exit-study";
+import { candFile, candState, startCandStudy } from "../analysis/candidate-study";
 
 const FILES = new Set(["trades.csv", "rejects.csv", "trajectory.csv.gz", "mf-cache-v3.jsonl"]);
 const router: IRouter = Router();
@@ -75,6 +78,24 @@ router.get("/nh-study/exits/clear", async (req, res) => {
   if (!allowed(req, res)) return;
   if (exitState.running) { res.status(409).json({ error: "running" }); return; }
   res.json({ deleted: await clearExitStudy() });
+});
+
+router.get("/nh-study/cand/start", (req, res) => {
+  if (!allowed(req, res)) return;
+  res.json({ started: startCandStudy(), state: candState });
+});
+router.get("/nh-study/cand/status", (req, res) => {
+  if (!allowed(req, res)) return;
+  res.json({ state: candState });
+});
+router.get("/nh-study/cand/file", async (req, res) => {
+  if (!allowed(req, res)) return;
+  const f = await candFile().catch(() => null);
+  if (!f) { res.status(404).json({ error: "not_ready" }); return; }
+  res.setHeader("Content-Type", "application/gzip");
+  res.setHeader("Content-Disposition", 'attachment; filename="history.csv.gz"');
+  res.setHeader("X-Rows", String(f.rows));
+  res.send(f.body);
 });
 
 export default router;
