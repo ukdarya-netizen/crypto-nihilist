@@ -48,3 +48,23 @@ test("VSA 1h (owner 2026-11-15): a bright rising 1h bar right before a short cou
   assert.equal(m.vsa1h_bright_against_1, 1);
   assert.equal(m.vsa1h_bright_with_1, 0);
 });
+
+test("indicators and VPVR (owner 2026-11-15): a steady rise reads up for a long, the POC sits where the volume was", async () => {
+  const { indicators, vpvr } = await import("./candidate-study");
+  const H = 3_600_000;
+  const cs = Array.from({ length: 200 }, (_, i) => { const b = 100 + i * 0.5; return { t: i * H, o: b, h: b + 0.6, l: b - 0.4, c: b + 0.4, v: 0 }; });
+  const m = indicators(cs as never, 1, "1h", cs[199]!.c);
+  assert.ok((m.adx_1h ?? 0) > 25); assert.ok((m.di_1h ?? 0) > 0); assert.equal(m.psar_1h, 1); assert.equal(m.ichi_cloud_1h, 1);
+  const flat = Array.from({ length: 30 }, (_, i) => ({ t: i * H, o: 10, h: i < 20 ? 10.2 : 12.2, l: i < 20 ? 9.8 : 11.8, c: 10, v: 0 }));
+  const vol = new Map(flat.map((c, i) => [c.t, i < 20 ? 1000 : 10] as [number, number]));
+  const p = vpvr(flat as never, vol, 30 * H, 24, 12, "24h");
+  assert.ok((p.vp_poc_24h ?? 0) > 15);   // entry 12 is ~20% above the POC near 10
+});
+
+test("SMT with BTC (owner 2026-11-15): the coin swept its low and BTC did not — bullish divergence for a long", async () => {
+  const { smtMeasures } = await import("./candidate-study");
+  const H = 3_600_000;
+  const mk = (low: number) => Array.from({ length: 30 }, (_, i) => ({ t: i * H, o: 10, h: 10.5, l: i === 28 ? low : 9.5, c: 10, v: 0 }));
+  const m = smtMeasures({ side: "long", signalAt: 30 * H } as never, { "1h": mk(9), "4h": [] } as never, { "1h": mk(9.6), "4h": [] } as never);
+  assert.equal(m.smt_1h, 1);   // the coin swept its low, BTC did not
+});
