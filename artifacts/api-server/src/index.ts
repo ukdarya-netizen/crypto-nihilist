@@ -2,6 +2,7 @@ import app from "./app";
 import { startEngine } from "./engine/runtime";
 import { logger } from "./lib/logger";
 import { resumeExitStudyIfPending } from "./analysis/exit-study";
+import { startStrategyReportSchedule } from "./analysis/strategy-report";
 
 const rawPort = process.env["PORT"];
 
@@ -23,6 +24,8 @@ app.listen(port, (err) => {
   // Owner 2026-11-14: the exit study carries on after a restart (production only — dev makes no CoinGlass calls for it).
   if (process.env.REPLIT_DEPLOYMENT === "1") {
     void resumeExitStudyIfPending().catch((e) => logger.warn({ err: e }, "exit study resume failed"));
+    // Owner 2026-11-16: the strategy report keeps itself fresh (production only — dev makes no CoinGlass calls).
+    startStrategyReportSchedule();
   }
   if (process.env.NIHILIST_ENGINE_ENABLED === "false") {
     logger.warn("Nihilist engine disabled by NIHILIST_ENGINE_ENABLED=false");

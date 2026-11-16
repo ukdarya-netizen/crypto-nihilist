@@ -19,6 +19,14 @@ import { logger } from "../lib/logger";
 import { simulate, stats, variants, type Mgmt, type Row, type SimTrade, type Stats } from "./strategy-sim";
 
 const KEY = "strategy_report";
+/**
+ * Owner 2026-11-16 («стратегии пустые, а должны быть на постоянной основе»): the last FINISHED report is kept apart,
+ * so a new run, a failed run or a restart never empties the strategies; the page shows the last results with the
+ * new run's progress. The report also refreshes itself (startStrategyReportSchedule).
+ */
+const DONE_KEY = "strategy_report_done";
+/** The report is recalculated when the last finished one is older than this. */
+export const REPORT_REFRESH_MS = 24 * 3_600_000;
 const SPAN = INTERVAL_MS["30m"];
 export const HISTORY_DAYS = 60;
 const WARMUP = 400;
@@ -104,14 +112,28 @@ async function save(r: Report): Promise<void> {
     [KEY, JSON.stringify(r)],
   );
 }
+async function loadKey(key: string): Promise<Report | null> {
+  const { rows } = await pool.query<{ value: Report }>("SELECT value FROM nh_state WHERE key = $1", [key]);
+  return rows[0]?.value ?? null;
+}
+/** The last finished report (a report saved before 2026-11-16 as «done» under the main key counts too). */
+async function lastDone(): Promise<Report | null> {
+  const d = await loadKey(DONE_KEY);
+  if (d) return d;
+  const r = await loadKey(KEY);
+  return r && r.status === "done" ? r : null;
+}
 export async function loadReport(): Promise<Report | null> {
-  const { rows } = await pool.query<{ value: Report }>("SELECT value FROM nh_state WHERE key = $1", [KEY]);
-  const r = rows[0]?.value ?? null;
+  let r = await loadKey(KEY);
   // A run lives in this process only: after a restart (publish) it is gone, not "still running".
   if (r && r.status === "running" && !running) {
-    return { ...r, status: "failed", error: "расчёт прерван перезапуском сервера (публикация) — запустите заново" };
+    r = { ...r, status: "failed", error: "расчёт прерван перезапуском сервера (публикация) — он запустится сам" };
   }
-  return r;
+  const done = await lastDone();
+  if (!r) return done;
+  if (r.status === "done" || !done) return r;
+  // A run in progress or a failed run: the strategies keep the last finished results.
+  return { ...r, datasets: done.datasets, parity: done.parity, variants: done.variants, finishedAt: done.finishedAt };
 }
 
 const groupsOf = (side: "long" | "short", passes: boolean, riskPct: number): Group[] =>
@@ -344,6 +366,11 @@ export async function runStrategyReport(opts: { history?: boolean } = {}): Promi
     report.status = "done";
     report.finishedAt = new Date().toISOString();
     await save(report);
+    await pool.query(
+      `INSERT INTO nh_state (key, value, updated_at) VALUES ($1, $2, now())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [DONE_KEY, JSON.stringify(report)],
+    );
   } catch (err) {
     logger.warn({ err }, "nihilist: strategy report failed");
     report.status = "failed";
@@ -355,6 +382,28 @@ export async function runStrategyReport(opts: { history?: boolean } = {}): Promi
   }
 }
 export const strategyReportRunning = () => running;
+
+/**
+ * Owner 2026-11-16: the strategies are always there — the report runs by itself 10 minutes after a start when there
+ * is no finished report, the last one is older than a day or a run was cut by a restart, and is checked every hour
+ * after that (production only; it never runs twice at once).
+ */
+export function startStrategyReportSchedule(): void {
+  const check = async () => {
+    if (running) return;
+    const [cur, done] = await Promise.all([loadKey(KEY), lastDone()]);
+    const age = done?.finishedAt ? Date.now() - Date.parse(done.finishedAt) : Infinity;
+    const interrupted = cur?.status === "running" || cur?.status === "failed";
+    if (!done || age > REPORT_REFRESH_MS || interrupted) {
+      logger.info({ hasDone: Boolean(done), ageH: Math.round(age / 3_600_000), interrupted }, "nihilist: strategy report scheduled run");
+      await runStrategyReport({});
+    }
+  };
+  setTimeout(() => {
+    void check().catch((err) => logger.warn({ err }, "nihilist: strategy report schedule failed"));
+    setInterval(() => { void check().catch((err) => logger.warn({ err }, "nihilist: strategy report schedule failed")); }, 3_600_000);
+  }, 10 * 60_000);
+}
 /** 60-day candle history of a coin (also the SMC study, owner 2026-11-10). */
 export const loadHistory = (symbol: string) => history(symbol);
 
