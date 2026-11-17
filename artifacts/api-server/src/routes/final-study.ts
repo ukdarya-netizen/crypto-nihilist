@@ -17,7 +17,7 @@ import { tradingToken } from "../lib/trading-relay";
 import { tokenMatches } from "./trading-sync";
 import { STUDY_DIR, startFinalStudy, studyState } from "../analysis/final-study";
 import { clearExitStudy, exitFile, exitState, startExitStudy } from "../analysis/exit-study";
-import { candFile, candState, startCandStudy } from "../analysis/candidate-study";
+import { candClosesFile, candFile, candState, startCandStudy } from "../analysis/candidate-study";
 
 const FILES = new Set(["trades.csv", "rejects.csv", "trajectory.csv.gz", "mf-cache-v3.jsonl"]);
 const router: IRouter = Router();
@@ -94,6 +94,16 @@ router.get("/nh-study/cand/file", async (req, res) => {
   if (!f) { res.status(404).json({ error: "not_ready" }); return; }
   res.setHeader("Content-Type", "application/gzip");
   res.setHeader("Content-Disposition", 'attachment; filename="history.csv.gz"');
+  res.setHeader("X-Rows", String(f.rows));
+  res.send(f.body);
+});
+// Owner 2026-11-17: 1h closes of every coin of the run (market breadth at each signal, offline).
+router.get("/nh-study/cand/closes", async (req, res) => {
+  if (!allowed(req, res)) return;
+  const f = await candClosesFile().catch(() => null);
+  if (!f) { res.status(404).json({ error: "not_ready" }); return; }
+  res.setHeader("Content-Type", "application/gzip");
+  res.setHeader("Content-Disposition", 'attachment; filename="closes1h.csv.gz"');
   res.setHeader("X-Rows", String(f.rows));
   res.send(f.body);
 });

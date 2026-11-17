@@ -283,6 +283,124 @@ export function liquidityMeasures(s: SetupSignal, st: Structures): Measures {
   }
   return m;
 }
+/**
+ * Owner 2026-11-17 («реакцию свечи надо проверить»; real money, stops after the final tuning) — what was not measured:
+ * the touch candle (wick, close, body, volume), how deep the price went into the block and whether it closed beyond
+ * it, re-touches, the bounce in ATR and its speed, the stop in ATR and beyond the block, the room to the nearest
+ * opposite pivot, the order-block strength the engine already computes, the coin's 24h volume and the time of day.
+ */
+export function reactionMeasures(s: SetupSignal, data: Record<"30m" | "1h" | "4h", Candle[]>, v1: VsaRow[], vol1: Map<number, number> | null): Measures {
+  const d = s.side === "long" ? 1 : -1, m: Measures = {}, at = s.signalAt;
+  const top = s.block.top, bot = s.block.bottom, hgt = top - bot;
+  const near = d === 1 ? top : bot, far = d === 1 ? bot : top;
+  for (const [tf, cs, ms] of [["30m", data["30m"], SPAN], ["1h", data["1h"], H]] as const) {
+    const i = cs.findIndex((c) => s.firstTouchAt >= c.t && s.firstTouchAt < c.t + ms);
+    if (i < 0 || cs[i]!.t + ms > at) continue;
+    const c = cs[i]!, rng = c.h - c.l;
+    if (rng > 0) {
+      // wick toward the block (long: lower wick), close position (1 = closed at the trade-side extreme), body with the trade
+      m[`tc_wick_${tf}`] = d === 1 ? (Math.min(c.o, c.c) - c.l) / rng : (c.h - Math.max(c.o, c.c)) / rng;
+      m[`tc_close_${tf}`] = d === 1 ? (c.c - c.l) / rng : (c.h - c.c) / rng;
+      m[`tc_body_${tf}`] = (d * (c.c - c.o)) / rng;
+    }
+    m[`tc_closed_in_${tf}`] = c.c <= top && c.c >= bot ? 1 : 0;
+    // the next candle confirms (closes with the trade beyond the touch candle's close)
+    const n2 = cs[i + 1];
+    if (n2 && n2.t + ms <= at) m[`tc_next_${tf}`] = d * Math.sign(n2.c - c.c);
+  }
+  // Lucy's VSA of the 1h touch candle
+  const i1 = data["1h"].findIndex((c) => s.firstTouchAt >= c.t && s.firstTouchAt < c.t + H);
+  const r1 = i1 >= 0 ? v1[i1] : undefined;
+  if (r1 && r1.has && data["1h"][i1]!.t + H <= at) { m.tc_vsa_letter_1h = r1.letter; m.tc_vsa_bright_with_1h = r1.bright && (r1.up === (d === 1)) ? 1 : 0; m.tc_vsa_bright_against_1h = r1.bright && (r1.up !== (d === 1)) ? 1 : 0; }
+  // depth into the block between the first touch and the entry (30m): 0 = touched the edge, 1 = reached the far edge, >1 = through
+  const zone = data["30m"].filter((c) => c.t + SPAN > s.firstTouchAt && c.t + SPAN <= at);
+  if (zone.length && hgt > 0) {
+    const ext = d === 1 ? Math.min(...zone.map((c) => c.l)) : Math.max(...zone.map((c) => c.h));
+    m.depth_in_block = (d * (near - ext)) / hgt;
+    const k = zone.findIndex((c) => (d === 1 ? c.l : c.h) === ext);
+    m.ext_age_h = (at - (zone[k]!.t + SPAN)) / H;                       // hours from the extreme to the entry
+    m.bounce_speed_pct_h = m.ext_age_h > 0 ? ((d * (s.entry / ext - 1)) * 100) / m.ext_age_h : null;
+    let run = 0; for (let q = zone.length - 1; q > k; q--) { if (d * (zone[q]!.c - zone[q]!.o) > 0) run += 1; else break; }
+    m.bounce_run_30m = run;                                             // consecutive 30m candles with the trade before the entry
+  }
+  const h1z = data["1h"].filter((c) => c.t + H > s.firstTouchAt && c.t + H <= at);
+  m.closes_beyond_far_1h = h1z.filter((c) => d * (c.c - far) < 0).length;   // 1h closes beyond the far edge
+  // re-touches: 1h candles that came back into the block after leaving it, from the first touch to the entry
+  let inside = false, touches = 0;
+  for (const c of h1z) { const hit = c.l <= top && c.h >= bot; if (hit && !inside) touches += 1; inside = hit; }
+  m.touches = touches; m.touch_wait_h = (at - s.firstTouchAt) / H;
+  // stop: in ATR(14) 1h and beyond the block's far edge
+  const h1 = closedBefore(data["1h"], H, at).slice(-15), tr = trueRange(h1).slice(1);
+  const atr = h1.length > 2 ? (tr.reduce((a, b) => a + b, 0) / tr.length / h1[h1.length - 1]!.c) * 100 : null;
+  if (atr) { m.stop_atr = s.riskPct / atr; m.bounce_atr = ((d * (s.entry / s.extreme - 1)) * 100) / atr; }
+  m.stop_beyond_block_pct = (d * (far - s.stop) / s.entry) * 100;
+  // room to the nearest opposite pivot (5-bar fractal, last 200 bars) in % and in R
+  for (const [tf, cs, ms] of [["1h", data["1h"], H], ["4h", data["4h"], 4 * H]] as const) {
+    const b = closedBefore(cs, ms, at).slice(-200);
+    let best: number | null = null;
+    for (let q = 2; q < b.length - 2; q++) {
+      const piv = d === 1 ? (b[q]!.h > Math.max(b[q - 1]!.h, b[q - 2]!.h, b[q + 1]!.h, b[q + 2]!.h) ? b[q]!.h : null)
+        : (b[q]!.l < Math.min(b[q - 1]!.l, b[q - 2]!.l, b[q + 1]!.l, b[q + 2]!.l) ? b[q]!.l : null);
+      if (piv === null || d * (piv - s.entry) <= 0) continue;
+      const dist = (d * (piv - s.entry) / s.entry) * 100;
+      if (best === null || dist < best) best = dist;
+    }
+    m[`room_${tf}`] = best; m[`room_r_${tf}`] = best !== null && s.riskPct > 0 ? best / s.riskPct : null;
+  }
+  // the engine's own order-block strength
+  m.ob_displacement_atr = s.ob?.displacementAtr ?? null; m.ob_break_bars = s.ob?.breakBars ?? null;
+  m.ob_height_atr = s.ob?.heightAtr ?? null; m.ob_penetration_pct = s.ob?.penetrationPct ?? null;
+  m.rr1 = s.rr1; m.rr2 = s.rr2;
+  // the coin's 24h aggregated volume, USD (liquidity) and the time
+  if (vol1) { let v = 0, n = 0; for (const c of h1.length ? closedBefore(data["1h"], H, at).slice(-24) : []) { const x = vol1.get(c.t); if (x != null) { v += x; n += 1; } } m.vol24h_usd = n >= 20 ? v : null; }
+  const dt = new Date(at); m.hour_utc = dt.getUTCHours(); m.weekday = dt.getUTCDay();
+  return m;
+}
+const REACTION_COLS = ["tc_wick_30m", "tc_close_30m", "tc_body_30m", "tc_closed_in_30m", "tc_next_30m", "tc_wick_1h", "tc_close_1h", "tc_body_1h", "tc_closed_in_1h", "tc_next_1h",
+  "tc_vsa_letter_1h", "tc_vsa_bright_with_1h", "tc_vsa_bright_against_1h", "depth_in_block", "ext_age_h", "bounce_speed_pct_h", "bounce_run_30m", "closes_beyond_far_1h",
+  "touches", "touch_wait_h", "stop_atr", "bounce_atr", "stop_beyond_block_pct", "room_1h", "room_r_1h", "room_4h", "room_r_4h",
+  "ob_displacement_atr", "ob_break_bars", "ob_height_atr", "ob_penetration_pct", "rr1", "rr2", "vol24h_usd", "hour_utc", "weekday"];
+
+/** BTC at the signal: returns 1h / 4h / 24h (raw and with the trade), EMA50 4h side, ADX 4h. */
+export function btcMeasures(s: SetupSignal, btc: Record<"1h" | "4h", Candle[]> | null): Measures {
+  const d = s.side === "long" ? 1 : -1, m: Measures = {};
+  if (!btc) return m;
+  const h1 = closedBefore(btc["1h"], H, s.signalAt), c4 = closedBefore(btc["4h"], 4 * H, s.signalAt);
+  const ret = (cs: Candle[], n: number) => (cs.length > n ? (cs[cs.length - 1]!.c / cs[cs.length - 1 - n]!.c - 1) * 100 : null);
+  for (const [k, v] of [["1h", ret(h1, 1)], ["4h", ret(h1, 4)], ["24h", ret(h1, 24)]] as const) { m[`btc_ret_${k}`] = v; m[`btc_with_${k}`] = v === null ? null : d * v; }
+  if (c4.length > 60) { const e = ema(c4.map((c) => c.c), 50); m.btc_ema50_4h = d * Math.sign(c4[c4.length - 1]!.c - e[e.length - 1]!); }
+  const ind = indicators(c4.slice(-300), d, "btc4h", s.entry); m.btc_adx_4h = ind.adx_btc4h ?? null; m.btc_di_4h = ind.di_btc4h ?? null;
+  return m;
+}
+const BTC_COLS = ["btc_ret_1h", "btc_ret_4h", "btc_ret_24h", "btc_with_1h", "btc_with_4h", "btc_with_24h", "btc_ema50_4h", "btc_adx_4h", "btc_di_4h"];
+
+/** Crowd at the signal (1h CoinGlass): funding (OI-weighted), liquidations long / short, Binance long-account share. */
+export async function crowd1h(symbol: string): Promise<{ fund: Map<number, number> | null; liq: Map<number, [number, number]> | null; ls: Map<number, number> | null }> {
+  const base = cgBase(symbol);
+  const fund = await cgSeries("/api/futures/funding-rate/oi-weight-history", { symbol: base }, ["close", "close"], "1h", 1700).then((x) => (x ? new Map([...x].map(([t, v]) => [t, v / 2])) : null)).catch(() => null);
+  const liq = await cgPair("/api/futures/liquidation/aggregated-history", { symbol: base, exchange_list: VSA_FUT }, ["aggregated_long_liquidation_usd", "aggregated_short_liquidation_usd"], "1h", 1700).catch(() => null);
+  const ls = await cgSeries("/api/futures/global-long-short-account-ratio/history", { exchange: "Binance", symbol: `${base}USDT` }, ["global_account_long_percent", "global_account_long_percent"], "1h", 1700).then((x) => (x ? new Map([...x].map(([t, v]) => [t, v / 2])) : null)).catch(() => null);
+  return { fund, liq, ls };
+}
+export function crowdMeasures(s: SetupSignal, cs: Candle[], c: Awaited<ReturnType<typeof crowd1h>>, vol1: Map<number, number> | null): Measures {
+  const d = s.side === "long" ? 1 : -1, m: Measures = {}, i = lastClosed(cs, H, s.signalAt);
+  if (i < 24) return m;
+  const t = (k: number) => cs[k]!.t;
+  const f = c.fund?.get(t(i)); if (f !== undefined) m.fund_with = d * f;             // > 0: the trade's side pays (crowded)
+  let fs = 0, fn = 0; for (let k = i - 7; k <= i; k++) { const x = c.fund?.get(t(k)); if (x !== undefined) { fs += x; fn += 1; } } m.fund_avg8h_with = fn ? (d * fs) / fn : null;
+  for (const n of [1, 4, 24]) {
+    let lo = 0, sh = 0; for (let k = i - n + 1; k <= i; k++) { const x = c.liq?.get(t(k)); lo += x?.[0] ?? 0; sh += x?.[1] ?? 0; }
+    // the trade's own side liquidated (long: longs) vs the other side, share −1…+1 (+ = the other side squeezed)
+    m[`liq_bal_${n}h`] = lo + sh > 0 ? (d === 1 ? sh - lo : lo - sh) / (lo + sh) : null;
+    let v = 0; for (let k = i - n + 1; k <= i; k++) v += vol1?.get(t(k)) ?? 0;
+    m[`liq_to_vol_${n}h`] = v > 0 ? (lo + sh) / v : null;
+  }
+  const l0 = c.ls?.get(t(i)), l4 = c.ls?.get(t(i - 4));
+  if (l0 !== undefined) { m.ls_same_side_pct = d === 1 ? l0 : 100 - l0; if (l4 !== undefined) m.ls_chg4h_same = d * (l0 - l4); }
+  return m;
+}
+const CROWD_COLS = ["fund_with", "fund_avg8h_with", "liq_bal_1h", "liq_to_vol_1h", "liq_bal_4h", "liq_to_vol_4h", "liq_bal_24h", "liq_to_vol_24h", "ls_same_side_pct", "ls_chg4h_same"];
+
 /** SMT divergence with BTC over the last 20 bars: long — the coin swept its low but BTC did not (+1); short mirrored. */
 export function smtMeasures(s: SetupSignal, coin: Record<"1h" | "4h", Candle[]>, btc: Record<"1h" | "4h", Candle[]> | null): Measures {
   const d = s.side === "long" ? 1 : -1, m: Measures = {};
@@ -502,7 +620,7 @@ const COLS = ["brk_body_share", "brk_close_pos", "brk_body_pct", "brk_fvg", "ap_
   "smc_htf_swing_aligned", "smc_htf_int_aligned", "smc_htf_discount", "smc_sweep", "smc_htf_fvg", "smc_fresh", "htf_is_1d", "ltf_is_1h",
   "filter_mirror", "block_age_h", "block_size_pct",
   "vsa_letter_last", ...[1, 3, 6, 12].flatMap((n) => [`vsa_bright_against_${n}`, `vsa_bright_with_${n}`]), "vsa_active_3", "vsa_spot_share_3", "vsa_tri_against_6", "vsa_tri_with_6"];
-const HEAD = ["symbol", "side", "setup", "signal_at", "entry", "stop", "risk_pct", "long_filter", "closed", "reason", "pnl_pct", "peak_pct", "hold_h", ...COLS, ...VSA1H_COLS, ...IND_COLS, ...VP_COLS, ...FLOW_COLS, ...PHASE_COLS, "path_h", "path_l", "path_c", "path_oi", "path_dl", "path_vsa"].join(",");
+const HEAD = ["symbol", "side", "setup", "signal_at", "entry", "stop", "risk_pct", "long_filter", "closed", "reason", "pnl_pct", "peak_pct", "hold_h", ...COLS, ...VSA1H_COLS, ...IND_COLS, ...VP_COLS, ...FLOW_COLS, ...PHASE_COLS, ...REACTION_COLS, ...BTC_COLS, ...CROWD_COLS, "path_h", "path_l", "path_c", "path_oi", "path_dl", "path_vsa"].join(",");
 
 export async function candFile(): Promise<{ body: Buffer; rows: number } | null> {
   const r = await pool.query<{ value: { z: string; n: number } }>("SELECT value FROM nh_state WHERE key = $1", [KEY]);
@@ -516,6 +634,7 @@ async function run(): Promise<void> {
   if (!universe) throw new Error("CoinGlass: список монет не получен");
   candState.total = universe.length; candState.done = 0;
   const lines: string[] = [HEAD];
+  const closes: string[] = ["symbol,t,c"];
   const btc = await loadHistory("BTC-USDT").catch(() => null);
   for (const u of universe) {
     const symbol = u.instrumentId;
@@ -537,6 +656,10 @@ async function run(): Promise<void> {
         vol1 = fu ? new Map([...fu].map(([t, v]) => [t, v + (sp?.get(t) ?? 0)])) : null;
       }
       catch (err) { logger.warn({ err, symbol }, "nihilist: candidate flow 1h failed"); }
+      let cr: Awaited<ReturnType<typeof crowd1h>> = { fund: null, liq: null, ls: null };
+      try { cr = await crowd1h(symbol); } catch (err) { logger.warn({ err, symbol }, "nihilist: candidate crowd failed"); }
+      // Owner 2026-11-17: 1h closes of every coin for the market breadth at each signal (computed offline).
+      for (const c of data["1h"]) closes.push(`${symbol},${c.t},${c.c}`);
       for (const s of allSignals(data)) {
         if (s.signalAt < busy[s.side]) continue;   // one open trade per coin and side, as the bot
         const trade: SimTrade = { id: `${symbol}:${s.setup}:${s.signalAt}`, side: s.side, entry: s.entry, stop: s.stop, openedAt: s.signalAt, maxHoldMs: MAX_HOLD_MS[s.htf] };
@@ -556,6 +679,9 @@ async function run(): Promise<void> {
           ["phases", () => phaseMeasures(s, data["4h"], vsa, data["1h"], vsa1, fl, vol1)],
           ["liquidity", () => liquidityMeasures(s, st)],
           ["smt", () => smtMeasures(s, data as never, btc as never)],
+          ["reaction", () => reactionMeasures(s, data as never, vsa1, vol1)],
+          ["btc", () => btcMeasures(s, btc as never)],
+          ["crowd", () => crowdMeasures(s, data["1h"], cr, vol1)],
         ];
         for (const [name, fn] of groups) { try { Object.assign(mm, fn()); } catch (err) { logger.warn({ err, symbol, group: name }, "nihilist: candidate measures failed"); } }
         const h1 = data["1h"].filter((c) => c.t + H <= s.signalAt).slice(-15);
@@ -575,7 +701,7 @@ async function run(): Promise<void> {
         lines.push([symbol, s.side, s.setup, new Date(s.signalAt).toISOString(), s.entry, s.stop, r4(s.riskPct), pass,
           res.closed ? 1 : 0, res.reason ?? "", r4(res.pnlPct), r4(res.peakPct), r4(res.holdH), ...COLS.map((c) => r4(mm[c])),
           ...VSA1H_COLS.map((c) => r4(mm[c])), ...IND_COLS.map((c) => r4(mm[c])), ...VP_COLS.map((c) => r4(mm[c])), ...FLOW_COLS.map((c) => r4(mm[c])),
-          ...PHASE_COLS.map((c) => r4(mm[c])), ...hourlyPath(s, data["1h"]), ...flowPath(s, data["1h"], fl), vsaPath(s, data["1h"], vsa1)].join(","));
+          ...PHASE_COLS.map((c) => r4(mm[c])), ...REACTION_COLS.map((c) => r4(mm[c])), ...BTC_COLS.map((c) => r4(mm[c])), ...CROWD_COLS.map((c) => r4(mm[c])), ...hourlyPath(s, data["1h"]), ...flowPath(s, data["1h"], fl), vsaPath(s, data["1h"], vsa1)].join(","));
       }
     }
     candState.done += 1;
@@ -586,6 +712,17 @@ async function run(): Promise<void> {
   await pool.query(
     `INSERT INTO nh_state (key, value, updated_at) VALUES ($1, $2, now())
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, [KEY, JSON.stringify({ z, n: lines.length - 1 })]);
+  const zc = gzipSync(closes.join("\n") + "\n").toString("base64");
+  await pool.query(
+    `INSERT INTO nh_state (key, value, updated_at) VALUES ($1, $2, now())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, [CLOSES_KEY, JSON.stringify({ z: zc, n: closes.length - 1 })]);
+}
+const CLOSES_KEY = "nhcand:closes1h";
+/** Owner 2026-11-17: 1h closes of every coin of the run (market breadth offline). */
+export async function candClosesFile(): Promise<{ body: Buffer; rows: number } | null> {
+  const r = await pool.query<{ value: { z: string; n: number } }>("SELECT value FROM nh_state WHERE key = $1", [CLOSES_KEY]);
+  const v = r.rows[0]?.value;
+  return v ? { body: Buffer.from(v.z, "base64"), rows: v.n } : null;
 }
 
 export function startCandStudy(): boolean {
