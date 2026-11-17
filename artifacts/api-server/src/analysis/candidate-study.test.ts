@@ -108,3 +108,17 @@ test("crowd (owner 2026-11-17): funding and liquidations oriented to the trade",
   assert.equal(sh.fund_with, -0.01);
   assert.equal(sh.liq_bal_4h, -0.5);
 });
+
+test("liquidity pools (owner 2026-11-17): equal lows swept before the touch, untaken equal lows near the stop", async () => {
+  const { reactionMeasures } = await import("./candidate-study");
+  const H = 3_600_000, t0 = 1_000 * H;
+  const h1 = Array.from({ length: 160 }, (_, i) => ({ t: t0 - 150 * H + i * H, o: 110, h: 111, l: 109, c: 110, v: 1 }));
+  h1[100] = { ...h1[100]!, l: 105 }; h1[120] = { ...h1[120]!, l: 105.1 };   // equal lows ≈105.05
+  h1[150] = { t: t0, o: 106, h: 107, l: 104, c: 106.5, v: 1 };              // the touch sweeps them
+  for (let i = 151; i < 160; i++) h1[i] = { t: t0 + (i - 150) * H, o: 107, h: 108, l: 106.8, c: 107.5, v: 1 };
+  const s = { side: "long", signalAt: t0 + 10 * H, entry: 107.5, stop: 103, riskPct: 4.2, extreme: 104, firstTouchAt: t0 + 60_000, rr1: 2, rr2: 3,
+    block: { top: 106, bottom: 104.5, createdAt: t0 - 40 * H, time: t0 - 41 * H }, ob: null };
+  const m = reactionMeasures(s as never, { "30m": h1, "1h": h1, "4h": h1 } as never, [], null);
+  assert.equal(m.eq_swept, 1);
+  assert.equal(m.eq_between_entry_stop, 0);
+});

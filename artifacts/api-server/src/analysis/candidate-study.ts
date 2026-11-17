@@ -347,6 +347,43 @@ export function reactionMeasures(s: SetupSignal, data: Record<"30m" | "1h" | "4h
     }
     m[`room_${tf}`] = best; m[`room_r_${tf}`] = best !== null && s.riskPct > 0 ? best / s.riskPct : null;
   }
+  // Owner 2026-11-17 (her SMC checklist: liquidity pools, equal highs / lows, the sweep before the reaction):
+  // 1h pivots (3 bars each side) of the last 150 closed bars; "equal" = two pivots within 0.15 %.
+  {
+    const b = closedBefore(data["1h"], H, at).slice(-150), lowSide = d === 1;
+    const piv: Array<{ k: number; p: number }> = [];
+    for (let q = 3; q < b.length - 3; q++) {
+      const x = lowSide ? b[q]!.l : b[q]!.h, around = [b[q - 1], b[q - 2], b[q - 3], b[q + 1], b[q + 2], b[q + 3]].map((c) => (lowSide ? c!.l : c!.h));
+      if (lowSide ? x < Math.min(...around) : x > Math.max(...around)) piv.push({ k: q, p: x });
+    }
+    const pools: number[] = [];
+    for (let a = 0; a < piv.length; a++) for (let c = a + 1; c < piv.length; c++) if (Math.abs(piv[a]!.p / piv[c]!.p - 1) <= 0.0015) pools.push((piv[a]!.p + piv[c]!.p) / 2);
+    const touchK = b.findIndex((c) => c.t + H > s.firstTouchAt);
+    const before = touchK > 0 ? b.slice(Math.max(0, touchK - 24), touchK) : [];
+    const after = touchK >= 0 ? b.slice(touchK) : [];
+    const takenBy = (lvl: number, cs: Candle[]) => cs.some((c) => (lowSide ? c.l < lvl : c.h > lvl));
+    // equal lows (long) swept in the 24 h before the touch or during the reaction
+    m.eq_swept = pools.some((lvl) => takenBy(lvl, [...before, ...after])) ? 1 : 0;
+    // untaken equal lows between the entry and the stop (a magnet for the stop) and just beyond the stop (≤ 1 %)
+    const untaken = pools.filter((lvl) => !takenBy(lvl, after));
+    m.eq_between_entry_stop = untaken.filter((lvl) => d * (s.entry - lvl) > 0 && d * (lvl - s.stop) > 0).length;
+    m.eq_beyond_stop_1pct = untaken.filter((lvl) => d * (s.stop - lvl) > 0 && (d * (s.stop - lvl) / s.entry) * 100 <= 1).length;
+    // the last pivot before the touch taken out during the reaction and closed back (local sweep, then reclaim)
+    const lastPiv = [...piv].reverse().find((x) => x.k < touchK);
+    m.ltf_sweep_reclaim = lastPiv && after.some((c) => (lowSide ? c.l < lastPiv.p : c.h > lastPiv.p)) && d * (b[b.length - 1]!.c - lastPiv.p) > 0 ? 1 : lastPiv ? 0 : null;
+    // equal highs (long) ahead — the liquidity target — in R
+    const tgt: Array<{ k: number; p: number }> = [];
+    for (let q = 3; q < b.length - 3; q++) {
+      const x = lowSide ? b[q]!.h : b[q]!.l, around = [b[q - 1], b[q - 2], b[q - 3], b[q + 1], b[q + 2], b[q + 3]].map((c) => (lowSide ? c!.h : c!.l));
+      if (lowSide ? x > Math.max(...around) : x < Math.min(...around)) tgt.push({ k: q, p: x });
+    }
+    let eqT: number | null = null;
+    for (let a = 0; a < tgt.length; a++) for (let c = a + 1; c < tgt.length; c++) {
+      const lvl = (tgt[a]!.p + tgt[c]!.p) / 2;
+      if (Math.abs(tgt[a]!.p / tgt[c]!.p - 1) <= 0.0015 && d * (lvl - s.entry) > 0) { const dist = (d * (lvl - s.entry) / s.entry) * 100; if (eqT === null || dist < eqT) eqT = dist; }
+    }
+    m.eq_target_r = eqT !== null && s.riskPct > 0 ? eqT / s.riskPct : null;
+  }
   // the engine's own order-block strength
   m.ob_displacement_atr = s.ob?.displacementAtr ?? null; m.ob_break_bars = s.ob?.breakBars ?? null;
   m.ob_height_atr = s.ob?.heightAtr ?? null; m.ob_penetration_pct = s.ob?.penetrationPct ?? null;
@@ -359,6 +396,7 @@ export function reactionMeasures(s: SetupSignal, data: Record<"30m" | "1h" | "4h
 const REACTION_COLS = ["tc_wick_30m", "tc_close_30m", "tc_body_30m", "tc_closed_in_30m", "tc_next_30m", "tc_wick_1h", "tc_close_1h", "tc_body_1h", "tc_closed_in_1h", "tc_next_1h",
   "tc_vsa_letter_1h", "tc_vsa_bright_with_1h", "tc_vsa_bright_against_1h", "depth_in_block", "ext_age_h", "bounce_speed_pct_h", "bounce_run_30m", "closes_beyond_far_1h",
   "touches", "touch_wait_h", "stop_atr", "bounce_atr", "stop_beyond_block_pct", "room_1h", "room_r_1h", "room_4h", "room_r_4h",
+  "eq_swept", "eq_between_entry_stop", "eq_beyond_stop_1pct", "ltf_sweep_reclaim", "eq_target_r",
   "ob_displacement_atr", "ob_break_bars", "ob_height_atr", "ob_penetration_pct", "rr1", "rr2", "vol24h_usd", "hour_utc", "weekday"];
 
 /** BTC at the signal: returns 1h / 4h / 24h (raw and with the trade), EMA50 4h side, ADX 4h. */
