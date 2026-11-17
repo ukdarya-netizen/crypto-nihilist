@@ -10,6 +10,7 @@ import { gzipSync } from "node:zlib";
 import { pool } from "@workspace/db";
 import { INTERVAL_MS, type Candle } from "../engine/candles";
 import { MAX_HOLD_MS, entryFilter } from "../engine/config";
+import { atr as engineAtr } from "../engine/metrics";
 import type { SetupSignal } from "../engine/setups";
 import { SmcEngine } from "../engine/smc";
 import { cgRequest, getUniverse, waitForScanIdle } from "../market/coinglass";
@@ -722,9 +723,12 @@ async function run(): Promise<void> {
           ["crowd", () => crowdMeasures(s, data["1h"], cr, vol1)],
         ];
         for (const [name, fn] of groups) { try { Object.assign(mm, fn()); } catch (err) { logger.warn({ err, symbol, group: name }, "nihilist: candidate measures failed"); } }
-        const h1 = data["1h"].filter((c) => c.t + H <= s.signalAt).slice(-15);
-        const tr = trueRange(h1).slice(1);
-        const atr = h1.length > 2 ? (tr.reduce((a, b) => a + b, 0) / tr.length / h1[h1.length - 1]!.c) * 100 : null;
+        // Owner 2026-11-17: the live filter's ATR exactly (engine/metrics atrpct_1h: Wilder ATR(14) of the closed 1h
+        // candles over the last closed 30m price) — the simple 14-bar average used before differed (BR 1.81 vs 1.95).
+        const h1all = data["1h"].filter((c) => c.t + H <= s.signalAt).slice(-300);
+        const last30 = data["30m"].filter((c) => c.t + SPAN <= s.signalAt).at(-1)?.c ?? h1all.at(-1)?.c ?? null;
+        const aW = engineAtr(h1all as never);
+        const atr = aW !== null && last30 ? Math.round((aW / last30) * 100 * 100) / 100 : null;
         const pass = s.side === "short" ? "" : entryFilter({
           side: s.side, riskPct: s.riskPct, entry: s.entry, blockTop: s.block.top, blockBottom: s.block.bottom,
           signalAt: s.signalAt, blockCreatedAt: s.block.createdAt ?? null, blockTime: s.block.time ?? null, atrPct1h: atr,
