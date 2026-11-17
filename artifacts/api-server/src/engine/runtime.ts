@@ -33,6 +33,7 @@ import { waitForEngineLease } from "../ops/lease";
 import { logger } from "../lib/logger";
 import { marketMetrics } from "./metrics";
 import { shortUptrend } from "./short-uptrend";
+import { longZoneVolume, widenShortStop } from "./entry-rules-1117";
 
 /** LTF bars walked per evaluation (enough for the LTF structure to settle). */
 const LTF_WINDOW = 400;
@@ -216,6 +217,21 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
     await recordDecision(symbol, s.setup, s.barTime, "rejected", `entry_filter:${filter.reason}`, s.block.id,
       { ...signalDetails(s), entryFilter: filter, chochBar });
     return "filtered";
+  }
+  // Owner 2026-11-17: a long only with a bright Lucy's VSA bar in the block (first touch → entry, closed 1h).
+  if (s.side === "long" && !isBtc(symbol)) {
+    const zv = await longZoneVolume(symbol, s, book(symbol)["1h"]);
+    if (!zv.pass) {
+      await recordDecision(symbol, s.setup, s.barTime, "rejected", zv.volume === "missing" ? "entry_filter:long_zone_volume_missing" : "entry_filter:long_no_zone_volume", s.block.id,
+        { ...signalDetails(s), entryFilter: filter, zoneVolume: zv, chochBar });
+      return "filtered";
+    }
+  }
+  // Owner 2026-11-17: the short's stop 2 × ATR(14) 1h further (the same ATR % as the long filter's).
+  if (s.side === "short" && !isBtc(symbol)) {
+    const w = widenShortStop(s, (marketMetrics(book(symbol), s.signalAt).atrpct_1h as number | null) ?? null);
+    chochBar = { ...(chochBar ?? {}), stopBase: w.stopBase };
+    s = { ...s, stop: w.stop, riskPct: w.riskPct };
   }
   // BTC (owner 2026-11-10): BTC Bullet's management — TP 1 at 1.5R (50%, stop to entry), TP 2 at 3R. No new BTC
   // signals since 2026-11-13 (never evaluated); kept for BTC trades opened before.

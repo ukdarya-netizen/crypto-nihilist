@@ -157,6 +157,9 @@ export function reasonLabel(reason: string | null | undefined): string {
   if (!reason) return "—";
   if (reason === "entry_filter:isolated_short") return "одиночный шорт: меньше 13 шортов по рынку за 24 ч";
   if (reason === "entry_filter:short_uptrend_4h") return "шорт против роста 4h: цена над облаком Ichimoku и ADX 4h от 25 или покупатель на 1h за 6 ч";
+  // Owner 2026-11-17.
+  if (reason === "entry_filter:long_no_zone_volume") return "лонг без объёма в блоке: от касания до входа ни одного яркого бара VSA на 1h";
+  if (reason === "entry_filter:long_zone_volume_missing") return "лонг без объёма в блоке: нет данных об объёме";
   if (reason.startsWith("entry_filter:")) return `фильтр лонгов: ${reason.slice(13).split(",").map((r) => FILTER_LABEL[r] ?? r).join(", ")}`;
   return REASON_LABEL[reason] ?? reason;
 }
