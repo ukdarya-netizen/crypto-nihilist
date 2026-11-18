@@ -174,7 +174,7 @@ export function SignalHistory({ days, live, status, onStatus, limit = 200, title
                     </div>
                     <div className="mt-1 flex justify-between font-mono text-[11px] text-muted">
                       <span>{when(s.opened_at)} · {duration(s.opened_at, s.closed_at)}</span>
-                      <span>пик {signed(s.peak_pct, 1, "%")}</span>
+                      <span>пик {signed(s.peak_pct, 1, "%")} · макс. в минус {signed(s.mae_pct, 1, "%")}</span>
                     </div>
                   </button>
                   {open === s.id && <Details s={s} />}
@@ -187,7 +187,7 @@ export function SignalHistory({ days, live, status, onStatus, limit = 200, title
             <div className="overflow-x-auto">
             <table className={`w-full text-sm ${isOwner() ? "min-w-[1400px]" : "min-w-[1000px]"}`}>
               <thead>
-                <tr className="text-left">{["Открыт", "Монета", "ОБ → слом", "Вход", "Сейчас / выход", "Пик", "Результат", "R", "Статус", "Время", ...metricCols().map((c) => c.head), ""].map((h) => <th key={h} className="label whitespace-nowrap pb-2 pr-3 font-normal">{h}</th>)}</tr>
+                <tr className="text-left">{["Открыт", "Монета", "ОБ → слом", "Вход", "Сейчас / выход", "Пик", "Макс. в минус", "Результат", "R", "Статус", "Время", ...metricCols().map((c) => c.head), ""].map((h) => <th key={h} className="label whitespace-nowrap pb-2 pr-3 font-normal">{h}</th>)}</tr>
               </thead>
               <tbody className="tabular">
                 {rows.map((s) => {
@@ -202,6 +202,7 @@ export function SignalHistory({ days, live, status, onStatus, limit = 200, title
                         <td className="pr-3">{price(s.entry)}</td>
                         <td className="pr-3">{price(s.status === "closed" ? s.exit_price : s.last_price)}</td>
                         <td className="pr-3 text-up">{signed(s.peak_pct, 1, "%")}</td>
+                        <td className="pr-3 text-down">{signed(s.mae_pct, 1, "%")}</td>
                         <td className={`pr-3 font-semibold ${tone(r)}`}>{signed(r, 2, "%")}</td>
                         <td className={`pr-3 ${tone(s.r_multiple)}`}>{s.status === "closed" ? signed(s.r_multiple) : "—"}</td>
                         <td className="pr-3"><Status s={s} /></td>
@@ -209,7 +210,7 @@ export function SignalHistory({ days, live, status, onStatus, limit = 200, title
                         {metricCols().map((c) => <MetricCell key={c.key} snapshot={s.snapshot} col={c} />)}
                         <td><ChevronDown className={`size-4 text-muted transition ${isOpen ? "rotate-180" : ""}`} /></td>
                       </tr>
-                      {isOpen && <tr><td colSpan={11 + metricCols().length} className="p-0"><Details s={s} /></td></tr>}
+                      {isOpen && <tr><td colSpan={12 + metricCols().length} className="p-0"><Details s={s} /></td></tr>}
                     </Fragment>
                   );
                 })}

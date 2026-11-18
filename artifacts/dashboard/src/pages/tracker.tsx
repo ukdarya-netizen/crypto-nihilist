@@ -61,7 +61,7 @@ function Card({ s }: { s: Signal }) {
         <div><p className="label">{s.trailing_active ? "Трейлинг" : "Стоп"}</p><p className="text-down">{price(stopNow)}</p><p className="text-[10px] text-muted">{signed(pct(stopNow), 1, "%")}</p></div>
         <div><p className="label">Вход</p><p>{price(s.entry)}</p></div>
         <div><p className="label">До стопа</p><p className={(toStopPct(s) ?? 99) < 2 ? "text-warn" : ""}>{num(toStopPct(s), 1)}%</p><p className="text-[10px] text-muted">{stopKind(s)}</p></div>
-        <div><p className="label">Пик</p><p className="text-up">{signed(s.peak_pct, 1, "%")}</p></div>
+        <div><p className="label">Пик</p><p className="text-up">{signed(s.peak_pct, 1, "%")}</p><p className="text-[10px] text-down">{signed(s.mae_pct, 1, "%")} макс. в минус</p></div>
       </div>
       <p className="mt-3 text-[11px] text-muted">
         Блок {price(s.block_bottom)}–{price(s.block_top)} · стоп при входе {s.risk_pct.toFixed(1)}%
@@ -95,6 +95,8 @@ function Row({ s, open, onToggle }: { s: Signal; open: boolean; onToggle: () => 
         <td className="pr-3">{price(s.last_price)}</td>
         <td className={`pr-3 font-semibold ${tone(live)}`}>{signed(live, 2, "%")}</td>
         <td className="pr-3 text-up">{signed(s.peak_pct, 1, "%")}</td>
+        {/* Owner 2026-11-18: the deepest move against the trade since the entry, beside the peak (as Bitcoin Margin Master). */}
+        <td className="pr-3 text-down">{signed(s.mae_pct, 1, "%")}</td>
         <td className="whitespace-nowrap pr-3">
           <span className={stopKind(s) === "стоп" ? "text-down" : stopKind(s) === "трейлинг" ? "text-primary" : "text-foreground"}>{price(stopNow)}</span>
           <span className="ml-1.5 text-[10px] text-muted">{signed(pct(stopNow), 1, "%")} · {stopKind(s)}</span>
@@ -106,7 +108,7 @@ function Row({ s, open, onToggle }: { s: Signal; open: boolean; onToggle: () => 
         <td><ChevronDown className={`size-4 text-muted transition ${open ? "rotate-180" : ""}`} /></td>
       </tr>
       {open && (
-        <tr><td colSpan={12 + metricCols().length} className="p-0">
+        <tr><td colSpan={13 + metricCols().length} className="p-0">
           <div className="grid gap-4 border-t border-border bg-black/20 p-4 text-xs lg:grid-cols-2">
             <div><Card s={s} /></div>
             {isOwner() && <div><p className="label mb-2">Траектория: рынок после входа</p><Trajectory id={s.id} /></div>}
@@ -155,7 +157,7 @@ export default function Tracker() {
           <>
             <div className="hidden overflow-x-auto md:block">
               <table className={`w-full text-sm ${isOwner() ? "min-w-[1400px]" : "min-w-[1000px]"}`}>
-                <thead><tr className="text-left">{["Открыта", "Монета", "ОБ → слом", "Вход", "Цена", "Результат", "Пик", "Стоп сейчас", "До стопа", "До цели", "В сделке", ...metricCols().map((c) => c.head), ""].map((h) => <th key={h} className="label whitespace-nowrap pb-2 pr-3 font-normal">{h}</th>)}</tr></thead>
+                <thead><tr className="text-left">{["Открыта", "Монета", "ОБ → слом", "Вход", "Цена", "Результат", "Пик", "Макс. в минус", "Стоп сейчас", "До стопа", "До цели", "В сделке", ...metricCols().map((c) => c.head), ""].map((h) => <th key={h} className="label whitespace-nowrap pb-2 pr-3 font-normal">{h}</th>)}</tr></thead>
                 <tbody className="tabular">{rows.map((s) => <Row key={s.id} s={s} open={openId === s.id} onToggle={() => setOpenId(openId === s.id ? null : s.id)} />)}</tbody>
               </table>
             </div>
