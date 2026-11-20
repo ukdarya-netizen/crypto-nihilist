@@ -60,7 +60,7 @@ export const STATUS_HELP: Record<TradeStatus, string> = {
   expired: "Закрыта по времени удержания в ноль или минус (7 дней для ОБ 4h, 21 день для ОБ 1D).",
 };
 
-function Status({ s }: { s: HistoryRow }) {
+export function Status({ s }: { s: HistoryRow }) {
   const meta = STATUS_META[s.trade_status];
   const extra = s.trade_status === "be_stop" ? ` ${s.peak_pct >= 10 ? "+10" : s.peak_pct >= 8 ? "+8" : s.peak_pct >= 5 ? "+5" : ""}` : "";
   return <span title={STATUS_HELP[s.trade_status]} className={`whitespace-nowrap border px-1.5 py-0.5 font-mono text-[10px] ${meta.cls}`}>{meta.label}{extra}</span>;
@@ -186,7 +186,7 @@ export function SignalHistory({ days, live, status, onStatus, extra = {}, limit 
                       <span className={`font-mono text-sm ${tone(r)}`}>{signed(r, 2, "%")}</span>
                     </div>
                     <div className="mt-1 flex justify-between font-mono text-[11px] text-muted">
-                      <span>{when(s.opened_at)} · {duration(s.opened_at, s.closed_at)}</span>
+                      <span>{when(s.opened_at)}{s.closed_at ? ` → ${when(s.closed_at)}` : ""} · {duration(s.opened_at, s.closed_at)}</span>
                       <span>пик {signed(s.peak_pct, 1, "%")} · макс. в минус {signed(s.mae_pct, 1, "%")}</span>
                     </div>
                   </button>
@@ -200,7 +200,7 @@ export function SignalHistory({ days, live, status, onStatus, extra = {}, limit 
             <div className="overflow-x-auto">
             <table className={`w-full text-sm ${isOwner() ? "min-w-[1400px]" : "min-w-[1000px]"}`}>
               <thead>
-                <tr className="text-left">{["Открыт", "Монета", "ОБ → слом", "Вход", "Сейчас / выход", "Пик", "Макс. в минус", "Результат", "R", "Статус", "Время", ...metricCols().map((c) => c.head), ""].map((h) => <th key={h} className="label whitespace-nowrap pb-2 pr-3 font-normal">{h}</th>)}</tr>
+                <tr className="text-left">{["Открыт", "Закрыт", "Монета", "ОБ → слом", "Вход", "Сейчас / выход", "Пик", "Макс. в минус", "Результат", "R", "Статус", "Время", ...metricCols().map((c) => c.head), ""].map((h) => <th key={h} className="label whitespace-nowrap pb-2 pr-3 font-normal">{h}</th>)}</tr>
               </thead>
               <tbody className="tabular">
                 {rows.map((s) => {
@@ -210,6 +210,7 @@ export function SignalHistory({ days, live, status, onStatus, extra = {}, limit 
                     <Fragment key={s.id}>
                       <tr onClick={() => setOpen(isOpen ? null : s.id)} className="cursor-pointer border-t border-border hover:bg-white/[0.02]">
                         <td className="whitespace-nowrap py-2.5 pr-3 text-muted">{when(s.opened_at)}</td>
+                        <td className="whitespace-nowrap pr-3 text-muted">{s.closed_at ? when(s.closed_at) : "—"}</td>
                         <td className="pr-3 font-sans font-semibold"><span className="flex items-center gap-2"><CoinLink symbol={s.symbol} signal={s} /> <SideTag side={s.side} /></span></td>
                         <td className="whitespace-nowrap pr-3 font-sans text-xs text-muted" title={setupLabel(s.setup)}>{s.htf === "1d" ? "1D" : s.htf} → {s.ltf}</td>
                         <td className="pr-3">{price(s.entry)}</td>
@@ -223,7 +224,7 @@ export function SignalHistory({ days, live, status, onStatus, extra = {}, limit 
                         {metricCols().map((c) => <MetricCell key={c.key} snapshot={s.snapshot} col={c} />)}
                         <td><ChevronDown className={`size-4 text-muted transition ${isOpen ? "rotate-180" : ""}`} /></td>
                       </tr>
-                      {isOpen && <tr><td colSpan={12 + metricCols().length} className="p-0"><Details s={s} /></td></tr>}
+                      {isOpen && <tr><td colSpan={13 + metricCols().length} className="p-0"><Details s={s} /></td></tr>}
                     </Fragment>
                   );
                 })}

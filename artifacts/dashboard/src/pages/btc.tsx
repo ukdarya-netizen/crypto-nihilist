@@ -7,7 +7,7 @@ import { isOwner, price, signed, tone, usePoll } from "../lib/api";
  * BTC (owner 2026-11-13, as the CAB «BTC» page): Bitcoin and its dominance as the context of our altcoin trades.
  * Observational — nothing here changes the signals.
  */
-type Brief = { closed: number; winRate: number | null; netPnlPct: number; avgProfit: number | null; avgLoss: number | null; stopLoss: number };
+type Brief = { closed: number; winRate: number | null; netPnlPct: number; avgProfit: number | null; avgLoss: number | null; stopLoss: number; ids?: number[] };
 type Sides = { long: Brief; short: Brief };
 type BtcView = {
   now: { btcPrice: number | null; btcChg24h: number | null; dominance: number | null; dominanceAt: string | null; domChg1dPp: number | null; domChg7dPp: number | null };
@@ -65,7 +65,8 @@ function DayChart({ daily, onDay }: { daily: BtcView["daily"]; onDay: (day: stri
 
 const cell = (b: Brief) => b.closed === 0
   ? <span className="text-muted">—</span>
-  : <span><span className={tone(b.netPnlPct)}>{signed(b.netPnlPct, 1, "%")}</span> <span className="text-muted">· {b.closed} сд. · винрейт {b.winRate ?? "—"}{b.winRate == null ? "" : "%"}</span></span>;
+  : <span role="link" title="нажми — эти сделки" onClick={b.ids?.length ? () => openHistory({ ids: b.ids!.join(","), status: "closed" }) : undefined}
+      className="cursor-pointer hover:underline"><span className={tone(b.netPnlPct)}>{signed(b.netPnlPct, 1, "%")}</span> <span className="text-muted">· {b.closed} сд. · винрейт {b.winRate ?? "—"}{b.winRate == null ? "" : "%"}</span></span>;
 
 export default function Btc() {
   const [live, setLive] = useState(false);

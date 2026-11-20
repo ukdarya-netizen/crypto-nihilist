@@ -70,7 +70,7 @@ function DailyChart({ rows, metric, onDay }: { rows: Journal["daily"]; metric: "
           const h = (Math.abs(p.v) / max) * 27;
           return (
             <rect key={p.day} x={i * w + w * 0.15} width={w * 0.7} y={p.v >= 0 ? 30 - h : 30} height={Math.max(h, 0.4)}
-              className={`cursor-pointer ${p.v >= 0 ? "fill-up/70 hover:fill-up" : "fill-down/80 hover:fill-down"}`} onClick={() => onDay(p.day)}>
+              className={`cursor-pointer ${p.v >= 0 ? "fill-up/70 hover:fill-up" : "fill-down/80 hover:fill-down"}`} onClick={(e) => { e.stopPropagation(); onDay(p.day); }}>
               <title>{`${p.day}: ${p.trades} сделок, в плюс ${p.wins}, ${signed(p.v, 2, unit)} · накоплено ${signed(p.cum, 2, unit)}`}</title>
             </rect>
           );
@@ -78,8 +78,18 @@ function DailyChart({ rows, metric, onDay }: { rows: Journal["daily"]; metric: "
         <polyline fill="none" stroke="#efe7e1" strokeWidth="0.6" vectorEffect="non-scaling-stroke"
           points={pts.map((p, i) => `${i * w + w / 2},${30 - (p.cum / cumMax) * 27}`).join(" ")} />
       </svg>
-      <div className="mt-2 flex justify-between font-mono text-[10px] text-muted">
-        <span>{pts[0].day.slice(5)}</span><span>{pts[pts.length - 1].day.slice(5)}</span>
+      {/* Owner 2026-11-20: the date under every bar (no waiting for a tooltip); long periods — every k-th date, vertical. */}
+      <div className="mt-1 grid font-mono text-[9px] leading-none text-muted" style={{ gridTemplateColumns: `repeat(${pts.length}, minmax(0, 1fr))` }}>
+        {pts.map((p, i) => {
+          const step = Math.max(1, Math.ceil(pts.length / 45));
+          const label = `${p.day.slice(8)}.${p.day.slice(5, 7)}`;
+          return (
+            <button key={p.day} type="button" onClick={(e) => { e.stopPropagation(); onDay(p.day); }} title={label}
+              className={`flex justify-center overflow-hidden hover:text-foreground ${pts.length > 12 ? "h-9 [writing-mode:vertical-rl] rotate-180" : ""}`}>
+              {i % step === 0 || i === pts.length - 1 ? label : ""}
+            </button>
+          );
+        })}
       </div>
       <p className="mt-1 text-center font-mono text-[10px] text-muted">столбцы — результат дня по дню закрытия (UTC), нажми — сделки дня · линия — накопленный ({signed(acc, 2, unit)})</p>
     </div>
@@ -168,7 +178,10 @@ export default function Overview() {
       )}
 
       <Panel title="График прибыльности по дням" right={<Segmented value={metric} onChange={(value) => setMetric(value as typeof metric)} options={[{ id: "pnl", label: "%" }, { id: "r", label: "R" }]} />}>
-        <DailyChart rows={data?.daily ?? []} metric={metric} onDay={(day) => openHistory({ day, live })} />
+        {/* The whole rectangle opens the period's closed trades; a bar or a date — that day's. */}
+        <div role="link" className="cursor-pointer" onClick={() => focus("closed")}>
+          <DailyChart rows={data?.daily ?? []} metric={metric} onDay={(day) => openHistory({ day, live })} />
+        </div>
       </Panel>
 
 

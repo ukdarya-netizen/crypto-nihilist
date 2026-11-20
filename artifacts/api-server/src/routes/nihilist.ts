@@ -344,7 +344,7 @@ router.get("/nh/candles", (req, res) => {
  * "opened" — signals opened in the period (the «signals today / total» counters). `day` / `month` = closed on that UTC day / month.
  * Extra filters: side, peak (be5 / be8 / be10 / belt5 — BE STOP by the peak reached; p5 / p10 / p15 / p30 — closed
  * with a peak from that level), sign (pos / neg — closed in plus / minus), hold (lt6h / h6_24 / d1_3 / d3_7 / gt7d),
- * id, today=1 (opened today, UTC), snap (live / reconstructed / unavailable / pending — owner, metrics coverage).
+ * id, ids (comma list — a metric bucket / BTC cell), today=1 (opened today, UTC), snap (live / reconstructed / unavailable / pending — owner, metrics coverage).
  * `totals` = count and sums of the returned trades, to check them against the tile.
  */
 router.get("/nh/history", async (req, res) => {
@@ -368,11 +368,14 @@ router.get("/nh/history", async (req, res) => {
   const hold = str(req.query.hold);
   const id = Number.isSafeInteger(Number(req.query.id)) && Number(req.query.id) > 0 ? Number(req.query.id) : null;
   const today = req.query.today === "1";
+  // A metric bucket / BTC cell sends the exact trade ids it counted.
+  const ids = str(req.query.ids)?.split(",").map(Number).filter((n) => Number.isSafeInteger(n) && n > 0).slice(0, 3000) ?? [];
   const snap = owner ? str(req.query.snap) : null;
   const where: string[] = [];
   const args: unknown[] = [];
   const arg = (v: unknown) => { args.push(v); return `$${args.length}`; };
   if (id !== null) where.push(`s.id = ${arg(id)}`);
+  else if (ids.length) where.push(`s.id = ANY(${arg(ids)}::int[])`);
   else if (today) where.push(`s.opened_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`);
   else if (month) where.push(`s.status = 'closed' AND to_char(s.closed_at AT TIME ZONE 'UTC', 'YYYY-MM') = ${arg(month)}`);
   else if (day) where.push(`s.status = 'closed' AND (s.closed_at AT TIME ZONE 'UTC')::date = ${arg(day)}::date`);

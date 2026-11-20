@@ -9,7 +9,7 @@ import { hashParams } from "../components/layout";
  * Owner 2026-11-20: every tile, calendar day and table row opens this page with the exact trades behind its number.
  * Filters come from the link (#/history?…); the chips above the list show them and can be dropped one by one.
  */
-const EXTRA_KEYS = ["by", "day", "month", "side", "setup", "peak", "sign", "hold", "id", "today", "snap"] as const;
+const EXTRA_KEYS = ["by", "day", "month", "side", "setup", "peak", "sign", "hold", "id", "ids", "today", "snap"] as const;
 type Extra = Partial<Record<(typeof EXTRA_KEYS)[number], string>>;
 
 const PEAK_LABEL: Record<string, string> = {
@@ -30,6 +30,7 @@ function chipLabel(key: string, value: string): string {
     case "sign": return value === "pos" ? "закрыты в плюс" : "закрыты в минус";
     case "hold": return HOLD_LABEL[value] ?? value;
     case "id": return `сделка #${value}`;
+    case "ids": return `выбранные сделки: ${value.split(",").length}`;
     case "today": return "открыты сегодня (UTC)";
     case "snap": return SNAP_LABEL[value] ?? value;
     default: return value;
@@ -58,7 +59,7 @@ export default function History() {
   const { days, live, status, extra } = state;
   const set = (patch: Partial<typeof state>) => setState((s) => ({ ...s, ...patch }));
   const drop = (key: string) => set({ extra: Object.fromEntries(Object.entries(extra).filter(([k]) => k !== key)) as Extra });
-  const fixedDay = Boolean(extra.day || extra.month || extra.id || extra.today);
+  const fixedDay = Boolean(extra.day || extra.month || extra.id || extra.ids || extra.today);
   const chips = Object.entries(extra).filter(([k]) => k !== "by" || extra.by === "opened");
   return (
     <div className="space-y-4">

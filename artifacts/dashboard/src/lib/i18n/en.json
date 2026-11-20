@@ -946,5 +946,13 @@
  "в минусе": "in minus",
  "в безубытке": "at break-even",
  "лонг {0}": "long {0}",
- "шорт {0}": "short {0}"
+ "шорт {0}": "short {0}",
+ "нажми — сделки этой группы": "tap — this group's trades",
+ "нажми — эти сделки": "tap — these trades",
+ "выбранные сделки: {0}": "selected trades: {0}",
+ "Закрыт": "Closed",
+ "Длилась": "Lasted",
+ "открыть в истории": "open in history",
+ "закрыть ×": "close ×",
+ "В этот день сделки не закрывались.": "No trades closed on this day."
 }

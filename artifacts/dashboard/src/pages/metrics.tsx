@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Empty, Kpi, Panel, Segmented, openHistory } from "../components/ui";
 import { SETUPS, get, isUncollectedMetric, metricLabel, setupLabel, signed, tone, usePoll } from "../lib/api";
 
-type Bucket = { label: string; n: number; winRate: number | null; avgR: number | null; avgPnl: number | null; sumR: number };
+type Bucket = { label: string; n: number; winRate: number | null; avgR: number | null; avgPnl: number | null; sumR: number; ids?: number[] };
 type Metric = { key: string; kind: "number" | "label"; n: number; buckets: Bucket[]; spreadR: number | null };
 type Data = {
   closed: number;
@@ -25,7 +25,9 @@ function MetricCard({ m }: { m: Metric }) {
         <thead><tr className="text-left text-muted"><th className="font-normal">{m.kind === "number" ? "диапазон" : "значение"}</th><th className="text-right font-normal">n</th><th className="text-right font-normal">win</th><th className="text-right font-normal">ср. R</th><th className="text-right font-normal">ср. %</th></tr></thead>
         <tbody>
           {m.buckets.map((b) => (
-            <tr key={b.label} className={`border-t border-border ${b.avgR === best ? "bg-up/[0.07]" : b.avgR === worst ? "bg-down/[0.07]" : ""}`}>
+            <tr key={b.label} onClick={b.ids?.length ? () => openHistory({ ids: b.ids!.join(","), status: "closed" }) : undefined}
+              title="нажми — сделки этой группы"
+              className={`cursor-pointer border-t border-border hover:bg-white/[0.04] ${b.avgR === best ? "bg-up/[0.07]" : b.avgR === worst ? "bg-down/[0.07]" : ""}`}>
               <td className="py-1 pr-2">{m.kind === "number" ? b.label : valueLabel(b.label)}</td>
               <td className="text-right">{b.n}</td>
               <td className="text-right">{b.winRate === null ? "—" : `${b.winRate}%`}</td>

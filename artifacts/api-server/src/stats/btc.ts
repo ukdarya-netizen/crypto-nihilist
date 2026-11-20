@@ -83,7 +83,8 @@ export const SCENARIOS = [
 const sideOf = (r: JournalRow) => (r.side === "short" || r.setup.endsWith("_short") ? "short" : "long");
 const brief = (rows: JournalRow[]) => {
   const s = summarize(rows);
-  return { closed: s.closed, winRate: s.winRate, netPnlPct: s.netPnlPct, avgProfit: s.avgProfit, avgLoss: s.avgLoss, stopLoss: s.stopLoss };
+  return { closed: s.closed, winRate: s.winRate, netPnlPct: s.netPnlPct, avgProfit: s.avgProfit, avgLoss: s.avgLoss, stopLoss: s.stopLoss,
+    ids: rows.filter((r) => r.status === "closed").map((r) => r.id) }; // owner 2026-11-20: a cell opens exactly these trades
 };
 const bySide = (rows: JournalRow[]) => ({
   long: brief(rows.filter((r) => sideOf(r) === "long")),

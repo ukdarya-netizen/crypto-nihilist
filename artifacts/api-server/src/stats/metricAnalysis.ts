@@ -8,7 +8,7 @@
 import { tradeStatus, type JournalRow } from "./journal";
 
 export type AnalysisRow = JournalRow & { metrics: Record<string, unknown> | null };
-export type Bucket = { label: string; lo?: number; hi?: number; n: number; winRate: number | null; avgR: number | null; avgPnl: number | null; sumR: number };
+export type Bucket = { label: string; lo?: number; hi?: number; n: number; winRate: number | null; avgR: number | null; avgPnl: number | null; sumR: number; ids: number[] };
 export type MetricAnalysis = { key: string; kind: "number" | "label"; n: number; buckets: Bucket[]; spreadR: number | null };
 
 const round = (v: number, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
@@ -21,7 +21,7 @@ function bucketStats(label: string, rows: AnalysisRow[], extra: Partial<Bucket> 
   const ps = rows.map((r) => Number(r.pnl_pct ?? 0));
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
   return {
-    label, ...extra, n: rows.length,
+    label, ...extra, n: rows.length, ids: rows.map((r) => r.id), // owner 2026-11-20: the bucket opens exactly these trades
     winRate: wins + stops ? Math.round((wins / (wins + stops)) * 100) : null,
     avgR: rows.length ? round(sum(rs) / rows.length) : null,
     avgPnl: rows.length ? round(sum(ps) / rows.length) : null,
