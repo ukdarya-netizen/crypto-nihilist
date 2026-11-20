@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Bitcoin, Percent, TrendingUp } from "lucide-react";
-import { Empty, Panel, Segmented, Table } from "../components/ui";
+import { Empty, Panel, Segmented, Table, openHistory, scrollToId } from "../components/ui";
 import { isOwner, price, signed, tone, usePoll } from "../lib/api";
 
 /**
@@ -21,18 +21,19 @@ const DIR: Record<string, string> = { up: "вверх", down: "вниз", flat: 
 const dirTone = (d: string) => (d === "вверх" || d === "памп" ? "text-up" : d === "вниз" || d === "дамп" ? "text-down" : "text-muted");
 const pp = (v: number | null | undefined) => (v == null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(2)} п.п.`);
 
+/** Owner 2026-11-20: a tile opens its breakdown — here the day table of BTC / BTC.D below. */
 function Stat({ title, value, sub, icon: Icon }: { title: string; value: ReactNode; sub?: ReactNode; icon: typeof Bitcoin }) {
   return (
-    <div className="panel p-4">
+    <button type="button" onClick={() => scrollToId("btc-daily")} className="panel w-full p-4 text-left transition hover:border-primary/40">
       <div className="flex items-center justify-between gap-2"><p className="label">{title}</p><Icon className="size-4 text-muted" /></div>
       <p className="mt-2 text-2xl font-semibold tabular">{value}</p>
       {sub && <p className="mt-1 text-[11px] text-muted">{sub}</p>}
-    </div>
+    </button>
   );
 }
 
 /** BTC close (line) and BTC.D (line, right scale) by day, our day result as bars under them. */
-function DayChart({ daily }: { daily: BtcView["daily"] }) {
+function DayChart({ daily, onDay }: { daily: BtcView["daily"]; onDay: (day: string) => void }) {
   const W = 1000, H = 300, PAD = 48, BAR_H = 70;
   const n = daily.length;
   const x = (i: number) => PAD + (i + 0.5) * ((W - 2 * PAD) / n);
@@ -53,7 +54,7 @@ function DayChart({ daily }: { daily: BtcView["daily"] }) {
       {daily.map((d, i) => {
         const v = d.closedPnl ?? 0;
         const h = (Math.abs(v) / maxPnl) * (BAR_H / 2 - 4);
-        return v === 0 ? null : <rect key={d.day} x={x(i) - 9} width="18" y={v > 0 ? base - h : base} height={h} className={v > 0 ? "fill-up" : "fill-down"} opacity="0.85"><title>{`${d.day}: ${v > 0 ? "+" : ""}${v}% · закрыто ${d.closed}`}</title></rect>;
+        return v === 0 ? null : <rect key={d.day} x={x(i) - 9} width="18" y={v > 0 ? base - h : base} height={h} className={`cursor-pointer ${v > 0 ? "fill-up" : "fill-down"}`} opacity="0.85" onClick={() => onDay(d.day)}><title>{`${d.day}: ${v > 0 ? "+" : ""}${v}% · закрыто ${d.closed}`}</title></rect>;
       })}
       {daily.map((d, i) => (i % 5 === 0 || i === n - 1) && <text key={`t${d.day}`} x={x(i)} y={H - 2} textAnchor="middle" fontSize="12" fill="currentColor" opacity="0.6">{d.day.slice(5)}</text>)}
       {prices.length > 0 && <text x={PAD - 6} y={16} textAnchor="end" fontSize="12" fill="#f59e0b">{Math.round(Math.max(...prices)).toLocaleString("ru-RU")}</text>}
@@ -82,14 +83,14 @@ export default function Btc() {
         <Stat title="BTC.D за 7 дней" icon={TrendingUp} value={<span className={tone(n.domChg7dPp)}>{pp(n.domChg7dPp)}</span>} />
       </div>
 
-      <Panel title="BTC, BTC.D и наш результат по дням (UTC, 30 дней)"
+      <Panel id="btc-daily" title="BTC, BTC.D и наш результат по дням (UTC, 30 дней)"
         right={isOwner() ? <Segmented value={live} onChange={(v) => setLive(v as boolean)} options={[{ id: false, label: "все сетапы" }, { id: true, label: "только канал" }]} /> : undefined}>
         <p className="mb-2 text-xs text-muted"><span className="text-[#f59e0b]">━ цена BTC</span> · <span className="text-[#a78bfa]">┅ BTC.D</span> · столбцы — сумма результата сделок, закрытых в этот день (чистое движение цены, без плеча).</p>
-        <DayChart daily={data.daily} />
+        <DayChart daily={data.daily} onDay={(day) => openHistory({ day, live })} />
         <div className="mt-4" />
         <Table head={["День", "BTC", "BTC за день", "BTC.D", "BTC.D за день", "Сигналов", "Закрыто", "Итог закрытых", "Стопов"]} minWidth={820}>
           {[...data.daily].reverse().map((d) => (
-            <tr key={d.day} className="border-t border-border/60">
+            <tr key={d.day} onClick={d.closed ? () => openHistory({ day: d.day, live }) : undefined} className={`border-t border-border/60 ${d.closed ? "cursor-pointer hover:bg-white/[0.02]" : ""}`}>
               <td className="py-1.5 pr-3">{d.day}</td>
               <td className="pr-3">{d.btcClose == null ? "—" : Math.round(d.btcClose).toLocaleString("ru-RU")}</td>
               <td className={`pr-3 ${tone(d.btcChgPct)}`}>{signed(d.btcChgPct, 2, "%")}</td>

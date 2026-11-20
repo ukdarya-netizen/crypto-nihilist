@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
 
-export function Panel({ title, right, children, className = "" }: {
-  title?: ReactNode; right?: ReactNode; children: ReactNode; className?: string;
+export function Panel({ title, right, children, className = "", id }: {
+  title?: ReactNode; right?: ReactNode; children: ReactNode; className?: string; id?: string;
 }) {
   return (
-    <section className={`panel p-4 md:p-5 ${className}`}>
+    <section id={id} className={`panel scroll-mt-20 p-4 md:p-5 ${className}`}>
       {(title || right) && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           {title && <h2 className="label !text-[11px] !text-foreground/80">{title}</h2>}
@@ -16,14 +16,28 @@ export function Panel({ title, right, children, className = "" }: {
   );
 }
 
-export function Kpi({ label, value, hint, toneClass = "" }: { label: string; value: ReactNode; hint?: ReactNode; toneClass?: string }) {
+/** Owner 2026-11-20: every tile opens the breakdown of its number (onClick). */
+export function Kpi({ label, value, hint, toneClass = "", onClick, active }: { label: string; value: ReactNode; hint?: ReactNode; toneClass?: string; onClick?: () => void; active?: boolean }) {
   return (
-    <div className="panel p-4">
+    <button type="button" onClick={onClick} disabled={!onClick}
+      className={`panel w-full p-4 text-left transition ${onClick ? "hover:border-primary/40" : "cursor-default"} ${active ? "!border-primary/60" : ""}`}>
       <p className="label">{label}</p>
       <p className={`mt-2 text-2xl font-semibold tabular ${toneClass}`}>{value}</p>
       {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
-    </div>
+    </button>
   );
+}
+
+/** Scrolls to the section that breaks a tile down on the same page. */
+export function scrollToId(id: string): void {
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/** Opens the history with exactly the trades behind a number (same period and channel switch). */
+export function openHistory(params: Record<string, string | number | boolean | null | undefined>): void {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== null && v !== undefined && v !== "" && v !== false) q.set(k, v === true ? "1" : String(v));
+  window.location.hash = `/history?${q}`;
 }
 
 export function Segmented<T extends string | number | boolean>({ value, options, onChange }: {

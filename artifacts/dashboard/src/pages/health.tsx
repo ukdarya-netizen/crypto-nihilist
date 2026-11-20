@@ -1,4 +1,4 @@
-import { Kpi, Panel } from "../components/ui";
+import { Kpi, Panel, openHistory } from "../components/ui";
 import { STAGE_LABEL, usePoll, when, type Status } from "../lib/api";
 
 export default function Health() {
@@ -15,13 +15,13 @@ export default function Health() {
   return (
     <div className="space-y-4 md:space-y-6">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Kpi label="Движок" value={scanning ? "сканирует" : healthy ? "работает" : !e.leaseAcquired ? "ждёт блокировку" : e.phase !== "running" ? "запускается" : "ждёт закрытия свечи"} toneClass={healthy ? "text-up" : "text-warn"}
+        <Kpi label="Движок" value={scanning ? "сканирует" : healthy ? "работает" : !e.leaseAcquired ? "ждёт блокировку" : e.phase !== "running" ? "запускается" : "ждёт закрытия свечи"} toneClass={healthy ? "text-up" : "text-warn"} onClick={() => { window.location.hash = "/scanner"; }}
           hint={e.cycle ? `${STAGE_LABEL[e.cycle.stage]} ${e.cycle.done}/${e.cycle.total}` : `запущен ${when(e.startedAt)}`} />
-        <Kpi label="Последний цикл" value={ago === null ? "—" : `${ago} мин`} hint={e.lastCycleMs ? `длился ${Math.round(e.lastCycleMs / 1000)} с` : "ещё не было"} />
-        <Kpi label="Монеты" value={`${e.ready}/${e.universe}`} hint={e.phase && e.phase !== "running"
+        <Kpi label="Последний цикл" onClick={() => { window.location.hash = "/scanner"; }} value={ago === null ? "—" : `${ago} мин`} hint={e.lastCycleMs ? `длился ${Math.round(e.lastCycleMs / 1000)} с` : "ещё не было"} />
+        <Kpi label="Монеты" onClick={() => { window.location.hash = "/scanner"; }} value={`${e.ready}/${e.universe}`} hint={e.phase && e.phase !== "running"
           ? (e.phase === "loading_db" ? `запуск: читаю базу ${e.loadedFromDb ?? 0}/${e.universe}` : `запуск: ${e.phase}`)
           : e.backfillPending ? `догружается история: ${e.backfillPending}` : "история загружена"} />
-        <Kpi label="Сделки" value={data.signals.open} hint={`открыто · закрыто ${data.signals.closed}`} />
+        <Kpi label="Сделки" value={data.signals.open} hint={`открыто · закрыто ${data.signals.closed}`} onClick={() => openHistory({ status: "open", days: 3650 })} />
       </div>
       <Panel title="Snapshot backfill">
         <dl className="grid grid-cols-2 gap-y-2 font-mono text-sm md:grid-cols-4">

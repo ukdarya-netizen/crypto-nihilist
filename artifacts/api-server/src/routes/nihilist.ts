@@ -6,7 +6,7 @@ import { ensureRejectionTable } from "../engine/rejections";
 import { ensureUserTables, isOwnerReq, ownerEmail, publicSignal, recipientSql } from "../lib/users";
 import { cgRequest, coinglassGovernorStats, EXCHANGE } from "../market/coinglass";
 import { apiHealth } from "../lib/apiHealth";
-import { buildJournal, holdBuckets, tradeStatus, TRADE_STATUS_SQL, type JournalRow } from "../stats/journal";
+import { buildJournal, holdBuckets, periodDays, periodRowsSql, periodStartSql, tradeStatus, TRADE_STATUS_SQL, type JournalRow } from "../stats/journal";
 import { ensureSnapshotTable, snapshotBackfillDiagnostics } from "../stats/snapshots";
 import { analyzeMetrics, type AnalysisRow } from "../stats/metricAnalysis";
 import { book } from "../market/candleStore";
@@ -83,9 +83,9 @@ router.get("/nh/stats", async (req, res) => {
             round(avg(r_multiple)::numeric, 3)::float AS avg_r,
             round(sum(r_multiple)::numeric, 3)::float AS sum_r,
             round(avg(pnl_pct)::numeric, 3)::float AS avg_pnl_pct
-     FROM nh_signals WHERE status = 'closed' AND closed_at > now() - make_interval(days => $1)
+     FROM nh_signals s WHERE s.status = 'closed' AND s.closed_at >= ${periodStartSql("$1")}
      GROUP BY setup ORDER BY setup`,
-    [d],
+    [periodDays(d)],
   );
   const open = await pool.query(
     "SELECT setup, count(*)::int AS open FROM nh_signals WHERE status = 'open' GROUP BY setup",
@@ -95,16 +95,18 @@ router.get("/nh/stats", async (req, res) => {
 
 /** Closed-trade result per UTC day (for the overview chart). */
 router.get("/nh/stats/daily", async (req, res) => {
-  const d = days(req.query.days, 30);
+  const d = periodDays(days(req.query.days, 30));
+  // The «all setups / channel only» switch counts here too (owner); users — only published.
+  const live = liveOnly(req.query.live) || !isOwnerReq(req);
   const { rows } = await pool.query(
     `SELECT to_char(date_trunc('day', closed_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day,
             count(*)::int AS trades,
             count(*) FILTER (WHERE pnl_pct > 0)::int AS wins,
             round(sum(r_multiple)::numeric, 3)::float AS sum_r,
             round(sum(pnl_pct)::numeric, 3)::float AS sum_pnl_pct
-     FROM nh_signals WHERE status = 'closed' AND closed_at > now() - make_interval(days => $1) AND (NOT $2 OR live)
+     FROM nh_signals s WHERE s.status = 'closed' AND s.closed_at >= ${periodStartSql("$1")} AND (NOT $2 OR s.live)
      GROUP BY 1 ORDER BY 1`,
-    [d, !isOwnerReq(req)],
+    [d, live],
   );
   res.json({ days: d, daily: rows });
 });
@@ -223,7 +225,7 @@ router.get("/nh/btc", async (req, res) => {
       `SELECT s.id, s.symbol, s.setup, s.side, s.status, s.live, s.close_reason, s.pnl_pct, s.r_multiple, s.peak_pct, s.mfe_pct,
               s.opened_at, s.closed_at, (n.metrics->>'btc_chg24h')::float AS btc_chg24h
        FROM nh_signals s LEFT JOIN nh_signal_snapshots n ON n.signal_id = s.id
-       WHERE s.opened_at > now() - interval '60 days' AND s.symbol <> 'BTC-USDT' AND (NOT $1 OR s.live)`,
+       WHERE ${periodRowsSql("60")} AND s.symbol <> 'BTC-USDT' AND (NOT $1 OR s.live)`,
       [live],
     ),
     dominanceHistory().catch(() => []),
@@ -233,12 +235,12 @@ router.get("/nh/btc", async (req, res) => {
 });
 
 router.get("/nh/journal", async (req, res) => {
-  const d = days(req.query.days, 30);
+  const d = periodDays(days(req.query.days, 30));
   // Users see only signals published to Telegram.
   const live = liveOnly(req.query.live) || !isOwnerReq(req);
   const { rows } = await pool.query<JournalRow>(
     `SELECT id, symbol, setup, side, status, live, close_reason, pnl_pct, r_multiple, peak_pct, mfe_pct, opened_at, closed_at
-     FROM nh_signals WHERE opened_at > now() - make_interval(days => $1) AND (NOT $2 OR live)`,
+     FROM nh_signals s WHERE ${periodRowsSql("$1")} AND (NOT $2 OR s.live)`,
     [d, live],
   );
   const counters = await pool.query<{ today: number; total: number }>(
@@ -246,7 +248,7 @@ router.get("/nh/journal", async (req, res) => {
      FROM nh_signals WHERE (NOT $1 OR live)`,
     [live],
   );
-  // Daily result by close day (UTC) of the cohort's closed trades.
+  // Daily result by close day (UTC) — the same trades as the profit counter and the calendar.
   const byDay = new Map<string, { day: string; trades: number; wins: number; pnl: number; r: number }>();
   for (const row of rows) {
     if (row.status !== "closed" || !row.closed_at) continue;
@@ -301,7 +303,7 @@ router.post("/nh/strategy-report/run", (req, res) => {
 });
 
 router.get("/nh/metrics", async (req, res) => {
-  const d = days(req.query.days, 90);
+  const d = periodDays(days(req.query.days, 90));
   const setup = typeof req.query.setup === "string" && req.query.setup ? req.query.setup : null;
   const side = req.query.side === "long" || req.query.side === "short" ? req.query.side : null;
   await ensureSnapshotTable();
@@ -309,7 +311,7 @@ router.get("/nh/metrics", async (req, res) => {
     `SELECT s.id, s.symbol, s.setup, s.side, s.status, s.live, s.close_reason, s.pnl_pct, s.r_multiple, s.peak_pct,
             s.mfe_pct, s.opened_at, s.closed_at, n.metrics
      FROM nh_signals s JOIN nh_signal_snapshots n ON n.signal_id = s.id
-     WHERE s.status = 'closed' AND n.status = 'ready' AND s.opened_at > now() - make_interval(days => $1)
+     WHERE s.status = 'closed' AND n.status = 'ready' AND s.closed_at >= ${periodStartSql("$1")}
        AND (NOT $2 OR s.live) AND ($3::text IS NULL OR s.setup = $3) AND ($4::text IS NULL OR s.side = $4)`,
     [d, liveOnly(req.query.live), setup, side],
   );
@@ -335,29 +337,98 @@ router.get("/nh/candles", (req, res) => {
   res.json({ symbol, interval, candles: book(symbol)[interval].slice(-limit) });
 });
 
-/** Signal history (open and closed) with filters, newest first. */
+/**
+ * Signal history (open and closed) with filters, newest first.
+ * Owner 2026-11-20: every tile / calendar day / table row opens this list with the exact trades behind its number.
+ * Period (`by`): "closed" (default) — closed in the last N UTC days + open now, as every statistic counts;
+ * "opened" — signals opened in the period (the «signals today / total» counters). `day` / `month` = closed on that UTC day / month.
+ * Extra filters: side, peak (be5 / be8 / be10 / belt5 — BE STOP by the peak reached; p5 / p10 / p15 / p30 — closed
+ * with a peak from that level), sign (pos / neg — closed in plus / minus), hold (lt6h / h6_24 / d1_3 / d3_7 / gt7d),
+ * id, today=1 (opened today, UTC), snap (live / reconstructed / unavailable / pending — owner, metrics coverage).
+ * `totals` = count and sums of the returned trades, to check them against the tile.
+ */
 router.get("/nh/history", async (req, res) => {
-  const d = days(req.query.days, 30);
-  const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
-  const setup = typeof req.query.setup === "string" && req.query.setup ? req.query.setup : null;
-  const symbol = typeof req.query.q === "string" && req.query.q.trim() ? `%${req.query.q.trim().toUpperCase()}%` : null;
-  const exact = typeof req.query.symbol === "string" && req.query.symbol ? req.query.symbol.toUpperCase() : null;
+  const owner = isOwnerReq(req);
+  const d = periodDays(days(req.query.days, 30));
+  const limit = Math.min(5000, Math.max(1, Number(req.query.limit) || 200));
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const setup = str(req.query.setup);
+  const symbol = str(req.query.q) ? `%${str(req.query.q)!.toUpperCase()}%` : null;
+  const exact = str(req.query.symbol)?.toUpperCase() ?? null;
   // Status filter runs in SQL before LIMIT (2026-11-10): filtering after the
   // LIMIT hid open trades older than the newest `limit` signals, so the
   // «В работе» list showed fewer than the «Активных» tile.
-  const status = typeof req.query.status === "string" ? req.query.status : "";
+  const status = str(req.query.status) ?? "";
+  const by = req.query.by === "opened" ? "opened" : "closed";
+  const day = str(req.query.day) && /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.day)) ? String(req.query.day) : null;
+  const side = req.query.side === "long" || req.query.side === "short" ? req.query.side : null;
+  const month = str(req.query.month) && /^\d{4}-\d{2}$/.test(String(req.query.month)) ? String(req.query.month) : null;
+  const peak = str(req.query.peak);
+  const sign = req.query.sign === "pos" || req.query.sign === "neg" ? req.query.sign : null;
+  const hold = str(req.query.hold);
+  const id = Number.isSafeInteger(Number(req.query.id)) && Number(req.query.id) > 0 ? Number(req.query.id) : null;
+  const today = req.query.today === "1";
+  const snap = owner ? str(req.query.snap) : null;
+  const where: string[] = [];
+  const args: unknown[] = [];
+  const arg = (v: unknown) => { args.push(v); return `$${args.length}`; };
+  if (id !== null) where.push(`s.id = ${arg(id)}`);
+  else if (today) where.push(`s.opened_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`);
+  else if (month) where.push(`s.status = 'closed' AND to_char(s.closed_at AT TIME ZONE 'UTC', 'YYYY-MM') = ${arg(month)}`);
+  else if (day) where.push(`s.status = 'closed' AND (s.closed_at AT TIME ZONE 'UTC')::date = ${arg(day)}::date`);
+  else if (by === "opened") where.push(`s.opened_at >= ${periodStartSql(arg(d))}`);
+  else where.push(periodRowsSql(arg(d)));
+  if (setup) where.push(`s.setup = ${arg(setup)}`);
+  if (side) where.push(`s.side = ${arg(side)}`);
+  if (symbol) where.push(`s.symbol LIKE ${arg(symbol)}`);
+  if (exact) where.push(`s.symbol = ${arg(exact)}`);
+  if (owner ? liveOnly(req.query.live) : true) where.push("s.live");
+  if (status === "closed") where.push("s.status = 'closed'");
+  else if (status) where.push(`${TRADE_STATUS_SQL} = ${arg(status)}`);
+  const peakSql = "COALESCE(s.peak_pct, s.mfe_pct, 0)";
+  const PEAK: Record<string, string> = {
+    belt5: `${TRADE_STATUS_SQL} = 'be_stop' AND ${peakSql} < 5`,
+    be5: `${TRADE_STATUS_SQL} = 'be_stop' AND ${peakSql} >= 5 AND ${peakSql} < 8`,
+    be8: `${TRADE_STATUS_SQL} = 'be_stop' AND ${peakSql} >= 8 AND ${peakSql} < 10`,
+    be10: `${TRADE_STATUS_SQL} = 'be_stop' AND ${peakSql} >= 10`,
+    p5: `s.status = 'closed' AND ${peakSql} >= 5`, p10: `s.status = 'closed' AND ${peakSql} >= 10`,
+    p15: `s.status = 'closed' AND ${peakSql} >= 15`, p30: `s.status = 'closed' AND ${peakSql} >= 30`,
+  };
+  if (peak && PEAK[peak]) where.push(PEAK[peak]!);
+  if (sign) where.push(`s.status = 'closed' AND s.pnl_pct ${sign === "pos" ? ">" : "<"} 0`);
+  const holdH = "(EXTRACT(EPOCH FROM (s.closed_at - s.opened_at)) / 3600)";
+  const HOLD: Record<string, string> = {
+    lt6h: `${holdH} < 6`, h6_24: `${holdH} >= 6 AND ${holdH} < 24`, d1_3: `${holdH} >= 24 AND ${holdH} < 72`,
+    d3_7: `${holdH} >= 72 AND ${holdH} < 168`, gt7d: `${holdH} >= 168`,
+  };
+  if (hold && HOLD[hold]) where.push(`s.status = 'closed' AND s.closed_at IS NOT NULL AND ${HOLD[hold]}`);
+  const SNAP: Record<string, string> = {
+    live: "n.status = 'ready' AND NOT n.reconstructed",
+    reconstructed: "n.status = 'ready' AND n.reconstructed",
+    unavailable: "n.status = 'unavailable'", pending: "n.signal_id IS NULL",
+    ready: "s.status = 'closed' AND n.status = 'ready'",
+  };
+  if (snap && SNAP[snap]) where.push(SNAP[snap]!);
   await ensureSnapshotTable();
+  const order = by === "opened" || today ? "s.opened_at DESC" : "COALESCE(s.closed_at, s.opened_at) DESC, s.id DESC";
   const { rows } = await pool.query(
-    `SELECT s.*, n.metrics AS snapshot, n.close_context, n.reconstructed AS snapshot_reconstructed, n.status AS snapshot_status FROM nh_signals s LEFT JOIN nh_signal_snapshots n ON n.signal_id = s.id
-     WHERE s.opened_at > now() - make_interval(days => $1) AND ($2::text IS NULL OR s.setup = $2)
-       AND ($3::text IS NULL OR s.symbol LIKE $3) AND (NOT $4 OR s.live) AND ($6::text IS NULL OR s.symbol = $6)
-       AND ($7::text = '' OR ${TRADE_STATUS_SQL} = $7)
-     ORDER BY s.opened_at DESC LIMIT $5`,
-    [d, setup, symbol, liveOnly(req.query.live) || !isOwnerReq(req), limit, exact, status],
+    `SELECT s.*, n.metrics AS snapshot, n.close_context, n.reconstructed AS snapshot_reconstructed, n.status AS snapshot_status
+     FROM nh_signals s LEFT JOIN nh_signal_snapshots n ON n.signal_id = s.id
+     WHERE ${where.map((w) => `(${w})`).join(" AND ")}
+     ORDER BY ${order} LIMIT ${arg(limit)}`,
+    args,
   );
-  const filtered = status ? rows.filter((r) => tradeStatus(r as JournalRow) === status) : rows;
+  const filtered = status && status !== "closed" ? rows.filter((r) => tradeStatus(r as JournalRow) === status) : rows;
   const out = filtered.map((r) => ({ ...r, trade_status: tradeStatus(r as JournalRow) }));
-  res.json({ signals: isOwnerReq(req) ? out : out.map(publicSignal) });
+  const closed = out.filter((r) => r.status === "closed");
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  const totals = {
+    count: out.length, closed: closed.length, open: out.length - closed.length,
+    pnlPct: r2(closed.reduce((a, r) => a + Number(r.pnl_pct ?? 0), 0)),
+    r: r2(closed.reduce((a, r) => a + Number(r.r_multiple ?? 0), 0)),
+    limited: rows.length >= limit,
+  };
+  res.json({ signals: owner ? out : out.map(publicSignal), totals });
 });
 
 /** Lifecycle of one trade (what went to Telegram, step by step). */

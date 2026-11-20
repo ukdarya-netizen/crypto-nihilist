@@ -122,10 +122,14 @@ const FILTERS: Array<{ id: "" | TradeStatus; label: string }> = [
   { id: "be_stop", label: "BE STOP" }, { id: "stop_loss", label: "STOP LOSS" }, { id: "expired", label: "EXPIRED" },
 ];
 
-export function SignalHistory({ days, live, status, onStatus, limit = 200, title = "История сигналов" }: {
-  days: number; live: boolean; status: "" | TradeStatus; onStatus: (s: "" | TradeStatus) => void; limit?: number; title?: string;
+type Totals = { count: number; closed: number; open: number; pnlPct: number; r: number; limited: boolean };
+
+export function SignalHistory({ days, live, status, onStatus, extra = {}, limit = 200, title = "История сигналов" }: {
+  days: number; live: boolean; status: "" | TradeStatus; onStatus: (s: "" | TradeStatus) => void;
+  extra?: Record<string, string | undefined>; limit?: number; title?: string;
 }) {
-  const [setup, setSetup] = useState("");
+  const [setupPick, setSetup] = useState("");
+  const setup = setupPick || extra.setup || "";
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<number | null>(null);
   const params = new URLSearchParams({ days: String(days), limit: String(limit) });
@@ -133,10 +137,19 @@ export function SignalHistory({ days, live, status, onStatus, limit = 200, title
   if (setup) params.set("setup", setup);
   if (status) params.set("status", status);
   if (q.trim()) params.set("q", q.trim());
-  const { data } = usePoll<{ signals: HistoryRow[] }>(`/nh/history?${params}`, 30_000);
+  for (const [k, v] of Object.entries(extra)) if (v && k !== "setup") params.set(k, v);
+  const { data } = usePoll<{ signals: HistoryRow[]; totals?: Totals }>(`/nh/history?${params}`, 30_000);
   const rows = data?.signals ?? [];
+  const t = data?.totals;
+  const byOpen = extra.by === "opened" || extra.today === "1";
   return (
     <Panel title={`${title} · ${rows.length}`}>
+      {t && (
+        <p className="mb-3 font-mono text-xs text-muted">
+          {byOpen ? "по дню открытия" : "закрытые — по дню закрытия (UTC), открытые — сейчас"} · закрыто {t.closed} · <span className={tone(t.pnlPct)}>{signed(t.pnlPct, 2, "%")}</span> · {signed(t.r, 2, "R")} · открыто {t.open}
+          {t.limited && <span className="text-warn"> · показаны не все — сузь фильтр</span>}
+        </p>
+      )}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap border border-border">
           {FILTERS.map((f) => (

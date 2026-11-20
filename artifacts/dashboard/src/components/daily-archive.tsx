@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { Panel } from "./ui";
+import { Panel, openHistory } from "./ui";
 import { signed, usePoll } from "../lib/api";
 
 type Day = { day: string; trades: number; wins: number; sum_r: number; sum_pnl_pct: number };
 const WEEK = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
 
-/** Month calendar of daily results by close day (AltBullet "Архив статистики"). */
-export function DailyArchive() {
-  const { data } = usePoll<{ daily: Day[] }>("/nh/stats/daily?days=400", 120_000);
+/**
+ * Month calendar of daily results by close day (AltBullet "Архив статистики").
+ * Owner 2026-11-20: follows the «all setups / channel only» switch; a day (or the month line) opens its trades.
+ */
+export function DailyArchive({ live = false }: { live?: boolean }) {
+  const { data } = usePoll<{ daily: Day[] }>(`/nh/stats/daily?days=400${live ? "&live=1" : ""}`, 120_000);
   const now = new Date();
   const [month, setMonth] = useState(() => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)));
   const byDay = new Map((data?.daily ?? []).map((d) => [d.day, d]));
@@ -38,14 +41,15 @@ export function DailyArchive() {
           const v = row?.sum_pnl_pct ?? null;
           return (
             <div key={key} title={row ? `${key}: ${row.trades} сделок, в плюс ${row.wins}, ${signed(row.sum_pnl_pct, 2, "%")} · ${signed(row.sum_r, 2, "R")}` : key}
-              className={`flex aspect-square flex-col justify-between border p-1 md:aspect-auto md:h-16 ${v === null ? "border-border/50 text-muted/60" : v >= 0 ? "border-up/40 bg-up/10" : "border-down/40 bg-down/10"}`}>
+              role={row ? "link" : undefined} onClick={row ? () => openHistory({ day: key, live }) : undefined}
+              className={`flex aspect-square flex-col justify-between border p-1 md:aspect-auto md:h-16 ${v === null ? "border-border/50 text-muted/60" : v >= 0 ? "cursor-pointer border-up/40 bg-up/10 hover:border-up" : "cursor-pointer border-down/40 bg-down/10 hover:border-down"}`}>
               <span className="text-muted">{d}</span>
               {row && <span className={`text-right text-[11px] ${v! >= 0 ? "text-up" : "text-down"}`}>{signed(v, 1, "%")}<span className="hidden text-muted md:inline"> · {row.trades}</span></span>}
             </div>
           );
         })}
       </div>
-      <p className="mt-3 font-mono text-xs text-muted">За месяц: {trades} закрытых · <span className={total >= 0 ? "text-up" : "text-down"}>{signed(total, 2, "%")}</span> · {signed(totalR, 2, "R")} (по дню закрытия, UTC)</p>
+      <p role="link" onClick={() => openHistory({ month: `${y}-${String(m + 1).padStart(2, "0")}`, live })} className="mt-3 cursor-pointer font-mono text-xs text-muted hover:text-foreground">За месяц: {trades} закрытых · <span className={total >= 0 ? "text-up" : "text-down"}>{signed(total, 2, "%")}</span> · {signed(totalR, 2, "R")} (по дню закрытия, UTC)</p>
     </Panel>
   );
 }

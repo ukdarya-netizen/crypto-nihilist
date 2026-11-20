@@ -1,6 +1,8 @@
 /**
- * Statistics in the Crypto Alt Bullet layout. Cohort = signals OPENED in the
- * period (CAB "detected" basis). Statuses of closed trades:
+ * Statistics in the Crypto Alt Bullet layout. Owner 2026-11-20: a closed trade
+ * counts on the UTC day it CLOSED and in the period it closed in (not the day it
+ * opened); open trades are «open now», with no period cut. A period of N days =
+ * the last N UTC calendar days, today included (same days as the calendar). Statuses of closed trades:
  *   PROFIT    — closed by trailing, or by time in plus;
  *   BE STOP   — closed at the entry stop (after TP1 or a break-even move);
  *               split by the peak it reached first: +5…<8%, +8…<10%, ≥+10%
@@ -15,6 +17,15 @@ export type JournalRow = {
   close_reason: string | null; pnl_pct: number | null; r_multiple: number | null;
   peak_pct: number | null; mfe_pct: number | null; opened_at: Date | string; closed_at: Date | string | null;
 };
+
+/** Whole UTC days for a period (1…3650). */
+export const periodDays = (d: number) => Math.min(3650, Math.max(1, Math.round(d)));
+/** SQL: start of the period of `param` UTC days (today included). */
+export const periodStartSql = (param: string) =>
+  `((date_trunc('day', now() AT TIME ZONE 'UTC') - make_interval(days => (${param})::int - 1)) AT TIME ZONE 'UTC')`;
+/** SQL (alias s): closed in the period, or open now. */
+export const periodRowsSql = (param: string) =>
+  `((s.status::text = 'closed' AND s.closed_at >= ${periodStartSql(param)}) OR s.status::text <> 'closed')`;
 
 export type TradeStatus = "profit" | "be_stop" | "stop_loss" | "expired" | "open";
 

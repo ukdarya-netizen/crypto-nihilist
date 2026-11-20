@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Empty, Kpi, Panel, Segmented, SideTag, Table } from "../components/ui";
+import { Empty, Kpi, Panel, Segmented, SideTag, Table, scrollToId } from "../components/ui";
 import { STAGE_LABEL, coin, dur, price, setupLabel, usePoll, when, type Candidate, type ScannerData } from "../lib/api";
 
 const NEXT_SCAN_DELAY_MS = 20_000;
@@ -11,12 +11,12 @@ function ScanState({ data }: { data: ScannerData | null }) {
   const cur = data?.current ?? null;
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-      <Kpi label="Скан сейчас" value={cur ? STAGE_LABEL[cur.stage] : "ожидание"} toneClass={cur ? "text-up" : ""}
+      <Kpi label="Скан сейчас" onClick={() => scrollToId("nh-cycles")} value={cur ? STAGE_LABEL[cur.stage] : "ожидание"} toneClass={cur ? "text-up" : ""}
         hint={cur ? `${cur.done}/${cur.total} монет · идёт ${dur(Date.now() - cur.startedAt)}` : `следующий в ${when(next)}`} />
-      <Kpi label="Последний скан" value={last ? when(last.finishedAt) : "—"} hint={last ? `длился ${dur(last.ms)}` : "ещё не было"} />
-      <Kpi label="Проверено монет" value={last ? last.checked - last.refreshFailed : "—"}
+      <Kpi label="Последний скан" onClick={() => scrollToId("nh-cycles")} value={last ? when(last.finishedAt) : "—"} hint={last ? `длился ${dur(last.ms)}` : "ещё не было"} />
+      <Kpi label="Проверено монет" onClick={() => scrollToId("nh-cycles")} value={last ? last.checked - last.refreshFailed : "—"}
         hint={last ? (last.refreshFailed ? `без свечей: ${last.refreshFailed}` : "все со свечами") : undefined} />
-      <Kpi label="Кандидаты" value={data ? data.candidates.length : "—"} hint="цена в ордер-блоке, ждём слом" />
+      <Kpi label="Кандидаты" onClick={() => scrollToId("nh-candidates")} value={data ? data.candidates.length : "—"} hint="цена в ордер-блоке, ждём слом" />
     </div>
   );
 }
@@ -53,11 +53,11 @@ export default function Scanner() {
   return (
     <div className="space-y-4 md:space-y-6">
       <ScanState data={scan ?? null} />
-      <Panel title={`Кандидаты · ${candidates.length}`} right={<Segmented value={side} onChange={(value) => setSide(value as typeof side)} options={[{ id: "", label: "все" }, { id: "long", label: "лонг" }, { id: "short", label: "шорт" }]} />}>
+      <Panel id="nh-candidates" title={`Кандидаты · ${candidates.length}`} right={<Segmented value={side} onChange={(value) => setSide(value as typeof side)} options={[{ id: "", label: "все" }, { id: "long", label: "лонг" }, { id: "short", label: "шорт" }]} />}>
         <p className="mb-3 text-xs text-muted">Цена коснулась ордер-блока старшего ТФ за последние 12 свечей младшего ТФ, блок не пробит. Сигнал будет, если на младшем ТФ сломается структура.</p>
         {scan ? <Candidates rows={candidates} /> : <Empty>Загрузка…</Empty>}
       </Panel>
-      <Panel title="Циклы сканирования">
+      <Panel id="nh-cycles" title="Циклы сканирования">
         {!scan?.cycles.length ? <Empty>{scan ? "Первый цикл ещё не завершён." : "Загрузка…"}</Empty> : (
           <Table head={["Свеча", "Закончен", "Длительность", "Монет", "Без свечей", "Повтор поздних", "Кандидатов", "Решений", "Сигналов"]} minWidth={860}>
             {scan.cycles.map((c) => (

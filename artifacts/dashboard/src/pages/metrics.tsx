@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Empty, Kpi, Panel, Segmented } from "../components/ui";
+import { Empty, Kpi, Panel, Segmented, openHistory } from "../components/ui";
 import { SETUPS, get, isUncollectedMetric, metricLabel, setupLabel, signed, tone, usePoll } from "../lib/api";
 
 type Bucket = { label: string; n: number; winRate: number | null; avgR: number | null; avgPnl: number | null; sumR: number };
@@ -60,10 +60,10 @@ export default function Metrics() {
         прибыль и стопы — это кандидаты в фильтры входа. Малое n — не вывод.
       </p>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Kpi label="Закрытых сделок с метриками" value={data?.closed ?? "—"} />
-        <Kpi label="Записано при сигнале" value={c?.live ?? "—"} />
-        <Kpi label="Восстановлено бэкфиллом" value={c?.reconstructed ?? "—"} hint={c ? `ещё в очереди ${c.pending}` : undefined} />
-        <Kpi label="Не восстановить" value={c?.unavailable ?? "—"} hint="история свечей позже сигнала" />
+        <Kpi label="Закрытых сделок с метриками" value={data?.closed ?? "—"} onClick={() => openHistory({ status: "closed", snap: "ready", days, setup, side })} />
+        <Kpi label="Записано при сигнале" value={c?.live ?? "—"} onClick={() => openHistory({ snap: "live", days: 3650 })} />
+        <Kpi label="Восстановлено бэкфиллом" value={c?.reconstructed ?? "—"} hint={c ? `ещё в очереди ${c.pending}` : undefined} onClick={() => openHistory({ snap: "reconstructed", days: 3650 })} />
+        <Kpi label="Не восстановить" value={c?.unavailable ?? "—"} hint="история свечей позже сигнала" onClick={() => openHistory({ snap: "unavailable", days: 3650 })} />
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Segmented value={days} onChange={(id) => setDays(id as number)} options={[{ id: 30, label: "30 дн" }, { id: 90, label: "90 дн" }, { id: 3650, label: "всё" }]} />

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { Empty, Kpi, Panel, Segmented, SideTag } from "../components/ui";
+import { Empty, Kpi, Panel, Segmented, SideTag, scrollToId } from "../components/ui";
 import { CoinLink } from "../components/chart";
 import { SnapshotPanel } from "../components/snapshot";
 import { metricCols, MetricCell } from "../components/metric-columns";
@@ -121,13 +121,25 @@ function Row({ s, open, onToggle }: { s: Signal; open: boolean; onToggle: () => 
   );
 }
 
+/** A number inside a tile that filters on its own. */
+function Sub({ label, onClick }: { label: string; onClick: () => void }) {
+  return <span role="link" tabIndex={0} onClick={(e) => { e.stopPropagation(); onClick(); }} className="cursor-pointer underline decoration-dotted underline-offset-2">{label}</span>;
+}
+
 export default function Tracker() {
   const { data } = usePoll<{ signals: Signal[] }>("/nh/signals?status=open&limit=500");
   const [side, setSide] = useState<"" | "long" | "short">("");
+  // Owner 2026-11-20: a tile filters the list below to exactly its positions.
+  const [pick, setPick] = useState<"" | "plus" | "minus" | "be" | "trail">("");
   const [sort, setSort] = useState<Sort>("time");
   const [openId, setOpenId] = useState<number | null>(null);
   const all = data?.signals ?? [];
-  const rows = all.filter((s) => !side || s.side === side).sort((a, b) =>
+  const PICK_LABEL = { plus: "в плюсе", minus: "в минусе", be: "в безубытке", trail: "трейлинг" } as const;
+  const picked = (s: Signal) => !pick
+    || (pick === "plus" && (livePct(s) ?? 0) > 0) || (pick === "minus" && livePct(s) !== null && livePct(s)! <= 0)
+    || (pick === "be" && stopKind(s) === "безубыток") || (pick === "trail" && s.trailing_active);
+  const choose = (next: typeof pick, nextSide: typeof side = "") => { setPick(next); setSide(nextSide); scrollToId("nh-open-list"); };
+  const rows = all.filter((s) => (!side || s.side === side) && picked(s)).sort((a, b) =>
     sort === "pnl" ? (livePct(b) ?? -1e9) - (livePct(a) ?? -1e9)
       : sort === "peak" ? b.peak_pct - a.peak_pct
         : sort === "stop" ? (toStopPct(a) ?? 1e9) - (toStopPct(b) ?? 1e9)
@@ -138,10 +150,13 @@ export default function Tracker() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Kpi label="Открыто позиций" value={data ? all.length : "—"} hint={data ? `лонг ${all.filter((s) => s.side === "long").length} · шорт ${all.filter((s) => s.side === "short").length}` : undefined} />
-        <Kpi label="В плюсе / в минусе" value={data ? `${plus} / ${lives.length - plus}` : "—"} toneClass={plus >= lives.length - plus ? "text-up" : "text-down"} />
-        <Kpi label="Средний результат" value={signed(avg, 2, "%")} toneClass={tone(avg)} hint="движение цены от входа" />
-        <Kpi label="В безубытке / трейлинг" value={data ? `${all.filter((s) => stopKind(s) === "безубыток").length} / ${all.filter((s) => s.trailing_active).length}` : "—"} hint="у остальных — начальный стоп" />
+        <Kpi label="Открыто позиций" value={data ? all.length : "—"} onClick={() => choose("")} active={!pick && !side}
+          hint={data ? <><Sub label={`лонг ${all.filter((s) => s.side === "long").length}`} onClick={() => choose("", "long")} /> · <Sub label={`шорт ${all.filter((s) => s.side === "short").length}`} onClick={() => choose("", "short")} /></> : undefined} />
+        <Kpi label="В плюсе / в минусе" value={data ? <><Sub label={String(plus)} onClick={() => choose("plus")} /> / <Sub label={String(lives.length - plus)} onClick={() => choose("minus")} /></> : "—"}
+          toneClass={plus >= lives.length - plus ? "text-up" : "text-down"} onClick={() => choose("plus")} active={pick === "plus" || pick === "minus"} />
+        <Kpi label="Средний результат" value={signed(avg, 2, "%")} toneClass={tone(avg)} hint="движение цены от входа · нажми — по результату" onClick={() => { setPick(""); setSide(""); setSort("pnl"); scrollToId("nh-open-list"); }} />
+        <Kpi label="В безубытке / трейлинг" value={data ? <><Sub label={String(all.filter((s) => stopKind(s) === "безубыток").length)} onClick={() => choose("be")} /> / <Sub label={String(all.filter((s) => s.trailing_active).length)} onClick={() => choose("trail")} /></> : "—"}
+          hint="у остальных — начальный стоп" onClick={() => choose("be")} active={pick === "be" || pick === "trail"} />
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted">{isOwner()
@@ -152,7 +167,9 @@ export default function Tracker() {
           <Segmented value={sort} onChange={(id) => setSort(id as Sort)} options={[{ id: "time", label: "новые" }, { id: "pnl", label: "по %" }, { id: "peak", label: "по пику" }, { id: "stop", label: "ближе к стопу" }]} />
         </div>
       </div>
-      <Panel title={`Открытые позиции · ${rows.length}`}>
+      <Panel id="nh-open-list" title={<span className="flex flex-wrap items-center gap-2">{`Открытые позиции · ${rows.length}`}{pick && (
+        <button type="button" onClick={() => setPick("")} className="border border-primary/50 bg-primary/10 px-2 py-0.5 font-mono text-[11px] font-normal">{PICK_LABEL[pick]} ×</button>
+      )}</span>}>
         {!data ? <Empty>Загрузка…</Empty> : !rows.length ? <Empty>Открытых сделок нет.</Empty> : (
           <>
             <div className="hidden overflow-x-auto md:block">
