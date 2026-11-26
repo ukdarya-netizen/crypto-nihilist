@@ -162,6 +162,7 @@ export function reasonLabel(reason: string | null | undefined): string {
   if (reason === "entry_filter:long_zone_volume_missing") return "лонг без объёма в блоке: нет данных об объёме";
   // Owner 2026-11-26.
   if (reason === "entry_filter:long_weak_break") return "лонг на слабом сломе: свеча слома меньше 3%";
+  if (reason === "entry_filter:short_daily_uptrend") return "шорт против дневного тренда монеты: +DI выше −DI на 1D";
   if (reason.startsWith("entry_filter:")) return `фильтр лонгов: ${reason.slice(13).split(",").map((r) => FILTER_LABEL[r] ?? r).join(", ")}`;
   return REASON_LABEL[reason] ?? reason;
 }

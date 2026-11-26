@@ -34,7 +34,7 @@ import { logger } from "../lib/logger";
 import { marketMetrics } from "./metrics";
 import { shortUptrend } from "./short-uptrend";
 import { longZoneVolume, widenShortStop } from "./entry-rules-1117";
-import { longBreakStrength } from "./entry-rules-1126";
+import { longBreakStrength, shortDailyTrend } from "./entry-rules-1126";
 
 /** LTF bars walked per evaluation (enough for the LTF structure to settle). */
 const LTF_WINDOW = 400;
@@ -197,8 +197,15 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
         { ...signalDetails(s), marketShorts24h, chochBar });
       return "filtered";
     }
-    // No short into a rising 4h (owner 2026-11-15): above the Ichimoku cloud on 4h and ADX 4h ≥ 25 or a buyer on 1h in 6 h.
+    // No short on a coin whose own daily trend is up (owner 2026-11-26): +DI(14) above −DI(14) on its closed 1D candles.
     const b = book(symbol);
+    const dt = shortDailyTrend(b["1d"], s.signalAt);
+    if (dt.block) {
+      await recordDecision(symbol, s.setup, s.barTime, "rejected", "entry_filter:short_daily_uptrend", s.block.id,
+        { ...signalDetails(s), dailyTrend: dt, chochBar });
+      return "filtered";
+    }
+    // No short into a rising 4h (owner 2026-11-15): above the Ichimoku cloud on 4h and ADX 4h ≥ 25 or a buyer on 1h in 6 h.
     const up = await shortUptrend(symbol, s, b["4h"], b["1h"]);
     if (up.block) {
       await recordDecision(symbol, s.setup, s.barTime, "rejected", "entry_filter:short_uptrend_4h", s.block.id,
