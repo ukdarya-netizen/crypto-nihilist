@@ -954,5 +954,8 @@
  "Длилась": "Lasted",
  "открыть в истории": "open in history",
  "закрыть ×": "close ×",
- "В этот день сделки не закрывались.": "No trades closed on this day."
+ "В этот день сделки не закрывались.": "No trades closed on this day.",
+ "Стоп не ближе 7%, ордер-блоку не больше 300 ч, высота блока от 4% цены, ATR(14) 1H от 1,9% · объём в блоке: от касания блока до входа хотя бы один яркий бар Lucy's VSA на 1H (спот + фьючерсы), нет данных об объёме — лонг не даём (с 17.11.2026) · сила слома: свеча слома (high − low) от 3% цены (с 26.11.2026)": "Stop at least 7% away, order block no older than 300 h, block height from 4% of the price, ATR(14) 1H from 1.9% · volume in the block: at least one bright Lucy's VSA bar on 1H (spot + futures) from the block touch to the entry; no volume data — no long (since 17.11.2026) · break strength: the break candle (high − low) from 3% of the price (since 26.11.2026)",
+ "Стоп дальше 20% · по монете уже открыта сделка в эту сторону · лонг не прошёл фильтр входа · лонг на слабом сломе · лонг без объёма в блоке · одиночный шорт · шорт против роста 4h. Одна сделка на блок; причина пишется в «Отклонённые сигналы».": "Stop beyond 20% · a trade on this coin in this direction is already open · a long failed the entry filter · a long on a weak break · a long with no volume in the block · an isolated short · a short against a rising 4h. One trade per block; the reason goes to «Rejected signals».",
+ "лонг на слабом сломе: свеча слома меньше 3%": "a long on a weak break: the break candle under 3%"
 }

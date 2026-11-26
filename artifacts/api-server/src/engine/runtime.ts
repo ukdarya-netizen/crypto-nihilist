@@ -34,6 +34,7 @@ import { logger } from "../lib/logger";
 import { marketMetrics } from "./metrics";
 import { shortUptrend } from "./short-uptrend";
 import { longZoneVolume, widenShortStop } from "./entry-rules-1117";
+import { longBreakStrength } from "./entry-rules-1126";
 
 /** LTF bars walked per evaluation (enough for the LTF structure to settle). */
 const LTF_WINDOW = 400;
@@ -217,6 +218,15 @@ async function openSignal(symbol: string, s: SetupSignal, confluence: string[] =
     await recordDecision(symbol, s.setup, s.barTime, "rejected", `entry_filter:${filter.reason}`, s.block.id,
       { ...signalDetails(s), entryFilter: filter, chochBar });
     return "filtered";
+  }
+  // Owner 2026-11-26: a long only on a strong break — the break (CHoCH) candle's range at least 3% (no data = no long).
+  if (s.side === "long" && !isBtc(symbol)) {
+    const bs = longBreakStrength(chochBar);
+    if (!bs.pass) {
+      await recordDecision(symbol, s.setup, s.barTime, "rejected", "entry_filter:long_weak_break", s.block.id,
+        { ...signalDetails(s), entryFilter: filter, breakStrength: bs, chochBar });
+      return "filtered";
+    }
   }
   // Owner 2026-11-17: a long only with a bright Lucy's VSA bar in the block (first touch → entry, closed 1h).
   if (s.side === "long" && !isBtc(symbol)) {
