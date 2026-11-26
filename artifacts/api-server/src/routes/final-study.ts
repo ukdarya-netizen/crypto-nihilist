@@ -9,6 +9,9 @@
  *       the close (closed signals); 1h volumes from the order block through the approach to the break (every signal).
  *   GET /api/nh-study/cand/start | /cand/status | /cand/file — candidate rules on the 60-day history (owner 2026-11-15):
  *       one row per trade with its result and every price-only candidate measure (history.csv.gz).
+ *   GET /api/nh-study/full/start | /full/status | /full/file/:name — the final study (owner 2026-11-26): every table the
+ *       bot writes, the candidate study rerun to today, 15m market data of every coin (analysis/full-study.ts);
+ *       history.csv.gz and closes1h.csv.gz come from /cand/file and /cand/closes.
  * Read-only on the database; nothing else in the app changes.
  */
 import { createReadStream, existsSync, statSync } from "node:fs";
@@ -18,6 +21,7 @@ import { tokenMatches } from "./trading-sync";
 import { STUDY_DIR, startFinalStudy, studyState } from "../analysis/final-study";
 import { clearExitStudy, exitFile, exitState, startExitStudy } from "../analysis/exit-study";
 import { candClosesFile, candFile, candState, startCandStudy } from "../analysis/candidate-study";
+import { FULL_DIR, fullFiles, fullState, startFullStudy } from "../analysis/full-study";
 
 const FILES = new Set(["trades.csv", "rejects.csv", "trajectory.csv.gz", "mf-cache-v3.jsonl"]);
 const router: IRouter = Router();
@@ -106,6 +110,25 @@ router.get("/nh-study/cand/closes", async (req, res) => {
   res.setHeader("Content-Disposition", 'attachment; filename="closes1h.csv.gz"');
   res.setHeader("X-Rows", String(f.rows));
   res.send(f.body);
+});
+
+// Owner 2026-11-26: the final study — everything in one run.
+router.get("/nh-study/full/start", (req, res) => {
+  if (!allowed(req, res)) return;
+  res.json({ started: startFullStudy(), state: fullState, files: fullFiles() });
+});
+router.get("/nh-study/full/status", (req, res) => {
+  if (!allowed(req, res)) return;
+  res.json({ state: fullState, cand: candState, files: fullFiles() });
+});
+router.get("/nh-study/full/file/:name", (req, res) => {
+  if (!allowed(req, res)) return;
+  const name = String(req.params.name);
+  const ready = fullFiles();
+  if (!/^[a-z0-9_.]+$/.test(name) || name.endsWith(".part") || !(name in ready)) { res.status(404).json({ error: "not_ready", files: ready }); return; }
+  res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+  res.setHeader("Content-Type", name.endsWith(".gz") ? "application/gzip" : "application/json");
+  createReadStream(`${FULL_DIR}/${name}`).pipe(res);
 });
 
 export default router;
